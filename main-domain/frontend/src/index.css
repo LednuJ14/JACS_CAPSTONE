@@ -1,0 +1,339 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    @apply bg-gray-50 text-gray-900;
+  }
+
+  code {
+    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+      monospace;
+  }
+
+  * {
+    @apply border-gray-200;
+  }
+}
+
+@layer components {
+  /* Button Components */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-black text-white hover:bg-gray-900 focus:ring-black shadow-soft;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-gray-700 border-gray-300 hover:bg-gray-50 focus:ring-gray-500;
+  }
+
+  .btn-success {
+    @apply btn bg-success-600 text-white hover:bg-success-700 focus:ring-success-500;
+  }
+
+  .btn-warning {
+    @apply btn bg-warning-600 text-white hover:bg-warning-700 focus:ring-warning-500;
+  }
+
+  .btn-danger {
+    @apply btn bg-danger-600 text-white hover:bg-danger-700 focus:ring-danger-500;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-600 hover:bg-gray-100 focus:ring-gray-500;
+  }
+
+  /* Card Components */
+  .card {
+    @apply bg-white border border-gray-200 rounded-xl shadow-soft hover:shadow-medium transition-shadow duration-200;
+  }
+
+  .card-header {
+    @apply px-6 py-4 border-b border-gray-200;
+  }
+
+  .card-body {
+    @apply px-6 py-4;
+  }
+
+  .card-footer {
+    @apply px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl;
+  }
+
+  /* Form Components */
+  .form-input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200;
+  }
+
+  .form-select {
+    @apply form-input appearance-none bg-white;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+
+  .form-error {
+    @apply text-sm text-danger-600 mt-1;
+  }
+
+  /* Badge Components */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  .badge-success {
+    @apply badge bg-success-100 text-success-800;
+  }
+
+  .badge-warning {
+    @apply badge bg-warning-100 text-warning-800;
+  }
+
+  .badge-danger {
+    @apply badge bg-danger-100 text-danger-800;
+  }
+
+  .badge-neutral {
+    @apply badge bg-gray-100 text-gray-800;
+  }
+
+  /* Navigation Components */
+  .nav-link {
+    @apply px-3 py-2 rounded-lg font-medium transition-colors text-sm;
+  }
+
+  .nav-link-active {
+    @apply nav-link bg-white text-black;
+  }
+
+  .nav-link-inactive {
+    @apply nav-link text-gray-300 hover:text-white hover:bg-gray-800;
+  }
+
+  /* Layout Components */
+  .container-custom {
+    @apply container mx-auto px-4 py-6 max-w-7xl;
+  }
+
+  .section-header {
+    @apply bg-gradient-to-r from-black to-gray-800 text-white rounded-xl p-6 shadow-lg;
+  }
+
+  .section-title {
+    @apply text-2xl font-black;
+  }
+
+  .section-subtitle {
+    @apply text-gray-300 mt-1 text-sm;
+  }
+
+  /* Grid Components */
+  .grid-cards {
+    @apply grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6;
+  }
+
+  .grid-stats {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6;
+  }
+
+  /* Animation Classes */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-bounce-gentle {
+    animation: bounceGentle 2s infinite;
+  }
+
+  /* Utility Classes */
+  .text-gradient {
+    @apply bg-gradient-to-r from-black to-gray-800 bg-clip-text text-transparent;
+  }
+
+  /* Responsive Utilities */
+  .responsive-text {
+    @apply text-sm md:text-base;
+  }
+
+  .responsive-padding {
+    @apply p-4 md:p-6;
+  }
+
+  .responsive-margin {
+    @apply m-4 md:m-6;
+  }
+}
+
+@layer utilities {
+  /* Dark mode base */
+  .dark body {
+    @apply bg-gray-900 text-gray-50;
+  }
+
+  /* Scoped dark styles for Tenant Settings */
+  .dark .tenant-settings {
+    color: #f3f4f6;
+  }
+  .dark .tenant-settings .bg-white {
+    background-color: #1f2937 !important; /* gray-800 */
+  }
+  .dark .tenant-settings .bg-gray-50 {
+    background-color: #111827 !important; /* gray-900 */
+  }
+  .dark .tenant-settings .border-gray-200 {
+    border-color: #374151 !important; /* gray-700 */
+  }
+  .dark .tenant-settings input,
+  .dark .tenant-settings select,
+  .dark .tenant-settings textarea {
+    color: #f9fafb !important; /* gray-50 */
+    background-color: #111827 !important; /* gray-900 */
+    border-color: #374151 !important; /* gray-700 */
+  }
+  .dark .tenant-settings label,
+  .dark .tenant-settings .text-gray-700 {
+    color: #e5e7eb !important; /* gray-200 */
+  }
+
+  /* Compact mode adjustments scoped to tenant settings */
+  body[data-compact="true"] .tenant-settings .card,
+  body[data-compact="true"] .tenant-settings .bg-white,
+  body[data-compact="true"] .tenant-settings .bg-gray-50 {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+
+  body[data-compact="true"] .tenant-settings .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    --tw-space-y-reverse: 0;
+    margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
+    margin-bottom: calc(1rem * var(--tw-space-y-reverse));
+  }
+
+  body[data-compact="true"] .tenant-settings input,
+  body[data-compact="true"] .tenant-settings select,
+  body[data-compact="true"] .tenant-settings textarea,
+  body[data-compact="true"] .tenant-settings button {
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+    padding-left: 0.6rem !important;
+    padding-right: 0.6rem !important;
+  }
+
+  body[data-compact="true"] .tenant-settings .grid {
+    gap: 0.75rem !important;
+  }
+
+  /* Dark mode styles for manager settings */
+  .dark .manager-settings {
+    background-color: #1f2937 !important;
+    color: #f9fafb !important;
+  }
+
+  .dark .manager-settings .bg-white {
+    background-color: #374151 !important;
+  }
+
+  .dark .manager-settings .text-gray-900 {
+    color: #f9fafb !important;
+  }
+
+  .dark .manager-settings .text-gray-600 {
+    color: #d1d5db !important;
+  }
+
+  .dark .manager-settings .text-gray-700 {
+    color: #e5e7eb !important;
+  }
+
+  .dark .manager-settings .border-gray-100 {
+    border-color: #4b5563 !important;
+  }
+
+  .dark .manager-settings .border-gray-200 {
+    border-color: #6b7280 !important;
+  }
+
+  .dark .manager-settings input,
+  .dark .manager-settings select,
+  .dark .manager-settings textarea {
+    background-color: #4b5563 !important;
+    border-color: #6b7280 !important;
+    color: #f9fafb !important;
+  }
+
+  .dark .manager-settings input::placeholder,
+  .dark .manager-settings textarea::placeholder {
+    color: #9ca3af !important;
+  }
+
+  /* Compact mode styles for manager settings */
+  body[data-compact="true"] .manager-settings .space-y-6 > * {
+    margin-top: 1rem !important;
+  }
+
+  body[data-compact="true"] .manager-settings .p-6 {
+    padding: 1rem !important;
+  }
+
+  body[data-compact="true"] .manager-settings .gap-6 {
+    gap: 1rem !important;
+  }
+  /* Custom Utilities */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .backdrop-blur-xs {
+    backdrop-filter: blur(2px);
+  }
+
+  /* Custom Spacing */
+  .space-y-custom > * + * {
+    margin-top: 1.5rem;
+  }
+
+  .space-x-custom > * + * {
+    margin-left: 1.5rem;
+  }
+
+  /* Custom Transitions */
+  .transition-smooth {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .transition-bounce {
+    transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+}

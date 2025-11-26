@@ -1,0 +1,239 @@
+from flask import Flask, request, jsonify, current_app
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from flask_jwt_extended import JWTManager
+from flask_cors import CORS
+from flask_mail import Mail
+from config.config import config
+import os
+
+# Initialize extensions
+db = SQLAlchemy()
+migrate = Migrate()
+jwt = JWTManager()
+mail = Mail()
+
+def create_app(config_name=None):
+    """Application factory pattern."""
+    app = Flask(__name__)
+    
+    # Load configuration
+    config_name = config_name or os.environ.get('FLASK_ENV', 'development')
+    app.config.from_object(config[config_name])
+    
+    # Initialize extensions
+    db.init_app(app)
+    migrate.init_app(app, db)
+    jwt.init_app(app)
+    mail.init_app(app)
+    
+    # JWT configuration - ensure all identities are treated as strings
+    @jwt.user_identity_loader
+    def user_identity_lookup(user_id):
+        return str(user_id)
+    
+    @jwt.user_lookup_loader
+    def user_lookup_callback(_jwt_header, jwt_data):
+        identity = jwt_data["sub"]
+        # Convert string identity back to int for database lookup
+        try:
+            user_id = int(identity)
+            from models.user import User
+            return User.query.filter_by(id=user_id).one_or_none()
+        except (ValueError, TypeError):
+            return None
+    
+    # Configure CORS - Must be before registering blueprints
+    # Allow all localhost origins including subdomains
+    import re
+    
+    # List of explicitly allowed origins (Flask-CORS will use this)
+    allowed_origins_list = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://localhost:8081",
+        "http://pat.localhost:8080",  # Explicitly add the subdomain
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081"
+    ]
+    
+    # Regex pattern for localhost subdomains (for manual validation)
+    localhost_regex = re.compile(r'https?://([a-zA-Z0-9-]+\.)?localhost(:\d+)?')
+    
+    # Validator function for manual checks (used in error handlers)
+    def cors_origin_validator(origin):
+        """Validate if origin is allowed (localhost with any subdomain)."""
+        if not origin:
+            return False
+        # Check if it matches localhost pattern (any subdomain)
+        if localhost_regex.match(origin):
+            return True
+        # Check specific origins
+        return origin in allowed_origins_list
+    
+    # Use list for Flask-CORS (avoids iteration issues)
+    # We'll handle subdomains manually in after_request
+    CORS(app, 
+         origins=allowed_origins_list,
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+         supports_credentials=True)
+    
+    # Handle preflight requests globally and allow subdomain origins
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            response = app.make_default_options_response()
+            headers = response.headers
+            origin = request.headers.get('Origin', '')
+            # Allow localhost with any subdomain using validator
+            if origin and cors_origin_validator(origin):
+                headers['Access-Control-Allow-Origin'] = origin
+                headers['Access-Control-Allow-Credentials'] = 'true'
+            headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+            headers['Access-Control-Max-Age'] = '86400'
+            return response
+    
+    # Also handle CORS for actual requests (including error responses)
+    # This ensures CORS headers are added even when Flask-CORS doesn't handle it
+    @app.after_request
+    def after_request(response):
+        origin = request.headers.get('Origin', '')
+        # Allow localhost with any subdomain using validator
+        if origin and cors_origin_validator(origin):
+            # Override Flask-CORS headers to allow subdomains
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+        # Always add these headers
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+    
+    # Register SQLAlchemy event listeners for automatic tenant registration
+    from sqlalchemy import event
+    from models.tenant import TenantUnit
+    
+    @event.listens_for(TenantUnit, 'after_insert')
+    def tenant_unit_created(mapper, connection, target):
+        """
+        Automatically register tenant to property when TenantUnit is created.
+        This ensures tenants can login to the property subdomain.
+        """
+        try:
+            # Get the unit and property
+            from models.property import Unit, Property
+            unit = Unit.query.get(target.unit_id)
+            if unit and unit.property_id:
+                # Tenant is now automatically registered to the property
+                # through the TenantUnit -> Unit -> Property relationship
+                # No additional table needed - we can query this relationship
+                current_app.logger.info(
+                    f"Tenant {target.tenant_id} automatically registered to property {unit.property_id} "
+                    f"via unit {target.unit_id}"
+                )
+        except Exception as e:
+            current_app.logger.warning(f"Error in tenant_unit_created event: {str(e)}")
+            # Don't raise - this is just logging, don't crash the system
+    
+    @event.listens_for(TenantUnit, 'after_update')
+    def tenant_unit_updated(mapper, connection, target):
+        """
+        Handle tenant unit updates (e.g., when lease becomes active/inactive).
+        """
+        try:
+            if hasattr(target, 'is_active'):
+                from models.property import Unit
+                unit = Unit.query.get(target.unit_id)
+                if unit:
+                    status = "activated" if target.is_active else "deactivated"
+                    current_app.logger.info(
+                        f"Tenant {target.tenant_id} lease {status} for property {unit.property_id}"
+                    )
+        except Exception as e:
+            current_app.logger.warning(f"Error in tenant_unit_updated event: {str(e)}")
+    
+    # Register blueprints
+    from routes.auth_routes import auth_bp
+    from routes.user_routes import user_bp
+    from routes.property_routes import property_bp
+    from routes.tenant_routes import tenant_bp
+    from routes.staff_routes import staff_bp
+    from routes.billing_routes import billing_bp
+    from routes.request_routes import request_bp
+    from routes.announcement_routes import announcement_bp
+    from routes.document_routes import document_bp
+    from routes.task_routes import task_bp
+    from routes.analytics_routes import analytics_bp
+    from routes.feedback_routes import feedback_bp
+    from routes.notification_routes import notification_bp
+    
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(user_bp, url_prefix='/api/users')
+    app.register_blueprint(property_bp, url_prefix='/api/properties')
+    app.register_blueprint(tenant_bp, url_prefix='/api/tenants')
+    app.register_blueprint(staff_bp, url_prefix='/api/staff')
+    app.register_blueprint(billing_bp, url_prefix='/api/billing')
+    app.register_blueprint(request_bp, url_prefix='/api/requests')
+    app.register_blueprint(announcement_bp, url_prefix='/api/announcements')
+    app.register_blueprint(document_bp, url_prefix='/api/documents')
+    app.register_blueprint(task_bp, url_prefix='/api/tasks')
+    app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
+    app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
+    app.register_blueprint(notification_bp, url_prefix='/api/notifications')
+    
+    # Create upload directories
+    upload_dir = os.path.join(app.instance_path, app.config['UPLOAD_FOLDER'])
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # JWT Error Handlers - Must be after CORS setup
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
+        return jsonify({'error': 'Token has expired', 'code': 'TOKEN_EXPIRED'}), 401
+    
+    @jwt.invalid_token_loader
+    def invalid_token_callback(error):
+        return jsonify({'error': 'Invalid token', 'code': 'INVALID_TOKEN'}), 401
+    
+    @jwt.unauthorized_loader
+    def missing_token_callback(error):
+        return jsonify({'error': 'Authorization token is missing', 'code': 'MISSING_TOKEN'}), 401
+    
+    # Error handlers
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({'error': 'Resource not found'}), 404
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        return jsonify({'error': 'Internal server error'}), 500
+    
+    # Handle all exceptions to ensure CORS headers are added
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        # Log the error
+        current_app.logger.error(f"Unhandled exception: {str(e)}", exc_info=True)
+        
+        # Return error response with CORS headers
+        response = jsonify({'error': 'An error occurred', 'message': str(e) if current_app.config.get('DEBUG') else 'Internal server error'})
+        response.status_code = 500
+        
+        # Add CORS headers manually
+        origin = request.headers.get('Origin', '')
+        if origin and cors_origin_validator(origin):
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        
+        return response
+    
+    # Health check endpoint
+    @app.route('/api/health')
+    def health_check():
+        return {'status': 'healthy', 'message': 'JACS Property Management API is running'}, 200
+    
+    return app
