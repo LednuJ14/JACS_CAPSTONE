@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
-import { RefreshCw, Home, Users, User, Plus, Image as ImageIcon, ExternalLink, TrendingUp, LogOut, Loader2, ChevronDown, Settings, User as UserIcon, X, Building, CreditCard, Wrench, MessageSquare, AlertCircle, CheckCircle, Clock, ArrowRight, Calendar, DollarSign, Activity, BarChart3, PieChart as PieChartIcon } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { RefreshCw, Users, User, Plus, Image as ImageIcon, ExternalLink, Loader2, X, CreditCard, Wrench, MessageSquare, ArrowRight, DollarSign, BarChart3 } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import AccountSettings from '../../components/AccountSettings';
 import ErrorBoundary from '../../components/ErrorBoundary';
 import Header from '../../components/Header';
+import ChatsModal from './ChatsModal';
 
 const DashboardPage = () => {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ const DashboardPage = () => {
   const [accountsDropdownOpen, setAccountsDropdownOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [showChatsModal, setShowChatsModal] = useState(false);
 
   useEffect(() => {
     // Since RouteProtection already handles authentication and user type checks,
@@ -53,14 +55,46 @@ const DashboardPage = () => {
 
   const fetchDashboardData = async () => {
     try {
-      console.log('DashboardPage: Setting loading to true...');
       setLoading(true);
-      console.log('DashboardPage: Calling apiService.getDashboardData()...');
       
-        const data = await apiService.getDashboardData();
-        console.log('DashboardPage: Dashboard data received:', data);
+      // Fetch dashboard data from backend (includes all metrics, sales_data, and announcements)
+      const data = await apiService.getDashboardData();
+
       if (data) {
-        setDashboardData(data);
+        // Extract metrics from backend response
+        const metrics = data.metrics || {};
+        
+        // Use backend's sales_data directly (already calculated from payments)
+        // Backend returns sales_data with month, trend, and actual fields
+        const salesData = Array.isArray(data.sales_data) ? data.sales_data : [];
+        
+        // Use backend's announcements directly
+        const announcements = Array.isArray(data.announcements) ? data.announcements : [];
+        
+        // Ensure all required fields have defaults
+        const dashboardPayload = {
+          metrics: {
+            total_income: metrics.total_income ?? 0,
+            active_tenants: metrics.active_tenants ?? 0,
+            active_staff: metrics.active_staff ?? 0,
+            current_month: metrics.current_month || new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
+            total_properties: metrics.total_properties ?? 1,
+            occupancy_rate: metrics.occupancy_rate ?? 0,
+            outstanding_balance: metrics.outstanding_balance ?? 0,
+            bookings_today: metrics.bookings_today ?? 0,
+            inquiries_this_month: metrics.inquiries_this_month ?? 0,
+            avg_resolution_days: metrics.avg_resolution_days ?? 0,
+            avg_monthly_rent: metrics.avg_monthly_rent ?? 0,
+          },
+          sales_data: salesData,
+          announcements: announcements,
+          maintenance_requests: Array.isArray(data.maintenance_requests) ? data.maintenance_requests : [],
+          pending_tasks: Array.isArray(data.pending_tasks) ? data.pending_tasks : [],
+          property_id: data.property_id,
+          property_name: data.property_name,
+        };
+
+        setDashboardData(dashboardPayload);
         setError(null);
       } else {
         // Set empty dashboard structure if no data
@@ -71,17 +105,44 @@ const DashboardPage = () => {
             active_staff: 0,
             current_month: new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
             total_properties: 0,
+            occupancy_rate: 0,
+            outstanding_balance: 0,
+            bookings_today: 0,
+            inquiries_this_month: 0,
+            avg_resolution_days: 0,
+            avg_monthly_rent: 0,
           },
           sales_data: [],
           announcements: [],
+          maintenance_requests: [],
+          pending_tasks: [],
         });
         setError(null);
       }
     } catch (err) {
       console.error('DashboardPage: Failed to fetch dashboard data:', err);
-      setError('Failed to load dashboard data');
+      setError('Failed to load dashboard data. Please try again.');
+      // Set empty structure on error too
+      setDashboardData({
+        metrics: {
+          total_income: 0,
+          active_tenants: 0,
+          active_staff: 0,
+          current_month: new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
+          total_properties: 0,
+          occupancy_rate: 0,
+          outstanding_balance: 0,
+          bookings_today: 0,
+          inquiries_this_month: 0,
+          avg_resolution_days: 0,
+          avg_monthly_rent: 0,
+        },
+        sales_data: [],
+        announcements: [],
+        maintenance_requests: [],
+        pending_tasks: [],
+      });
     } finally {
-      console.log('DashboardPage: Setting loading to false...');
       setLoading(false);
     }
   };
@@ -175,13 +236,13 @@ const DashboardPage = () => {
           </div>
 
           {/* Key Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 mb-1">Total Income</p>
-                  <p className="text-2xl font-bold text-gray-900">₱{dashboardData.metrics.total_income.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500 mt-1">for {dashboardData.metrics.current_month}</p>
+                  <p className="text-2xl font-bold text-gray-900">₱{(dashboardData.metrics?.total_income || 0).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">for {dashboardData.metrics?.current_month || new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
                 </div>
                 <div className="p-3 bg-green-50 rounded-lg">
                   <DollarSign className="w-6 h-6 text-green-600" />
@@ -193,7 +254,7 @@ const DashboardPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 mb-1">Active Tenants</p>
-                  <p className="text-2xl font-bold text-gray-900">{dashboardData.metrics.active_tenants}</p>
+                  <p className="text-2xl font-bold text-gray-900">{dashboardData.metrics?.active_tenants || 0}</p>
                   <p className="text-xs text-gray-500 mt-1">currently renting</p>
                 </div>
                 <div className="p-3 bg-blue-50 rounded-lg">
@@ -206,7 +267,7 @@ const DashboardPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 mb-1">Active Staff</p>
-                  <p className="text-2xl font-bold text-gray-900">{dashboardData.metrics.active_staff}</p>
+                  <p className="text-2xl font-bold text-gray-900">{dashboardData.metrics?.active_staff || 0}</p>
                   <p className="text-xs text-gray-500 mt-1">team members</p>
                 </div>
                 <div className="p-3 bg-purple-50 rounded-lg">
@@ -215,18 +276,6 @@ const DashboardPage = () => {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Properties</p>
-                  <p className="text-2xl font-bold text-gray-900">{dashboardData.metrics.total_properties || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">managed units</p>
-                </div>
-                <div className="p-3 bg-amber-50 rounded-lg">
-                  <Building className="w-6 h-6 text-amber-600" />
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* Quick Actions */}
@@ -261,9 +310,10 @@ const DashboardPage = () => {
                 <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 ml-auto" />
               </Link>
 
-              <Link 
-                to="/chats" 
-                className="group flex items-center space-x-3 p-4 bg-gradient-to-r from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 rounded-lg transition-all duration-200 border border-purple-200"
+              <button
+                type="button"
+                onClick={() => setShowChatsModal(true)}
+                className="group flex items-center space-x-3 p-4 bg-gradient-to-r from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 rounded-lg transition-all duration-200 border border-purple-200 text-left w-full"
               >
                 <div className="p-2 bg-purple-600 rounded-lg group-hover:bg-purple-700 transition-colors">
                   <MessageSquare className="w-5 h-5 text-white" />
@@ -273,7 +323,7 @@ const DashboardPage = () => {
                   <p className="text-sm text-gray-600">Communicate</p>
                 </div>
                 <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 ml-auto" />
-              </Link>
+              </button>
 
               <Link 
                 to="/tenants" 
@@ -302,23 +352,33 @@ const DashboardPage = () => {
                 </div>
               </div>
               <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dashboardData.sales_data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                    <XAxis dataKey="month" stroke="#6b7280" fontSize={12} />
-                    <YAxis stroke="#6b7280" fontSize={12} domain={[0, 125]} ticks={[0, 25, 50, 75, 100, 125]} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'white',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '12px',
-                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
-                      }}
-                    />
-                    <Line type="monotone" dataKey="trend" stroke="#3b82f6" strokeWidth={3} dot={false} />
-                    <Line type="monotone" dataKey="actual" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981', strokeWidth: 2, r: 6 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+                {Array.isArray(dashboardData.sales_data) && dashboardData.sales_data.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dashboardData.sales_data}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                      <XAxis dataKey="month" stroke="#6b7280" fontSize={12} />
+                      <YAxis stroke="#6b7280" fontSize={12} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'white',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '12px',
+                          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
+                        }}
+                      />
+                      <Line type="monotone" dataKey="trend" stroke="#3b82f6" strokeWidth={3} dot={false} />
+                      <Line type="monotone" dataKey="actual" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981', strokeWidth: 2, r: 6 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                    <div className="text-center">
+                      <BarChart3 className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                      <p>No revenue data available</p>
+                      <p className="text-xs mt-1">Revenue trends will appear here once payments are recorded</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -363,7 +423,8 @@ const DashboardPage = () => {
 
               {/* Announcements List */}
               <div className="space-y-4 max-h-96 overflow-y-auto">
-                {dashboardData.announcements.map((announcement) => (
+                {dashboardData.announcements && dashboardData.announcements.length > 0 ? (
+                  dashboardData.announcements.map((announcement) => (
                   <div key={announcement.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold text-gray-900 text-sm">{announcement.title}</h3>
@@ -383,12 +444,21 @@ const DashboardPage = () => {
                       </button>
                     </div>
                   </div>
-                ))}
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-gray-500 text-sm">
+                    <p>No announcements yet</p>
+                    <p className="text-xs mt-1">Create your first announcement above</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Messages / Chats Modal */}
+      <ChatsModal isOpen={showChatsModal} onClose={() => setShowChatsModal(false)} />
 
       {/* Account Settings Modal */}
       {showAccountSettings && (

@@ -430,6 +430,32 @@ def get_role_value(role):
         'TENANT': 'tenant'
     }
     return role_map.get(role_str, 'tenant')
+
+def is_staff_management_enabled(property_id):
+    """Check if staff management is enabled for a property."""
+    try:
+        from models.property import Property
+        import json
+        
+        property_obj = Property.query.get(property_id)
+        if not property_obj:
+            return False
+        
+        display_settings = {}
+        if property_obj.display_settings:
+            try:
+                if isinstance(property_obj.display_settings, str):
+                    display_settings = json.loads(property_obj.display_settings)
+                elif isinstance(property_obj.display_settings, dict):
+                    display_settings = property_obj.display_settings
+            except (json.JSONDecodeError, TypeError):
+                display_settings = {}
+        
+        # Default to True if not set (backward compatibility)
+        return display_settings.get('staffManagementEnabled', True)
+    except Exception as e:
+        current_app.logger.error(f"Error checking staff management status: {str(e)}")
+        return True  # Default to enabled on error to avoid blocking
 from models.staff import Staff
 from services.email_service import send_password_reset_email
 
@@ -818,6 +844,15 @@ def login():
                         'your_property': staff_property_name
                     }), 403
                 
+                # Check if staff management is enabled for this property
+                if not is_staff_management_enabled(property_id):
+                    current_app.logger.warning(f"Staff login blocked - staff management disabled for property {property_id}")
+                    return jsonify({
+                        'error': 'Staff management is currently disabled for this property.',
+                        'code': 'STAFF_MANAGEMENT_DISABLED',
+                        'message': 'Staff accounts cannot login when staff management is disabled. Please contact the property manager.'
+                    }), 403
+                
                 # Log successful property validation
                 current_app.logger.info(f"Staff {user.id} validated for property {property_id}")
                 
@@ -862,7 +897,7 @@ def login():
                 from models.tenant import Tenant
                 tenant_profile = Tenant.query.filter_by(user_id=user.id).first()
                 if tenant_profile:
-                    profile_data = tenant_profile.to_dict(include_lease=True)
+                    profile_data = tenant_profile.to_dict(include_rent=True)
                 else:
                     profile_data = {'role': 'tenant', 'user_id': user.id}
             elif user.is_staff():
@@ -1270,6 +1305,15 @@ def verify_two_factor():
                         'error': f'You do not have access to {property_name}. You can only access the property where you are assigned.',
                         'code': 'PROPERTY_ACCESS_DENIED'
                     }), 403
+                
+                # Check if staff management is enabled for this property
+                if not is_staff_management_enabled(property_id):
+                    current_app.logger.warning(f"Staff 2FA login blocked - staff management disabled for property {property_id}")
+                    return jsonify({
+                        'error': 'Staff management is currently disabled for this property.',
+                        'code': 'STAFF_MANAGEMENT_DISABLED',
+                        'message': 'Staff accounts cannot login when staff management is disabled. Please contact the property manager.'
+                    }), 403
             except Exception as staff_check_error:
                 current_app.logger.error(f"Error checking staff property access in 2FA: {str(staff_check_error)}", exc_info=True)
                 return jsonify({
@@ -1304,7 +1348,7 @@ def verify_two_factor():
                 from models.tenant import Tenant
                 tenant_profile = Tenant.query.filter_by(user_id=user.id).first()
                 if tenant_profile:
-                    profile_data = tenant_profile.to_dict(include_lease=True)
+                    profile_data = tenant_profile.to_dict(include_rent=True)
                 else:
                     profile_data = {'role': 'tenant', 'user_id': user.id}
             elif user.is_staff():
@@ -1366,7 +1410,7 @@ def get_current_user():
                 from models.tenant import Tenant
                 tenant_profile = Tenant.query.filter_by(user_id=user.id).first()
                 if tenant_profile:
-                    profile_data = tenant_profile.to_dict(include_lease=True)
+                    profile_data = tenant_profile.to_dict(include_rent=True)
                 else:
                     profile_data = {'role': 'tenant', 'user_id': user.id}
             elif user.is_staff():

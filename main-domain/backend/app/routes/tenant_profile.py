@@ -241,12 +241,17 @@ def upload_profile_image(current_user):
         return handle_api_error(500, "Failed to upload profile image")
 
 
-# Two-Factor Authentication (TOTP)
+# Two-Factor Authentication (TOTP) - DEPRECATED: System uses email-based 2FA
+# These routes are kept for backward compatibility but may not work if two_factor_secret column is dropped
 @tenant_profile_bp.route('/2fa/setup', methods=['POST'])
 @tenant_required
 def twofa_setup(current_user):
     """Initialize 2FA setup: generate secret and QR image (data URL)."""
     try:
+        # Check if two_factor_secret column exists (for backward compatibility)
+        if not hasattr(current_user, 'two_factor_secret'):
+            return handle_api_error(400, 'TOTP 2FA is not available. Please use email-based 2FA instead.')
+        
         # Generate new secret
         secret = pyotp.random_base32()
         current_user.two_factor_secret = secret
@@ -276,6 +281,10 @@ def twofa_setup(current_user):
 def twofa_enable(current_user):
     """Verify code and enable 2FA."""
     try:
+        # Check if two_factor_secret column exists (for backward compatibility)
+        if not hasattr(current_user, 'two_factor_secret'):
+            return handle_api_error(400, 'TOTP 2FA is not available. Please use email-based 2FA instead.')
+        
         data = request.get_json() or {}
         code = (data.get('code') or '').strip()
         if not current_user.two_factor_secret:
@@ -314,9 +323,10 @@ def twofa_email_enable(current_user):
     """Enable email-based 2FA for current tenant."""
     try:
         current_user.two_factor_enabled = True
-        # Clear any TOTP secret to avoid confusion
+        # Clear any TOTP secret to avoid confusion (if column exists)
         try:
-            current_user.two_factor_secret = None
+            if hasattr(current_user, 'two_factor_secret'):
+                current_user.two_factor_secret = None
         except Exception:
             pass
         db.session.commit()

@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Key, Bell, Shield, User, Settings, Palette, Globe, Lock, Eye, EyeOff, Download, Upload, Trash2, AlertTriangle, CheckCircle, Image, Building, Paintbrush, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import { useProperty } from '../../components/PropertyContext';
 
 const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
-  const { property } = useProperty();
+  const { property, refresh: refreshProperty } = useProperty();
   const [loadingDisplaySettings, setLoadingDisplaySettings] = useState(false);
   const [savingDisplaySettings, setSavingDisplaySettings] = useState(false);
+  const loadedPropertyIdRef = useRef(null); // Track which property ID we've loaded settings for
   const [notifications, setNotifications] = useState({
     email: true,
     system: true,
@@ -48,8 +49,7 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
   });
 
   const [displaySettings, setDisplaySettings] = useState({
-    companyName: 'JACS',
-    companyTagline: 'Joint Association & Community System - Cebu City',
+    propertyName: '',
     logoUrl: '',
     primaryColor: '#000000',
     secondaryColor: '#3B82F6',
@@ -65,34 +65,15 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
   });
 
   const [showLogoUpload, setShowLogoUpload] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [selectedColorField, setSelectedColorField] = useState('');
   const [activeTab, setActiveTab] = useState('account');
 
-  // Feature flags (UI-only)
+  // Feature flags - loaded from property display settings
   const [featureFlags, setFeatureFlags] = useState({
-    staffManagementEnabled: (() => {
-      try {
-        const stored = localStorage.getItem('feature.staffManagementEnabled');
-        return stored === null ? true : JSON.parse(stored);
-      } catch (e) {
-        return true;
-      }
-    })()
+    staffManagementEnabled: true // Default to true, will be loaded from backend
   });
-
-  const toggleStaffManagement = () => {
-    setFeatureFlags(prev => {
-      const updated = { ...prev, staffManagementEnabled: !prev.staffManagementEnabled };
-      try {
-        localStorage.setItem('feature.staffManagementEnabled', JSON.stringify(updated.staffManagementEnabled));
-      } catch (e) {}
-      try {
-        window.dispatchEvent(new CustomEvent('featureFlagsChanged', { detail: { key: 'staffManagementEnabled', value: updated.staffManagementEnabled } }));
-      } catch (e) {}
-      return updated;
-    });
-  };
 
   const handleNotificationChange = (type) => {
     setNotifications(prev => ({
@@ -113,6 +94,160 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
       ...prev,
       [field]: value
     }));
+  };
+
+  const toggleStaffManagement = async () => {
+    if (savingDisplaySettings) {
+      console.warn('Already saving, please wait...');
+      return;
+    }
+
+    const newValue = !featureFlags.staffManagementEnabled;
+    
+    console.log('Toggling staff management:', { 
+      currentValue: featureFlags.staffManagementEnabled, 
+      newValue, 
+      propertyId: property?.id,
+      property: property 
+    });
+    
+    // Update local state immediately for responsive UI
+    setFeatureFlags(prev => ({
+      ...prev,
+      staffManagementEnabled: newValue
+    }));
+
+    // Get property ID - try from property context first
+    let propertyIdToUse = property?.id;
+    
+    console.log('Initial propertyIdToUse:', propertyIdToUse);
+    
+    // If property not loaded yet, try multiple methods to get it
+    if (!propertyIdToUse) {
+      try {
+        // Method 1: Refresh property context
+        if (refreshProperty) {
+          await refreshProperty(true); // Force refresh
+          // Wait a moment for state to update
+          await new Promise(resolve => setTimeout(resolve, 300));
+          propertyIdToUse = property?.id; // Check again after refresh
+        }
+        
+        // Method 2: Try to get property from API directly
+        if (!propertyIdToUse) {
+          try {
+            console.log('Fetching properties from API...');
+            const properties = await apiService.makeRequest('/properties/', {
+              baseURL: apiService.propertyBaseURL
+            });
+            
+            console.log('Properties response:', properties);
+            
+            if (properties && Array.isArray(properties) && properties.length > 0) {
+              propertyIdToUse = properties[0].id;
+              console.log('Found property ID from array:', propertyIdToUse);
+            } else if (properties && properties.id) {
+              propertyIdToUse = properties.id;
+              console.log('Found property ID from object:', propertyIdToUse);
+            } else if (properties && !Array.isArray(properties) && properties.property?.id) {
+              propertyIdToUse = properties.property.id;
+              console.log('Found property ID from nested object:', propertyIdToUse);
+            } else {
+              console.warn('No property found in response:', properties);
+            }
+          } catch (apiError) {
+            console.error('Failed to fetch from /properties/ endpoint:', apiError);
+          }
+        }
+        
+        // Method 3: Try getDashboardContext
+        if (!propertyIdToUse) {
+          try {
+            const context = await apiService.getDashboardContext();
+            if (context?.property?.id) {
+              propertyIdToUse = context.property.id;
+            } else if (context?.property_id) {
+              propertyIdToUse = context.property_id;
+            }
+          } catch (ctxError) {
+            console.warn('Failed to fetch from getDashboardContext:', ctxError);
+          }
+        }
+        
+        // If still no property ID, show error
+        if (!propertyIdToUse) {
+          // Revert state change
+          setFeatureFlags(prev => ({
+            ...prev,
+            staffManagementEnabled: !newValue
+          }));
+          alert('Property not found. Please ensure you are accessing the correct property subdomain and that you are logged in as a property manager.');
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to get property:', e);
+        // Revert state change
+        setFeatureFlags(prev => ({
+          ...prev,
+          staffManagementEnabled: !newValue
+        }));
+        alert('Failed to load property. Please refresh the page and try again.');
+        return;
+      }
+    }
+
+    try {
+      setSavingDisplaySettings(true);
+      
+      // Save to backend via display settings
+      // Always use real property name from database, not from displaySettings
+      const settingsToSave = {
+        ...displaySettings,
+        companyName: property?.name || '', // Always use real property name from database
+        staffManagementEnabled: newValue
+      };
+      // Remove propertyName if it exists in displaySettings
+      delete settingsToSave.propertyName;
+      await apiService.updateDisplaySettings(propertyIdToUse, settingsToSave);
+      
+      // Update display settings state
+      setDisplaySettings(prev => ({
+        ...prev,
+        staffManagementEnabled: newValue
+      }));
+      
+      // Dispatch event for other components (like Header) to react
+      try {
+        window.dispatchEvent(new CustomEvent('featureFlagsChanged', { 
+          detail: { 
+            key: 'staffManagementEnabled', 
+            value: newValue,
+            propertyId: propertyIdToUse
+          } 
+        }));
+      } catch (e) {
+        console.warn('Failed to dispatch featureFlagsChanged event:', e);
+      }
+      
+      // Clear property context cache so it reloads with updated display_settings
+      try {
+        sessionStorage.removeItem('property_context');
+        window.dispatchEvent(new CustomEvent('propertyContextRefresh'));
+      } catch (e) {
+        console.warn('Failed to refresh property context:', e);
+      }
+      
+    } catch (error) {
+      console.error('Failed to save staff management setting:', error);
+      // Revert on error
+      setFeatureFlags(prev => ({
+        ...prev,
+        staffManagementEnabled: !newValue
+      }));
+      alert('Failed to save setting. Please try again.');
+    } finally {
+      setSavingDisplaySettings(false);
+    }
   };
 
   const handlePasswordChange = () => {
@@ -173,32 +308,76 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
       }
     };
     
-    // Load display settings when modal opens and property is available
+    if (isOpen) {
+      load2FAStatus();
+    }
+  }, [isOpen]);
+
+  // Load display settings when modal opens and property is available
+  useEffect(() => {
+    // Only load if modal is open and we have a property ID
+    if (!isOpen || !property?.id) {
+      // Reset loading state when modal closes or property is not available
+      if (!isOpen) {
+        setLoadingDisplaySettings(false);
+        loadedPropertyIdRef.current = null;
+      }
+      return;
+    }
+
+    // Don't reload if we've already loaded settings for this property ID
+    if (loadedPropertyIdRef.current === property.id) {
+      return;
+    }
+
+    let isMounted = true;
+
     const loadDisplaySettings = async () => {
-      if (!property?.id) return;
-      
       try {
         setLoadingDisplaySettings(true);
         const settings = await apiService.getDisplaySettings(property.id);
+        
+        if (!isMounted) return;
+        
         if (settings) {
+          // Don't map propertyName from settings - always use real property name from database
+          // Remove propertyName from settings if it exists
+          const { propertyName, ...settingsWithoutPropertyName } = settings;
+          
           setDisplaySettings(prev => ({
             ...prev,
-            ...settings
+            ...settingsWithoutPropertyName
+          }));
+          
+          // Load staff management enabled from display settings (property-specific)
+          const staffManagementEnabled = settings.staffManagementEnabled !== undefined 
+            ? settings.staffManagementEnabled 
+            : true; // Default to true if not set
+          
+          setFeatureFlags(prev => ({
+            ...prev,
+            staffManagementEnabled: staffManagementEnabled
           }));
         }
+        
+        // Mark this property ID as loaded
+        loadedPropertyIdRef.current = property.id;
       } catch (error) {
         console.error('Failed to load display settings:', error);
         // Use defaults if loading fails
       } finally {
-        setLoadingDisplaySettings(false);
+        if (isMounted) {
+          setLoadingDisplaySettings(false);
+        }
       }
     };
     
-    if (isOpen) {
-      load2FAStatus();
-      loadDisplaySettings();
-    }
-  }, [isOpen, property?.id]);
+    loadDisplaySettings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, property?.id]); // Only depend on isOpen and property?.id to prevent infinite loops
 
   const handleTwoFactorToggle = async () => {
     if (security.twoFactor) {
@@ -253,20 +432,30 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
   };
 
   const handleDisplaySettingChange = async (field, value) => {
+    // Don't allow editing propertyName - it comes from database
+    if (field === 'propertyName') {
+      return;
+    }
+    
     // Update local state immediately
     setDisplaySettings(prev => ({
       ...prev,
       [field]: value
     }));
     
-    // Save to backend (debounced)
+    // Save to backend
     if (property?.id) {
       try {
         setSavingDisplaySettings(true);
-        await apiService.updateDisplaySettings(property.id, {
+        // Don't include propertyName in settings to save - use actual property name from database
+        const settingsToSave = {
           ...displaySettings,
-          [field]: value
-        });
+          [field]: value,
+          companyName: property?.name || '' // Always use real property name from database
+        };
+        // Remove propertyName from settings if it exists
+        delete settingsToSave.propertyName;
+        await apiService.updateDisplaySettings(property.id, settingsToSave);
       } catch (error) {
         console.error('Failed to save display settings:', error);
         // Revert on error
@@ -314,13 +503,25 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
           logoUrl: response.logoUrl
         }));
         
-        // Also save to backend
-        await apiService.updateDisplaySettings(property.id, {
-          ...displaySettings,
-          logoUrl: response.logoUrl
-        });
+        // Logo upload already updates display_settings in the backend, but refresh property context
+        // to ensure login page gets the updated logo
+        try {
+          // Clear property context cache so it reloads with updated display_settings
+          sessionStorage.removeItem('property_context');
+          window.dispatchEvent(new CustomEvent('propertyContextRefresh'));
+          
+          // Also dispatch event for login page to refresh
+          window.dispatchEvent(new CustomEvent('displaySettingsUpdated', { 
+            detail: { 
+              propertyId: property.id,
+              logoUrl: response.logoUrl
+            } 
+          }));
+        } catch (e) {
+          console.warn('Failed to refresh property context:', e);
+        }
         
-        alert('Logo uploaded successfully!');
+        alert('Logo uploaded successfully! The login page will show the new logo.');
       }
     } catch (error) {
       console.error('Failed to upload logo:', error);
@@ -351,8 +552,7 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
     }
     
     const defaults = {
-      companyName: property?.name || 'JACS',
-      companyTagline: 'Joint Association & Community System - Cebu City',
+      companyName: property?.name || '', // Always use real property name from database
       logoUrl: '',
       primaryColor: '#000000',
       secondaryColor: '#3B82F6',
@@ -383,8 +583,23 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
     }
   };
 
-  const previewLoginPage = () => {
-    setShowLogoUpload(true);
+  const previewLoginPage = async () => {
+    // Ensure display settings are loaded before showing preview
+    if (property?.id && (!displaySettings.logoUrl || Object.keys(displaySettings).length < 3)) {
+      try {
+        const settings = await apiService.getDisplaySettings(property.id);
+        if (settings) {
+          const { propertyName, ...settingsWithoutPropertyName } = settings;
+          setDisplaySettings(prev => ({
+            ...prev,
+            ...settingsWithoutPropertyName
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load display settings for preview:', error);
+      }
+    }
+    setShowPreviewModal(true);
   };
 
   if (!isOpen) return null;
@@ -687,18 +902,33 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
                   <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div>
                       <p className="font-medium text-gray-900">Staff Management</p>
-                      <p className="text-sm text-gray-500">Enable or disable staff management pages</p>
+                      <p className="text-sm text-gray-500">Enable or disable staff management pages for this property</p>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={featureFlags.staffManagementEnabled}
-                        onChange={toggleStaffManagement}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
+                    <div className="flex items-center">
+                      <label 
+                        className={`relative inline-flex items-center ${savingDisplaySettings ? 'cursor-wait opacity-50' : 'cursor-pointer'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={featureFlags.staffManagementEnabled}
+                          onChange={(e) => {
+                            if (savingDisplaySettings) {
+                              e.preventDefault();
+                              return;
+                            }
+                            // Call toggle function which handles state update and backend save
+                            toggleStaffManagement();
+                          }}
+                          disabled={savingDisplaySettings}
+                          className="sr-only peer"
+                        />
+                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 ${savingDisplaySettings ? 'opacity-50' : ''}`}></div>
+                      </label>
+                    </div>
                   </div>
+                  {savingDisplaySettings && (
+                    <p className="text-xs text-gray-500 mt-2">Saving...</p>
+                  )}
                 </div>
               </div>
             )}
@@ -726,28 +956,19 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Company Name
+                      Property Name
                     </label>
                     <input
                       type="text"
-                      value={displaySettings.companyName}
-                      onChange={(e) => handleDisplaySettingChange('companyName', e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Enter company name"
+                      value={property?.name || property?.property_name || property?.title || property?.building_name || 'N/A'}
+                      readOnly
+                      disabled
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
+                      placeholder="Property name from database"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Company Tagline
-                    </label>
-                    <input
-                      type="text"
-                      value={displaySettings.companyTagline}
-                      onChange={(e) => handleDisplaySettingChange('companyTagline', e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Enter company tagline"
-                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      This is the property name from the database and cannot be edited here. It will appear on the login page for this property subdomain.
+                    </p>
                   </div>
 
                   <div>
@@ -1139,15 +1360,18 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
         )}
 
         {/* Login Page Preview Modal */}
-        {showLogoUpload && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-70 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        {showPreviewModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-semibold text-gray-900">Login Page Preview</h3>
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-900">Login Page Preview</h3>
+                    <p className="text-sm text-gray-500 mt-1">Preview how your login page will look to users</p>
+                  </div>
                   <button
-                    onClick={() => setShowLogoUpload(false)}
-                    className="text-gray-400 hover:text-gray-600"
+                    onClick={() => setShowPreviewModal(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
                   >
                     <X className="w-6 h-6" />
                   </button>
@@ -1167,117 +1391,136 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
                             backgroundImage: 'linear-gradient(135deg, #374151 0%, #1F2937 100%)'
                           }}
                         >
-                          {/* Logo */}
-                          <div className="text-white text-2xl font-bold">
-                            {displaySettings.logoUrl ? (
-                              <img 
-                                src={displaySettings.logoUrl.startsWith('http') 
-                                  ? displaySettings.logoUrl 
-                                  : displaySettings.logoUrl.startsWith('/')
-                                  ? `http://localhost:5001${displaySettings.logoUrl}`
-                                  : `http://localhost:5001/api${displaySettings.logoUrl}`} 
-                                alt="Company Logo" 
-                                className="w-12 h-12 object-contain"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                  e.target.nextSibling.style.display = 'block';
+                          {/* Top Logo Section - Matches actual login page */}
+                          <div className="flex items-center space-x-4 justify-start">
+                            <div className="w-14 h-14 rounded-2xl bg-white/15 border border-white/20 backdrop-blur flex items-center justify-center shadow-lg overflow-hidden relative">
+                              {displaySettings.logoUrl && displaySettings.logoUrl.trim() !== '' ? (
+                                <img 
+                                  key={`preview-logo-${displaySettings.logoUrl}-${property?.id || 'none'}`}
+                                  src={(() => {
+                                    const logoUrl = displaySettings.logoUrl;
+                                    let fullUrl;
+                                    if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+                                      fullUrl = logoUrl;
+                                    } else if (logoUrl.startsWith('/api/')) {
+                                      fullUrl = `http://localhost:5001${logoUrl}`;
+                                    } else if (logoUrl.startsWith('/')) {
+                                      fullUrl = `http://localhost:5001${logoUrl}`;
+                                    } else {
+                                      fullUrl = `http://localhost:5001/api/${logoUrl}`;
+                                    }
+                                    return fullUrl;
+                                  })()}
+                                  alt="Property Logo" 
+                                  className="w-full h-full object-contain p-1"
+                                  style={{ display: 'block' }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                                    if (fallback) {
+                                      fallback.style.display = 'block';
+                                      fallback.classList.remove('hidden');
+                                    }
+                                  }}
+                                  onLoad={(e) => {
+                                    const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                                    if (fallback) {
+                                      fallback.style.display = 'none';
+                                      fallback.classList.add('hidden');
+                                    }
+                                  }}
+                                />
+                              ) : null}
+                              <svg
+                                className={`w-8 h-8 text-white logo-fallback ${displaySettings.logoUrl && displaySettings.logoUrl.trim() !== '' ? 'hidden' : ''}`}
+                                style={{ 
+                                  display: displaySettings.logoUrl && displaySettings.logoUrl.trim() !== '' ? 'none' : 'block',
+                                  position: 'absolute'
                                 }}
-                              />
-                            ) : null}
-                            {!displaySettings.logoUrl && (
-                              <span>LOGO</span>
-                            )}
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M3 21h18" />
+                                <path d="M5 21V9l7-5 7 5v12" />
+                                <path d="M9 21v-6h6v6" />
+                                <path d="M9 10h.01M15 10h.01M12 7h.01" />
+                              </svg>
+                            </div>
+                            <div className="text-white">
+                              <p className="uppercase text-xs tracking-[0.4em] text-white/70">
+                                Property Portal
+                              </p>
+                              <p className="text-xl font-semibold">{property?.name || property?.property_name || property?.title || property?.building_name || 'JACS'}</p>
+                            </div>
                           </div>
                           
                           {/* Welcome Message */}
-                          <div className="text-white">
-                            <h1 className="text-3xl font-bold mb-2 leading-tight">
-                              Welcome to<br />
-                              {displaySettings.companyName || 'JACS'}
+                          <div className="text-white space-y-4">
+                            <h1 className="text-4xl font-bold leading-tight">
+                              Welcome to {property?.name || property?.property_name || property?.title || property?.building_name || 'JACS'}
                             </h1>
-                            <p className="text-lg opacity-90">{displaySettings.companyTagline || 'by JACS'}</p>
+                            <p className="text-xl opacity-90 font-light">by JACS</p>
                           </div>
                         </div>
 
                         {/* Right Panel - Light Theme */}
                         <div className="w-1/2 p-8 flex flex-col justify-center bg-white">
                           <div className="max-w-sm mx-auto w-full">
-                            {/* Lock Icon */}
-                            <div className="text-center mb-8">
-                              <div 
-                                className="w-12 h-12 mx-auto rounded-lg flex items-center justify-center"
-                                style={{ backgroundColor: displaySettings.primaryColor }}
-                              >
-                                <Lock className="w-6 h-6 text-white" />
-                              </div>
+                            {/* Header - Matches actual login form */}
+                            <div className="mb-8 text-center">
+                              <h1 className="text-2xl font-semibold text-gray-900">Welcome back</h1>
+                              <p className="text-sm text-gray-500 mt-1">Sign in to continue to your dashboard</p>
                             </div>
 
                             {/* Login Form */}
-                            <div className="space-y-4">
-                              <div>
+                            <div className="space-y-6 bg-white/80 backdrop-blur rounded-2xl border border-gray-100 p-6 shadow-sm">
+                              <div className="space-y-2">
                                 <input
                                   type="text"
-                                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                  className="w-full h-12 px-4 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                                   placeholder="Enter Username"
                                 />
                               </div>
-                              <div className="relative">
-                                <input
-                                  type="password"
-                                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                                  placeholder="Enter Password"
-                                />
-                                <button className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                                  <Eye className="w-5 h-5 text-gray-400" />
-                                </button>
+                              <div className="space-y-2">
+                                <div className="relative">
+                                  <input
+                                    type="password"
+                                    className="w-full h-12 px-4 pr-10 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                    placeholder="Enter Password"
+                                  />
+                                  <button className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                    <Eye className="w-5 h-5" />
+                                  </button>
+                                </div>
                               </div>
 
                               {/* Remember Me & Forgot Password */}
-                              <div className="flex items-center justify-between text-sm">
-                                <label className="flex items-center">
-                                  <input type="checkbox" className="mr-2" />
-                                  Remember Me
+                              <div className="flex items-center justify-between">
+                                <label className="flex items-center space-x-2">
+                                  <input type="checkbox" className="w-4 h-4" />
+                                  <span className="text-sm text-gray-600">Remember Me</span>
                                 </label>
-                                <a href="#" className="text-orange-500 hover:text-orange-600">
+                                <button className="text-sm text-gray-600 hover:text-black transition-colors">
                                   Forgot Password?
-                                </a>
+                                </button>
                               </div>
 
                               {/* Login Button */}
                               <button
-                                className="w-full py-3 px-4 rounded-lg font-semibold text-white text-sm uppercase tracking-wide transition-colors"
-                                style={{ backgroundColor: displaySettings.primaryColor }}
+                                className="w-full h-12 text-white font-medium rounded-lg transition-all duration-300 shadow-sm"
+                                style={{ backgroundColor: displaySettings.primaryColor || '#000000' }}
                               >
                                 LOGIN
                               </button>
 
-                              {/* Sign Up Link */}
-                              <div className="text-center text-sm">
-                                <span className="text-gray-600">Don't have an account? </span>
-                                <a href="#" className="text-orange-500 hover:text-orange-600 font-medium">
-                                  Sign Up
-                                </a>
-                              </div>
-
-                              {/* Social Login */}
-                              <div className="relative my-6">
-                                <div className="absolute inset-0 flex items-center">
-                                  <div className="w-full border-t border-gray-300"></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                  <span className="px-2 bg-white text-gray-500">OR LOGIN WITH</span>
-                                </div>
-                              </div>
-
-                              {/* Social Buttons */}
-                              <div className="grid grid-cols-2 gap-3">
-                                <button className="flex items-center justify-center py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                                  <span className="text-lg font-bold">G</span>
-                                </button>
-                                <button className="flex items-center justify-center py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                                  <span className="text-lg font-bold">f</span>
-                                </button>
-                              </div>
+                              {/* Terms and Privacy Policy */}
+                              <p className="text-xs text-center text-gray-400">
+                                By continuing, you agree to the Terms and Privacy Policy
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -1290,8 +1533,8 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
                     <h4 className="text-lg font-medium text-gray-900">Current Settings</h4>
                     <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                       <div className="flex justify-between">
-                        <span className="text-sm font-medium text-gray-600">Company Name:</span>
-                        <span className="text-sm text-gray-900">{displaySettings.companyName}</span>
+                        <span className="text-sm font-medium text-gray-600">Property Name:</span>
+                        <span className="text-sm text-gray-900">{property?.name || property?.property_name || property?.title || property?.building_name || 'N/A'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm font-medium text-gray-600">Layout:</span>
@@ -1334,12 +1577,12 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
                   </div>
                 </div>
                 
-                <div className="flex justify-end mt-6">
+                <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
                   <button
-                    onClick={() => setShowLogoUpload(false)}
+                    onClick={() => setShowPreviewModal(false)}
                     className="px-6 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   >
-                    Close Preview
+                    Close
                   </button>
                 </div>
               </div>

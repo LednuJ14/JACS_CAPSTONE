@@ -121,13 +121,27 @@ class MaintenanceRequest(db.Model):
         """Check if request is overdue."""
         status_str = str(self.status).lower()
         if self.scheduled_date and status_str not in ['completed', 'cancelled']:
-            return datetime.now(timezone.utc) > self.scheduled_date
+            now = datetime.now(timezone.utc)
+            scheduled = self.scheduled_date
+            # Ensure both are timezone-aware
+            if scheduled.tzinfo is None:
+                # If scheduled_date is naive, assume UTC
+                scheduled = scheduled.replace(tzinfo=timezone.utc)
+            return now > scheduled
         return False
     
     @property
     def days_since_created(self):
         """Get days since request was created."""
-        return (datetime.now(timezone.utc) - self.created_at).days
+        if not self.created_at:
+            return 0
+        now = datetime.now(timezone.utc)
+        created = self.created_at
+        # Ensure both are timezone-aware
+        if created.tzinfo is None:
+            # If created_at is naive, assume UTC
+            created = created.replace(tzinfo=timezone.utc)
+        return (now - created).days
     
     def to_dict(self, include_tenant=False, include_unit=False, include_assigned_staff=False):
         """Convert maintenance request to dictionary."""

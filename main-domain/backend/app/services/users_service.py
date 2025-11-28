@@ -90,7 +90,7 @@ class UsersService:
                 raise UsersValidationError('Invalid phone number', {'message': phone_error})
             if user.phone_number != formatted_phone:
                 user.phone_number = formatted_phone
-                user.phone_verified = False
+                # phone_verified removed - not used in system
                 changes_made = True
         # DOB
         if 'date_of_birth' in payload and payload['date_of_birth']:
@@ -120,7 +120,7 @@ class UsersService:
                 except ValueError:
                     raise UsersValidationError('Invalid role')
         if changes_made:
-            user.updated_by = requesting_user.id
+            # updated_by removed - not critical for audit trail
             db.session.commit()
             return {'message': 'User updated successfully', 'user': user.to_dict()}
         else:
@@ -136,7 +136,7 @@ class UsersService:
             raise UsersValidationError('Invalid status')
         old_status = user.status
         user.status = new_status
-        user.updated_by = requesting_user.id
+        # updated_by removed - not critical for audit trail
         db.session.commit()
         return {'message': f'User status updated from {old_status.value} to {new_status.value}', 'user': user.to_dict(include_sensitive=True)}
 

@@ -227,18 +227,27 @@ def create_request():
         db.session.add(maintenance_request)
         db.session.commit()
         
-        # Create notification for tenant
+        # ============================================================================
+        # NOTIFICATION SYSTEM: Send notifications when request is created
+        # ============================================================================
+        # 1. Notify tenant that their request was successfully created
+        # 2. Notify property manager about the new maintenance request
+        # ============================================================================
+        
+        # Create notification for tenant - confirms request submission
         try:
             from services.notification_service import NotificationService
             NotificationService.notify_request_created(maintenance_request)
+            current_app.logger.info(f"Created tenant notification for request {maintenance_request.id} (tenant {tenant.id})")
         except Exception as notif_error:
             # Don't fail request creation if notification fails
-            current_app.logger.warning(f"Failed to create notification for request {maintenance_request.id}: {str(notif_error)}")
+            current_app.logger.warning(f"Failed to create tenant notification for request {maintenance_request.id}: {str(notif_error)}")
         
-        # Create notification for property manager
+        # Create notification for property manager - alerts about new request
         try:
             from services.notification_service import NotificationService
             NotificationService.notify_pm_new_request(maintenance_request)
+            current_app.logger.info(f"Created PM notification for request {maintenance_request.id} (property {property_id})")
         except Exception as notif_error:
             # Don't fail request creation if notification fails
             current_app.logger.warning(f"Failed to create PM notification for request {maintenance_request.id}: {str(notif_error)}")
@@ -361,6 +370,7 @@ def update_request(request_id):
                     maintenance_request.attachments = str(data['attachments']) if data['attachments'] else None
         else:
             # Managers can update: status, assigned_to, scheduled_date, work_notes, resolution_notes
+            old_status = None
             if 'status' in data:
                 status = str(data['status']).lower()
                 if status in ['pending', 'in_progress', 'completed', 'cancelled', 'on_hold']:
@@ -430,25 +440,61 @@ def update_request(request_id):
             from models.staff import Staff
             if 'status' in data:
                 new_status = str(data['status']).lower()
+                # old_status was already captured earlier in the code when status was changed
+                
                 if new_status == 'completed':
+                    # Notify tenant that request is completed
                     NotificationService.notify_request_completed(maintenance_request)
                     # Also notify assigned staff
                     if maintenance_request.assigned_to:
                         staff = Staff.query.get(maintenance_request.assigned_to)
                         if staff and staff.user_id:
                             NotificationService.notify_staff_request_updated(maintenance_request, staff.user_id)
-                elif new_status == 'in_progress' and maintenance_request.assigned_to:
-                    NotificationService.notify_request_assigned(maintenance_request)
+                
+                elif new_status == 'cancelled':
+                    # Notify tenant that request is cancelled/rejected
+                    rejection_reason = None
+                    if maintenance_request.work_notes:
+                        # Extract rejection reason from work_notes if it starts with "Rejected:"
+                        if 'Rejected:' in maintenance_request.work_notes:
+                            parts = maintenance_request.work_notes.split('Rejected:')
+                            if len(parts) > 1:
+                                rejection_reason = parts[1].strip()
+                    NotificationService.notify_request_cancelled(maintenance_request, reason=rejection_reason)
+                    # Also notify assigned staff if there was one
+                    if maintenance_request.assigned_to:
+                        staff = Staff.query.get(maintenance_request.assigned_to)
+                        if staff and staff.user_id:
+                            NotificationService.notify_staff_request_updated(maintenance_request, staff.user_id)
+                
+                elif new_status == 'in_progress':
+                    # Notify tenant that request is approved/in progress
+                    NotificationService.notify_request_approved(maintenance_request)
+                    # If staff is assigned, also send assignment notification
+                    if maintenance_request.assigned_to:
+                        NotificationService.notify_request_assigned(maintenance_request)
+                        # Notify assigned staff
+                        staff = Staff.query.get(maintenance_request.assigned_to)
+                        if staff and staff.user_id:
+                            NotificationService.notify_staff_request_assigned(maintenance_request, staff.user_id)
                 else:
+                    # Other status changes (pending, on_hold, etc.)
                     NotificationService.notify_request_updated(maintenance_request)
                     # Also notify assigned staff if status changed
                     if maintenance_request.assigned_to:
                         staff = Staff.query.get(maintenance_request.assigned_to)
                         if staff and staff.user_id:
                             NotificationService.notify_staff_request_updated(maintenance_request, staff.user_id)
+            
             elif 'assigned_to' in data and maintenance_request.assigned_to:
+                # Staff assignment (without status change)
                 NotificationService.notify_request_assigned(maintenance_request)
+                # Notify assigned staff
+                staff = Staff.query.get(maintenance_request.assigned_to)
+                if staff and staff.user_id:
+                    NotificationService.notify_staff_request_assigned(maintenance_request, staff.user_id)
             else:
+                # Other field updates (work_notes, scheduled_date, etc.)
                 NotificationService.notify_request_updated(maintenance_request)
                 # Also notify assigned staff if other fields were updated
                 if maintenance_request.assigned_to:

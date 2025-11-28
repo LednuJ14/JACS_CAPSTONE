@@ -13,8 +13,6 @@ const Profile = ({ isOpen, onClose }) => {
       email: '',
       phone: '',
       position: 'Property Manager',
-      location: '',
-      bio: 'Loading profile information...',
       avatar: defaultProfile
     },
     stats: {
@@ -44,9 +42,8 @@ const Profile = ({ isOpen, onClose }) => {
           name: profileData.personalInfo.name,
           email: profileData.personalInfo.email,
           phone: profileData.personalInfo.phone,
-          position: profileData.personalInfo.position,
-          location: profileData.personalInfo.location,
-          bio: profileData.personalInfo.bio
+          position: profileData.personalInfo.position
+          // location and bio removed - no longer stored in database
         }
       };
 
@@ -85,8 +82,7 @@ const Profile = ({ isOpen, onClose }) => {
           email: profile.email || prev.personalInfo.email,
           phone: profile.phone || prev.personalInfo.phone,
           position: profile.position || prev.personalInfo.position,
-          location: profile.location || prev.personalInfo.location,
-          bio: profile.bio || prev.personalInfo.bio,
+          // location and bio removed - using defaults from backend
           avatar: profile.avatar || defaultProfile
         },
         recentActivity: data?.recentActivity || prev.recentActivity
@@ -182,13 +178,6 @@ const Profile = ({ isOpen, onClose }) => {
               </div>
               <p className="text-xl text-gray-300 mb-1">{profileData.personalInfo.position}</p>
               <div className="flex flex-wrap items-center gap-4 text-sm text-gray-300">
-                <span className="flex items-center">
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  {profileData.personalInfo.location}
-                </span>
                 <span className="flex items-center">
                   <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -354,26 +343,7 @@ const Profile = ({ isOpen, onClose }) => {
               disabled={!isEditing}
             />
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Location</label>
-            <input
-              type="text"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200"
-              value={profileData.personalInfo.location}
-              onChange={(e) => handleInputChange('personalInfo', 'location', e.target.value)}
-              disabled={!isEditing}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Bio</label>
-            <textarea
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 resize-none"
-              rows={4}
-              value={profileData.personalInfo.bio}
-              onChange={(e) => handleInputChange('personalInfo', 'bio', e.target.value)}
-              disabled={!isEditing}
-            />
-          </div>
+          {/* Location and Bio fields removed - no longer stored in database */}
         </div>
         {isEditing && (
           <div className="flex justify-end space-x-3 mt-8">

@@ -33,8 +33,8 @@ def get_tenant_notifications(current_user):
         
         # Get notifications
         notifications_query = text(f"""
-            SELECT id, user_id, type, title, message, is_read, 
-                   related_id, related_type, created_at, read_at
+            SELECT id, user_id, notification_type, title, message, is_read, 
+                   related_entity_id, related_entity_type, created_at, read_at
             FROM notifications
             WHERE {where_sql}
             ORDER BY created_at DESC
@@ -94,7 +94,7 @@ def get_tenant_notifications(current_user):
                         return str(dt) if dt else None
                 
                 # Safely handle enum type
-                notification_type = row.get('type')
+                notification_type = row.get('notification_type')
                 if notification_type:
                     # Try to validate it's a valid enum, otherwise use as string
                     try:
@@ -112,8 +112,8 @@ def get_tenant_notifications(current_user):
                     'title': row.get('title'),
                     'message': row.get('message'),
                     'is_read': bool(row.get('is_read')),
-                    'related_id': row.get('related_id'),
-                    'related_type': row.get('related_type'),
+                    'related_id': row.get('related_entity_id'),
+                    'related_type': row.get('related_entity_type'),
                     'created_at': safe_iso(row.get('created_at')),
                     'read_at': safe_iso(row.get('read_at'))
                 })
@@ -144,7 +144,7 @@ def mark_notification_as_read(current_user, notification_id):
         
         # Check if notification exists and belongs to user
         check_query = text("""
-            SELECT id, is_read, type, title, message, related_id, related_type, created_at, read_at
+            SELECT id, is_read, notification_type, title, message, related_entity_id, related_entity_type, created_at, read_at
             FROM notifications
             WHERE id = :nid AND user_id = :uid AND is_deleted = 0
         """)
@@ -183,7 +183,7 @@ def mark_notification_as_read(current_user, notification_id):
                 return str(dt) if dt else None
         
         # Safely handle enum type
-        notification_type = updated_row.get('type')
+        notification_type = updated_row.get('notification_type')
         if notification_type:
             try:
                 NotificationType(notification_type)
@@ -199,8 +199,8 @@ def mark_notification_as_read(current_user, notification_id):
             'title': updated_row.get('title'),
             'message': updated_row.get('message'),
             'is_read': bool(updated_row.get('is_read')),
-            'related_id': updated_row.get('related_id'),
-            'related_type': updated_row.get('related_type'),
+            'related_id': updated_row.get('related_entity_id'),
+            'related_type': updated_row.get('related_entity_type'),
             'created_at': safe_iso(updated_row.get('created_at')),
             'read_at': safe_iso(updated_row.get('read_at'))
         }

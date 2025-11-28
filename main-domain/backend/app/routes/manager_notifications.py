@@ -47,8 +47,8 @@ def get_manager_notifications(current_user):
         
         # Get notifications
         notifications_query = text(f"""
-            SELECT id, user_id, type, title, message, is_read, 
-                   related_id, related_type, created_at, read_at
+            SELECT id, user_id, notification_type, title, message, is_read, 
+                   related_entity_id, related_entity_type, created_at, read_at
             FROM notifications
             WHERE {where_sql}
             ORDER BY created_at DESC
@@ -87,7 +87,7 @@ def get_manager_notifications(current_user):
         notifications = []
         for row in notifications_rows:
             # Safely handle enum conversion
-            notification_type = row.get('type')
+            notification_type = row.get('notification_type')
             try:
                 if isinstance(notification_type, str):
                     # Try to validate it's a valid enum
@@ -107,8 +107,8 @@ def get_manager_notifications(current_user):
                 'title': row.get('title'),
                 'message': row.get('message'),
                 'is_read': bool(row.get('is_read')),
-                'related_id': row.get('related_id'),
-                'related_type': row.get('related_type'),
+                'related_id': row.get('related_entity_id'),
+                'related_type': row.get('related_entity_type'),
                 'created_at': safe_iso(row.get('created_at')),
                 'read_at': safe_iso(row.get('read_at'))
             })

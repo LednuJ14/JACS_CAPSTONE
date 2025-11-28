@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 import os
 from datetime import datetime, timezone
 from app import db
-from models.property import Property
+from models.property import Property, Unit
 from models.user import User
 
 property_bp = Blueprint('properties', __name__)
@@ -33,9 +33,9 @@ def get_properties():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Get properties managed by this user
+        # Get properties owned by this user (use owner_id since manager_id doesn't exist)
         try:
-            properties = Property.query.filter_by(manager_id=user.id).all()
+            properties = Property.query.filter_by(owner_id=user.id).all()
             
             # Safely convert to dict, handling display_settings
             properties_list = []
@@ -74,19 +74,43 @@ def get_display_settings(property_id):
     """Get display settings for a property."""
     try:
         current_user_id = get_jwt_identity()
+        
+        # Convert string to int if needed (JWT returns string)
+        if isinstance(current_user_id, str):
+            try:
+                current_user_id = int(current_user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
         property_obj = Property.query.get(property_id)
         
         if not property_obj:
             return jsonify({'error': 'Property not found'}), 404
         
-        # Verify user is the manager
-        if property_obj.manager_id != current_user_id:
+        # Verify user is the owner/manager (use owner_id since manager_id doesn't exist)
+        # Compare as integers to avoid type mismatch
+        if int(property_obj.owner_id) != int(current_user_id):
+            current_app.logger.warning(f"Authorization failed for GET: property owner_id={property_obj.owner_id} (type: {type(property_obj.owner_id)}), user_id={current_user_id} (type: {type(current_user_id)})")
             return jsonify({'error': 'Unauthorized'}), 403
         
         # Get display settings or return defaults
-        display_settings = getattr(property_obj, 'display_settings', None) or {
+        # display_settings is stored as JSON string in database, parse it
+        import json
+        display_settings = {}
+        if property_obj.display_settings:
+            try:
+                if isinstance(property_obj.display_settings, str):
+                    display_settings = json.loads(property_obj.display_settings)
+                elif isinstance(property_obj.display_settings, dict):
+                    display_settings = property_obj.display_settings
+            except (json.JSONDecodeError, TypeError):
+                display_settings = {}
+        
+        # If no display settings, use defaults
+        if not display_settings:
+            display_settings = {
             'companyName': property_obj.name or 'JACS',
-            'companyTagline': 'Joint Association & Community System - Cebu City',
+            'propertyName': property_obj.name or 'JACS',
             'logoUrl': '',
             'primaryColor': '#000000',
             'secondaryColor': '#3B82F6',
@@ -98,8 +122,9 @@ def get_display_settings(property_id):
             'sidebarStyle': 'collapsible',
             'borderRadius': 'medium',
             'fontFamily': 'inter',
-            'fontSize': 'medium'
-        }
+            'fontSize': 'medium',
+            'staffManagementEnabled': True  # Default to enabled
+            }
         
         return jsonify(display_settings), 200
     except Exception as e:
@@ -112,13 +137,23 @@ def update_display_settings(property_id):
     """Update display settings for a property."""
     try:
         current_user_id = get_jwt_identity()
+        
+        # Convert string to int if needed (JWT returns string)
+        if isinstance(current_user_id, str):
+            try:
+                current_user_id = int(current_user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
         property_obj = Property.query.get(property_id)
         
         if not property_obj:
             return jsonify({'error': 'Property not found'}), 404
         
-        # Verify user is the manager
-        if property_obj.manager_id != current_user_id:
+        # Verify user is the owner/manager (use owner_id since manager_id doesn't exist)
+        # Compare as integers to avoid type mismatch
+        if int(property_obj.owner_id) != int(current_user_id):
+            current_app.logger.warning(f"Authorization failed for PUT: property owner_id={property_obj.owner_id} (type: {type(property_obj.owner_id)}), user_id={current_user_id} (type: {type(current_user_id)})")
             return jsonify({'error': 'Unauthorized'}), 403
         
         data = request.get_json()
@@ -126,22 +161,40 @@ def update_display_settings(property_id):
             return jsonify({'error': 'No data provided'}), 400
         
         # Get existing settings or create new
-        display_settings = getattr(property_obj, 'display_settings', None) or {}
+        # display_settings is stored as JSON string in database, parse it
+        import json
+        display_settings = {}
+        if property_obj.display_settings:
+            try:
+                if isinstance(property_obj.display_settings, str):
+                    display_settings = json.loads(property_obj.display_settings)
+                elif isinstance(property_obj.display_settings, dict):
+                    display_settings = property_obj.display_settings
+                else:
+                    display_settings = {}
+            except (json.JSONDecodeError, TypeError):
+                display_settings = {}
         
-        # Update allowed fields
+        # Update allowed fields (include staffManagementEnabled and propertyName)
         allowed_fields = [
-            'companyName', 'companyTagline', 'logoUrl', 'primaryColor', 
+            'companyName', 'propertyName', 'logoUrl', 'primaryColor', 
             'secondaryColor', 'accentColor', 'backgroundImage', 'loginLayout',
             'websiteTheme', 'headerStyle', 'sidebarStyle', 'borderRadius',
-            'fontFamily', 'fontSize'
+            'fontFamily', 'fontSize', 'staffManagementEnabled'
         ]
         
         for field in allowed_fields:
             if field in data:
                 display_settings[field] = data[field]
         
-        # Update property
-        property_obj.display_settings = display_settings
+        # Sync propertyName to companyName for backward compatibility
+        if 'propertyName' in data and 'companyName' not in data:
+            display_settings['companyName'] = data['propertyName']
+        elif 'companyName' in data and 'propertyName' not in data:
+            display_settings['propertyName'] = data['companyName']
+        
+        # Update property - store as JSON string
+        property_obj.display_settings = json.dumps(display_settings) if display_settings else None
         property_obj.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         
@@ -165,8 +218,15 @@ def upload_logo(property_id):
         if not property_obj:
             return jsonify({'error': 'Property not found'}), 404
         
-        # Verify user is the manager
-        if property_obj.manager_id != current_user_id:
+        # Verify user is the owner/manager (use owner_id since manager_id doesn't exist)
+        # Convert string to int if needed
+        if isinstance(current_user_id, str):
+            try:
+                current_user_id = int(current_user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
+        if int(property_obj.owner_id) != int(current_user_id):
             return jsonify({'error': 'Unauthorized'}), 403
         
         if 'file' not in request.files:
@@ -204,12 +264,58 @@ def upload_logo(property_id):
         # Generate URL (relative path - will be served by Flask route)
         logo_url = f"/api/properties/{property_id}/logo/{filename}"
         
-        # Update display settings
-        display_settings = getattr(property_obj, 'display_settings', None) or {}
+        # Update display settings - parse existing JSON string first
+        import json
+        display_settings = {}
+        had_logo = False
+        
+        # Check if logo already existed before updating
+        if property_obj.display_settings:
+            try:
+                if isinstance(property_obj.display_settings, str):
+                    old_settings = json.loads(property_obj.display_settings)
+                elif isinstance(property_obj.display_settings, dict):
+                    old_settings = property_obj.display_settings
+                else:
+                    old_settings = {}
+                
+                # Check if logo existed
+                had_logo = bool(old_settings.get('logoUrl'))
+                # Copy existing settings
+                display_settings = old_settings.copy()
+            except (json.JSONDecodeError, TypeError):
+                display_settings = {}
+        
+        # Update logo URL
         display_settings['logoUrl'] = logo_url
-        if hasattr(property_obj, 'display_settings'):
-            property_obj.display_settings = display_settings
+        
+        # Save as JSON string
+        property_obj.display_settings = json.dumps(display_settings) if display_settings else None
         property_obj.updated_at = datetime.now(timezone.utc)
+        
+        # Create notification for property manager about logo update
+        try:
+            from models.notification import Notification, NotificationType, NotificationPriority
+            
+            notification_title = 'Logo Updated' if had_logo else 'Logo Uploaded'
+            notification_message = f'Your property logo has been {"updated" if had_logo else "uploaded"} successfully. The new logo will appear on the login page and header.'
+            
+            notification = Notification(
+                user_id=current_user_id,
+                notification_type=NotificationType.LOGO_UPDATED.value,
+                title=notification_title,
+                message=notification_message,
+                recipient_type='property_manager',
+                priority=NotificationPriority.MEDIUM.value,
+                related_entity_type='property',
+                related_entity_id=property_id,
+                action_url=f'/dashboard'  # Link to dashboard where they can see the logo
+            )
+            db.session.add(notification)
+        except Exception as notif_error:
+            # Log error but don't fail the logo upload
+            current_app.logger.warning(f"Failed to create logo update notification: {str(notif_error)}")
+        
         db.session.commit()
         
         return jsonify({
@@ -234,3 +340,175 @@ def get_logo(property_id, filename):
     except Exception as e:
         current_app.logger.error(f"Get logo error: {str(e)}")
         return jsonify({'error': 'Failed to get logo'}), 500
+
+@property_bp.route('/<int:property_id>/units', methods=['GET'])
+@jwt_required()
+def get_property_units(property_id):
+    """Get all units for a property."""
+    try:
+        current_user_id = get_jwt_identity()
+        
+        # Convert string to int if needed
+        if isinstance(current_user_id, str):
+            try:
+                current_user_id = int(current_user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
+        property_obj = Property.query.get(property_id)
+        
+        if not property_obj:
+            return jsonify({'error': 'Property not found'}), 404
+        
+        # For subdomain access, allow any authenticated user to view units for the property
+        # This is needed because in subdomain context, the user might be a property manager
+        # who manages the property but isn't the owner
+        # We only verify that the property exists and user is authenticated
+        current_app.logger.info(f"Allowing unit access for authenticated user {current_user_id} to property {property_id} (subdomain context)")
+        
+        # Get all units for this property - use raw SQL to avoid enum validation issues
+        try:
+            from sqlalchemy import text
+            # Query units directly from database to avoid enum validation errors
+            units_data = db.session.execute(
+                text("""
+                    SELECT id, property_id, unit_name, bedrooms, bathrooms, size_sqm, 
+                           monthly_rent, security_deposit, status, description, floor_number
+                    FROM units
+                    WHERE property_id = :property_id
+                """),
+                {'property_id': property_id}
+            ).fetchall()
+            
+            units_list = []
+            for row in units_data:
+                try:
+                    # Convert row to dict
+                    unit_dict = {
+                        'id': row[0],
+                        'property_id': row[1],
+                        'unit_name': row[2] or f'Unit {row[0]}',
+                        'unit_number': row[2] or f'Unit {row[0]}',
+                        'name': row[2] or f'Unit {row[0]}',
+                        'bedrooms': row[3] or 0,
+                        'bathrooms': str(row[4]).lower() if row[4] else 'own',  # Normalize to lowercase
+                        'size_sqm': row[5],
+                        'monthly_rent': float(row[6]) if row[6] else None,
+                        'security_deposit': float(row[7]) if row[7] else None,
+                        'status': str(row[8]).lower() if row[8] else 'vacant',
+                        'description': row[9],
+                        'floor_number': row[10]
+                    }
+                    units_list.append(unit_dict)
+                except Exception as row_error:
+                    current_app.logger.warning(f"Error processing unit row: {str(row_error)}")
+                    # Add minimal data
+                    units_list.append({
+                        'id': row[0],
+                        'property_id': row[1],
+                        'unit_name': row[2] or f'Unit {row[0]}',
+                        'unit_number': row[2] or f'Unit {row[0]}',
+                        'name': row[2] or f'Unit {row[0]}'
+                    })
+            
+            return jsonify(units_list), 200
+        except Exception as units_error:
+            import traceback
+            error_trace = traceback.format_exc()
+            current_app.logger.error(f"Error fetching units: {str(units_error)}\n{error_trace}")
+            return jsonify({'error': 'Failed to fetch units', 'details': str(units_error) if current_app.config.get('DEBUG') else None}), 500
+            
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        current_app.logger.error(f"Get property units error: {str(e)}\n{error_trace}")
+        return jsonify({'error': 'Failed to get units', 'details': str(e) if current_app.config.get('DEBUG') else None}), 500
+
+@property_bp.route('/public/by-subdomain', methods=['GET'])
+def get_property_by_subdomain():
+    """Get property data by subdomain (public endpoint for login page)."""
+    try:
+        # Get subdomain from request headers or query params
+        subdomain = request.headers.get('X-Subdomain') or request.args.get('subdomain')
+        
+        if not subdomain:
+            # Try to extract from hostname
+            hostname = request.headers.get('Host', '')
+            if hostname:
+                parts = hostname.split('.')
+                if parts:
+                    subdomain = parts[0].replace('-', '_').lower()
+        
+        if not subdomain or subdomain.lower() == 'localhost':
+            return jsonify({'error': 'Subdomain not provided'}), 400
+        
+        # Normalize subdomain (remove numeric suffixes like -11)
+        import re
+        normalized_subdomain = re.sub(r'-\d+$', '', subdomain).replace('-', '_').replace(' ', '_').lower()
+        original_subdomain = subdomain.lower()
+        
+        # Try to find property by matching subdomain pattern in name
+        # First try exact or close match
+        properties = Property.query.filter(
+            db.or_(
+                db.func.lower(db.func.replace(db.func.replace(Property.name, ' ', '_'), '-', '_')).like(f'%{normalized_subdomain}%'),
+                Property.name.ilike(f'%{normalized_subdomain}%'),
+                Property.name.ilike(f'%{original_subdomain}%')
+            )
+        ).all()
+        
+        if not properties:
+            # If no matches, try to get all properties and let frontend handle it
+            # Or return first property if only one exists (for development)
+            all_properties = Property.query.limit(1).all()
+            if all_properties:
+                property_obj = all_properties[0]
+            else:
+                return jsonify({'error': 'Property not found'}), 404
+        else:
+            # If multiple matches, prefer exact match or first one
+            property_obj = properties[0]
+            if len(properties) > 1:
+                # Try to find exact match
+                for p in properties:
+                    name_normalized = p.name.lower().replace(' ', '_').replace('-', '_')
+                    if name_normalized == normalized_subdomain or name_normalized.startswith(normalized_subdomain):
+                        property_obj = p
+                        break
+        
+        # Get property data with display settings
+        try:
+            prop_dict = property_obj.to_dict()
+        except Exception as dict_error:
+            current_app.logger.error(f"Error converting property to dict: {str(dict_error)}", exc_info=True)
+            # Return basic property info if to_dict fails
+            prop_dict = {
+                'id': property_obj.id,
+                'name': getattr(property_obj, 'name', None) or getattr(property_obj, 'title', None),
+                'address': getattr(property_obj, 'address', None),
+                'city': getattr(property_obj, 'city', None),
+                'portal_subdomain': getattr(property_obj, 'portal_subdomain', None),
+                'portal_enabled': getattr(property_obj, 'portal_enabled', False)
+            }
+        
+        # Load display settings
+        import json
+        display_settings = {}
+        try:
+            if hasattr(property_obj, 'display_settings') and property_obj.display_settings:
+                if isinstance(property_obj.display_settings, str):
+                    display_settings = json.loads(property_obj.display_settings)
+                elif isinstance(property_obj.display_settings, dict):
+                    display_settings = property_obj.display_settings
+        except (json.JSONDecodeError, TypeError, AttributeError) as settings_error:
+            current_app.logger.warning(f"Error parsing display_settings: {str(settings_error)}")
+            display_settings = {}
+        
+        prop_dict['display_settings'] = display_settings
+        
+        return jsonify(prop_dict), 200
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        current_app.logger.error(f"Get property by subdomain error: {str(e)}\n{error_trace}", exc_info=True)
+        return jsonify({'error': 'Failed to get property', 'details': str(e) if current_app.config.get('DEBUG', False) else None}), 500

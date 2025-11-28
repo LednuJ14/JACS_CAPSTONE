@@ -27,6 +27,7 @@ class NotificationType(enum.Enum):
     FEEDBACK_SUBMITTED = 'feedback_submitted'  # Tenant submitted feedback
     BILL_OVERDUE_ALERT = 'bill_overdue_alert'  # Alert for overdue bills
     TENANT_REGISTERED = 'tenant_registered'  # New tenant registered
+    LOGO_UPDATED = 'logo_updated'  # Property logo uploaded/updated
     
     # Staff notifications
     TASK_ASSIGNED = 'task_assigned'  # Task assigned to staff

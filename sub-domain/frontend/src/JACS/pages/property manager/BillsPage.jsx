@@ -20,6 +20,7 @@ const BillsPage = () => {
   const [selectedBillType, setSelectedBillType] = useState('all');
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showAddBill, setShowAddBill] = useState(false);
+  const [showEditBill, setShowEditBill] = useState(false);
   const [showBillDetails, setShowBillDetails] = useState(false);
   const [showPaymentProof, setShowPaymentProof] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
@@ -225,6 +226,154 @@ const BillsPage = () => {
     });
     setSaving(false);
     setAddError(null);
+  };
+
+  const closeEditBillModal = () => {
+    setShowEditBill(false);
+    setSelectedBill(null);
+    setForm({
+      tenant_id: 0,
+      bill_type: '',
+      amount: '',
+      due_date: '',
+      description: '',
+      priority_level: 'Medium',
+      payment_method: '',
+      late_fee_amount: '',
+      is_recurring: false,
+      recurring_frequency: '',
+      bill_category: '',
+      reference_number: '',
+      reminder_days: 3,
+      send_email_reminder: true,
+    });
+    setSaving(false);
+    setAddError(null);
+  };
+
+  const handleEditBill = async (bill) => {
+    setAddError(null);
+    setSelectedBill(bill);
+    
+    // Populate form with bill data
+    const fullBill = bill._fullData || bill;
+    setForm({
+      tenant_id: bill.tenant_id || 0,
+      bill_type: bill.bill_type || '',
+      amount: bill.amount || '',
+      due_date: bill.due_date ? (bill.due_date.includes('T') ? bill.due_date.split('T')[0] : bill.due_date) : '',
+      description: bill.description || fullBill.description || '',
+      priority_level: 'Medium',
+      payment_method: '',
+      late_fee_amount: '',
+      is_recurring: fullBill.is_recurring || false,
+      recurring_frequency: fullBill.recurring_frequency || '',
+      bill_category: '',
+      reference_number: fullBill.notes || '',
+      reminder_days: 3,
+      send_email_reminder: true,
+    });
+    
+    // Load tenants if not already loaded
+    try {
+      if (tenants.length === 0) {
+        const data = await apiService.getTenants();
+        setTenants(data);
+      }
+    } catch (e) {
+      console.error('Failed to load tenants:', e);
+    }
+    
+    setShowEditBill(true);
+  };
+
+  const handleUpdateBill = async () => {
+    setAddError(null);
+    if (!selectedBill || !form.tenant_id || !form.bill_type || !form.amount || !form.due_date) {
+      setAddError('Please fill in all required fields');
+      return;
+    }
+
+    const amountNumber = Number(form.amount);
+    if (isNaN(amountNumber) || amountNumber <= 0) {
+      setAddError('Amount must be a positive number');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      // Format due_date (backend expects YYYY-MM-DD)
+      const dueDateStr = form.due_date.includes('T') 
+        ? form.due_date.split('T')[0] 
+        : form.due_date;
+      
+      // Map bill_type to backend enum values (handle both frontend labels and backend values)
+      const billTypeMap = {
+        'Housing': 'rent',
+        'Electricity': 'utilities',
+        'Water': 'utilities',
+        'Internet': 'utilities',
+        'Maintenance': 'maintenance',
+        'Parking': 'parking',
+        'Other': 'other'
+      };
+      
+      // If it's already a backend value (rent, utilities, etc.), use it directly
+      // Otherwise, map from frontend label to backend value
+      const backendBillType = billTypeMap[form.bill_type] || form.bill_type.toLowerCase();
+      
+      // Create title from bill type if not provided
+      // Map backend value to display name for title
+      const billTypeDisplayMap = {
+        'rent': 'Rent',
+        'utilities': 'Utilities',
+        'maintenance': 'Maintenance',
+        'parking': 'Parking',
+        'other': 'Other'
+      };
+      const displayBillType = billTypeDisplayMap[backendBillType] || backendBillType.charAt(0).toUpperCase() + backendBillType.slice(1);
+      const title = form.description 
+        ? `${displayBillType} - ${form.description.substring(0, 50)}`
+        : `${displayBillType} Bill`;
+      
+      await apiService.updateBill(selectedBill.id, {
+        tenant_id: form.tenant_id,
+        bill_type: backendBillType,
+        title: title,
+        amount: amountNumber,
+        due_date: dueDateStr,
+        description: form.description || '',
+        is_recurring: form.is_recurring || false,
+        recurring_frequency: form.recurring_frequency || null,
+        notes: form.reference_number ? `Reference: ${form.reference_number}` : ''
+      });
+      
+      closeEditBillModal();
+      await fetchBillsData();
+    } catch (e) {
+      console.error('Update bill error:', e);
+      setAddError(e?.message || e?.error || 'Failed to update bill. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteBill = async (bill) => {
+    if (!confirm(`Are you sure you want to delete this bill? This action cannot be undone.\n\nBill: ${bill.bill_number || `#${bill.id}`}\nAmount: ₱${(bill.amount || 0).toLocaleString()}`)) {
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      await apiService.deleteBill(bill.id);
+      await fetchBillsData();
+    } catch (error) {
+      console.error('Failed to delete bill:', error);
+      alert(error?.message || error?.error || 'Failed to delete bill. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCreateBill = async () => {
@@ -641,10 +790,18 @@ const BillsPage = () => {
                               <FileCheck className="w-4 h-4" />
                             </button>
                           )}
-                          <button className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100">
+                          <button 
+                            onClick={() => handleEditBill(bill)}
+                            className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                            title="Edit bill"
+                          >
                             <Edit className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100">
+                          <button 
+                            onClick={() => handleDeleteBill(bill)}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                            title="Delete bill"
+                          >
                             <Trash2 className="w-4 h-4" />
                           </button>
                           <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
@@ -722,6 +879,275 @@ const BillsPage = () => {
               <AccountSettings />
               <ErrorBoundary />
             </React.Suspense>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Bill Modal */}
+      {showEditBill && selectedBill && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Edit Bill</h2>
+              <button
+                onClick={closeEditBillModal}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {addError && (
+              <div className="mb-4 text-sm text-red-700 bg-red-100 border border-red-200 rounded p-2">
+                {addError}
+              </div>
+            )}
+
+            <div className="space-y-4 max-h-96 overflow-y-auto">
+              {/* Basic Information Section */}
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Basic Information
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tenant *</label>
+                    <select
+                      value={form.tenant_id}
+                      onChange={(e) => setForm({ ...form, tenant_id: Number(e.target.value) })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value={0}>Select Tenant</option>
+                      {tenants.map(t => {
+                        const firstName = t.user?.first_name || '';
+                        const lastName = t.user?.last_name || '';
+                        const fullName = `${firstName} ${lastName}`.trim() || 'Unknown Tenant';
+                        return (
+                          <option key={t.id} value={t.id}>
+                            {fullName}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bill Type *</label>
+                    <select
+                      value={form.bill_type}
+                      onChange={(e) => setForm({ ...form, bill_type: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">Select Bill Type</option>
+                      <option value="rent">Rent</option>
+                      <option value="utilities">Utilities</option>
+                      <option value="maintenance">Maintenance</option>
+                      <option value="parking">Parking</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={form.amount}
+                      onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Due Date *</label>
+                    <input
+                      type="date"
+                      value={form.due_date}
+                      onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Additional details about this bill..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              {/* Advanced Settings Section */}
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2" />
+                  Advanced Settings
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Priority Level</label>
+                    <select
+                      value={form.priority_level}
+                      onChange={(e) => setForm({ ...form, priority_level: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="Low">Low</option>
+                      <option value="Medium">Medium</option>
+                      <option value="High">High</option>
+                      <option value="Emergency">Emergency</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                    <select
+                      value={form.payment_method}
+                      onChange={(e) => setForm({ ...form, payment_method: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">Select Payment Method</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Credit Card">Credit Card</option>
+                      <option value="Check">Check</option>
+                      <option value="Online Payment">Online Payment</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Amount</label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={form.late_fee_amount}
+                      onChange={(e) => setForm({ ...form, late_fee_amount: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                    <input
+                      type="text"
+                      value={form.reference_number}
+                      onChange={(e) => setForm({ ...form, reference_number: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="e.g., INV-2024-001"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Recurring Bill Section */}
+              <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                  <Repeat className="w-4 h-4 mr-2" />
+                  Recurring Bill Settings
+                </h3>
+                
+                <div className="flex items-center space-x-3 mb-4">
+                  <input
+                    type="checkbox"
+                    id="is_recurring_edit"
+                    checked={form.is_recurring}
+                    onChange={(e) => setForm({ ...form, is_recurring: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="is_recurring_edit" className="text-sm font-medium text-gray-700">
+                    This is a recurring bill
+                  </label>
+                </div>
+
+                {form.is_recurring && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Recurring Frequency</label>
+                    <select
+                      value={form.recurring_frequency}
+                      onChange={(e) => setForm({ ...form, recurring_frequency: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">Select Frequency</option>
+                      <option value="Weekly">Weekly</option>
+                      <option value="Monthly">Monthly</option>
+                      <option value="Quarterly">Quarterly</option>
+                      <option value="Annually">Annually</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Notification Settings Section */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                  <Bell className="w-4 h-4 mr-2" />
+                  Notification Settings
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reminder Days Before Due</label>
+                    <select
+                      value={form.reminder_days}
+                      onChange={(e) => setForm({ ...form, reminder_days: Number(e.target.value) })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value={1}>1 day</option>
+                      <option value={3}>3 days</option>
+                      <option value={7}>7 days</option>
+                      <option value={14}>14 days</option>
+                      <option value={30}>30 days</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      id="send_email_reminder_edit"
+                      checked={form.send_email_reminder}
+                      onChange={(e) => setForm({ ...form, send_email_reminder: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <label htmlFor="send_email_reminder_edit" className="text-sm font-medium text-gray-700 flex items-center">
+                      <Mail className="w-4 h-4 mr-1" />
+                      Send email reminder
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={closeEditBillModal}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateBill}
+                disabled={saving}
+                className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50"
+              >
+                {saving ? 'Updating...' : 'Update Bill'}
+              </button>
+            </div>
           </div>
         </div>
       )}

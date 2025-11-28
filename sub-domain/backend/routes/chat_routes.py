@@ -1,0 +1,911 @@
+from flask import Blueprint, request, jsonify, current_app
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+from datetime import datetime, timezone
+from sqlalchemy import desc, and_, or_
+
+from app import db
+from models.chat import Chat, Message, ChatStatus, SenderType
+from models.user import User, UserRole
+from models.tenant import Tenant
+from models.property import Property
+
+chat_bp = Blueprint('chats', __name__)
+
+def get_current_user():
+    """Helper function to get current user from JWT token."""
+    current_user_id = get_jwt_identity()
+    if not current_user_id:
+        return None
+    return User.query.get(current_user_id)
+
+def get_current_tenant():
+    """Helper function to get current tenant from JWT token."""
+    user = get_current_user()
+    if not user:
+        return None
+    
+    user_role = user.role
+    if isinstance(user_role, UserRole):
+        user_role_str = user_role.value
+    elif isinstance(user_role, str):
+        user_role_str = user_role.upper()
+    else:
+        user_role_str = str(user_role).upper() if user_role else 'TENANT'
+    
+    if user_role_str != 'TENANT':
+        return None
+    
+    tenant = Tenant.query.filter_by(user_id=user.id).first()
+    return tenant
+
+def get_property_id_from_request(data=None):
+    """Get property_id from request."""
+    try:
+        # Check query parameter
+        property_id = request.args.get('property_id', type=int)
+        if property_id:
+            return property_id
+        
+        # Check header
+        property_id = request.headers.get('X-Property-ID', type=int)
+        if property_id:
+            return property_id
+        
+        # Check request body
+        if data:
+            property_id = data.get('property_id')
+            if property_id:
+                try:
+                    return int(property_id)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Try to get from JWT claims
+        try:
+            claims = get_jwt()
+            if claims:
+                property_id = claims.get('property_id')
+                if property_id:
+                    return int(property_id)
+        except Exception:
+            pass
+        
+        return None
+    except Exception as e:
+        current_app.logger.warning(f"Error getting property_id from request: {str(e)}")
+        return None
+
+@chat_bp.route('/', methods=['GET'])
+@jwt_required()
+def get_chats():
+    """Get all chats for the current user (tenant or property manager)."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Determine user role
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        # Get query parameters
+        status = request.args.get('status', 'active')
+        property_id = get_property_id_from_request()
+        
+        if user_role_str == 'TENANT':
+            # Tenants see their own chats, but only for their property
+            tenant = get_current_tenant()
+            if not tenant:
+                return jsonify({'error': 'Tenant profile not found'}), 404
+            
+            # CRITICAL: Only show chats for the tenant's property
+            # This ensures tenants from different properties can't see each other's chats
+            query = Chat.query.filter_by(
+                tenant_id=tenant.id,
+                property_id=tenant.property_id  # Enforce property isolation
+            )
+            if status:
+                query = query.filter_by(status=status)
+            
+            chats = query.order_by(desc(Chat.last_message_at), desc(Chat.created_at)).all()
+            
+            chats_list = []
+            for chat in chats:
+                try:
+                    # Update chat subject if it's still a default value
+                    if chat.subject and chat.subject.lower() in ['new inquiry', 'new conversation']:
+                        try:
+                            # Get property manager's name
+                            property_obj = Property.query.get(chat.property_id)
+                            if property_obj and property_obj.owner_id:
+                                manager = User.query.get(property_obj.owner_id)
+                                if manager:
+                                    first_name = getattr(manager, 'first_name', '') or ''
+                                    last_name = getattr(manager, 'last_name', '') or ''
+                                    if first_name or last_name:
+                                        manager_name = f"{first_name} {last_name}".strip()
+                                    else:
+                                        email = getattr(manager, 'email', '')
+                                        if email:
+                                            manager_name = email.split('@')[0].replace('.', ' ').title()
+                                        else:
+                                            manager_name = f"Manager {manager.id}"
+                                    
+                                    # Update the chat subject
+                                    chat.subject = manager_name
+                                    db.session.commit()
+                                    current_app.logger.info(f"Updated chat {chat.id} subject to {manager_name}")
+                        except Exception as update_error:
+                            current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
+                            db.session.rollback()
+                    
+                    chat_dict = chat.to_dict(include_messages=False, include_property=True)
+                    # Get unread count for tenant
+                    chat_dict['unread_count'] = chat.get_unread_count(current_user.id, 'tenant')
+                    chats_list.append(chat_dict)
+                except Exception as e:
+                    current_app.logger.warning(f"Error serializing chat {chat.id}: {str(e)}")
+                    continue
+            
+            return jsonify({
+                'chats': chats_list,
+                'total': len(chats_list)
+            }), 200
+        
+        elif user_role_str in ['MANAGER']:
+            # Property managers see chats for their property
+            # If property_id not provided, try to get from user's owned properties
+            if not property_id:
+                try:
+                    # Get the first property owned by this user
+                    owned_property = Property.query.filter_by(
+                        owner_id=current_user.id
+                    ).first()
+                    
+                    if owned_property:
+                        property_id = owned_property.id
+                        current_app.logger.info(f"Auto-detected property {property_id} for manager {current_user.id}")
+                    else:
+                        return jsonify({'error': 'No property found for this manager. Please contact support.'}), 404
+                except Exception as prop_error:
+                    current_app.logger.error(f"Error getting owned property: {str(prop_error)}")
+                    return jsonify({'error': 'Failed to determine property context'}), 500
+            
+            # Verify property exists and user is the manager
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+            
+            query = Chat.query.filter_by(property_id=property_id)
+            if status:
+                query = query.filter_by(status=status)
+            
+            chats = query.order_by(desc(Chat.last_message_at), desc(Chat.created_at)).all()
+            
+            chats_list = []
+            for chat in chats:
+                try:
+                    # Update chat subject to tenant's name if it's still a default value or property manager's name
+                    # For property managers, the subject should be the tenant's name
+                    should_update = False
+                    if chat.subject:
+                        subject_lower = chat.subject.lower()
+                        # Check if it's a default value
+                        if subject_lower in ['new inquiry', 'new conversation']:
+                            should_update = True
+                        # Check if it matches property manager's name (from tenant side)
+                        elif chat.property_obj and chat.property_obj.owner_id:
+                            try:
+                                manager = User.query.get(chat.property_obj.owner_id)
+                                if manager:
+                                    first_name = getattr(manager, 'first_name', '') or ''
+                                    last_name = getattr(manager, 'last_name', '') or ''
+                                    if first_name or last_name:
+                                        manager_name = f"{first_name} {last_name}".strip()
+                                        if chat.subject == manager_name:
+                                            should_update = True
+                            except Exception:
+                                pass
+                    
+                    if should_update:
+                        try:
+                            # Get tenant's name
+                            if chat.tenant and chat.tenant.user:
+                                tenant_user = chat.tenant.user
+                                first_name = getattr(tenant_user, 'first_name', '') or ''
+                                last_name = getattr(tenant_user, 'last_name', '') or ''
+                                if first_name or last_name:
+                                    tenant_name = f"{first_name} {last_name}".strip()
+                                else:
+                                    email = getattr(tenant_user, 'email', '')
+                                    if email:
+                                        tenant_name = email.split('@')[0].replace('.', ' ').title()
+                                    else:
+                                        tenant_name = f"Tenant {chat.tenant.id}"
+                                
+                                # Update the chat subject to tenant's name
+                                chat.subject = tenant_name
+                                db.session.commit()
+                                current_app.logger.info(f"Updated chat {chat.id} subject to tenant name: {tenant_name}")
+                        except Exception as update_error:
+                            current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
+                            db.session.rollback()
+                    
+                    chat_dict = chat.to_dict(include_messages=False, include_tenant=True)
+                    # Get unread count for property manager
+                    chat_dict['unread_count'] = chat.get_unread_count(current_user.id, 'property_manager')
+                    chats_list.append(chat_dict)
+                except Exception as e:
+                    current_app.logger.warning(f"Error serializing chat {chat.id}: {str(e)}")
+                    continue
+            
+            return jsonify({
+                'chats': chats_list,
+                'total': len(chats_list)
+            }), 200
+        
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+    except Exception as e:
+        current_app.logger.error(f"Error in get_chats: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to fetch chats'}), 500
+
+@chat_bp.route('/', methods=['POST'])
+@jwt_required()
+def create_chat():
+    """Create a new chat (tenant only)."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Only tenants can create chats
+        tenant = get_current_tenant()
+        if not tenant:
+            return jsonify({'error': 'Only tenants can create chats'}), 403
+        
+        # Get and validate request data
+        try:
+            data = request.get_json() or {}
+            # Ensure data is a dictionary, not a string
+            if isinstance(data, str):
+                import json
+                data = json.loads(data) if data else {}
+            if not isinstance(data, dict):
+                return jsonify({'error': 'Invalid request data format'}), 400
+        except Exception as json_error:
+            current_app.logger.error(f"Error parsing JSON: {str(json_error)}")
+            return jsonify({'error': 'Invalid JSON in request body'}), 400
+        
+        # CRITICAL: Always use tenant's property_id - never from request
+        # This ensures tenants can only create chats for their own property
+        property_id = tenant.property_id
+        
+        if not property_id:
+            return jsonify({'error': 'Tenant does not have a property assigned'}), 400
+        
+        # Verify property exists and has a property manager (owner)
+        property_obj = Property.query.get(property_id)
+        if not property_obj:
+            return jsonify({'error': 'Property not found'}), 404
+        
+        # Verify property has an owner (property manager)
+        if not property_obj.owner_id:
+            current_app.logger.error(f"Property {property_id} has no owner assigned")
+            return jsonify({'error': 'Property does not have a manager assigned. Please contact support.'}), 400
+        
+        # Verify the owner exists
+        property_manager = User.query.get(property_obj.owner_id)
+        if not property_manager:
+            current_app.logger.error(f"Property {property_id} owner_id {property_obj.owner_id} does not exist")
+            return jsonify({'error': 'Property manager not found. Please contact support.'}), 400
+        
+        # Double-check: tenant must belong to this property (should always be true, but verify)
+        if tenant.property_id != property_id:
+            return jsonify({'error': 'Tenant does not belong to this property'}), 403
+        
+        # Generate chat subject from property manager's name
+        # Use property manager's name as the conversation name
+        manager_name = None
+        try:
+            # Try to get full name first
+            first_name = getattr(property_manager, 'first_name', '') or ''
+            last_name = getattr(property_manager, 'last_name', '') or ''
+            if first_name or last_name:
+                manager_name = f"{first_name} {last_name}".strip()
+            
+            # Fallback to email username if no name
+            if not manager_name:
+                email = getattr(property_manager, 'email', '')
+                if email:
+                    manager_name = email.split('@')[0].replace('.', ' ').title()
+            
+            # Final fallback
+            if not manager_name:
+                manager_name = f"Manager {property_manager.id}"
+        except Exception as name_error:
+            current_app.logger.warning(f"Error getting manager name: {str(name_error)}")
+            manager_name = "Property Manager"
+        
+        # Use provided subject if given, otherwise use property manager's name
+        subject = None
+        if isinstance(data, dict) and data.get('subject'):
+            provided_subject = data.get('subject', '').strip()
+            # Only use provided subject if it's not a default value
+            if provided_subject and provided_subject.lower() not in ['new inquiry', 'new conversation', '']:
+                subject = provided_subject
+        
+        # If no valid subject provided, use manager's name
+        if not subject:
+            subject = manager_name or "Property Manager"
+        
+        # Ensure subject is not empty
+        if not subject or not subject.strip():
+            subject = manager_name or "Property Manager"
+        
+        # Create chat with property manager's name as subject
+        try:
+            new_chat = Chat(
+                tenant_id=tenant.id,
+                property_id=property_id,
+                subject=subject
+            )
+            current_app.logger.info(f"Chat object created: tenant_id={tenant.id}, property_id={property_id}, subject={new_chat.subject}")
+        except Exception as init_error:
+            current_app.logger.error(f"Error creating Chat object: {str(init_error)}", exc_info=True)
+            db.session.rollback()
+            return jsonify({
+                'error': 'Failed to create chat',
+                'details': f'Error initializing chat: {str(init_error)}',
+                'type': type(init_error).__name__
+            }), 500
+        
+        try:
+            db.session.add(new_chat)
+            current_app.logger.info(f"Chat added to session: {new_chat.id if hasattr(new_chat, 'id') else 'pending'}")
+            db.session.commit()
+            current_app.logger.info(f"Chat committed to database: {new_chat.id} by tenant {tenant.id}")
+        except Exception as db_error:
+            current_app.logger.error(f"Database error creating chat: {str(db_error)}", exc_info=True)
+            db.session.rollback()
+            return jsonify({
+                'error': 'Failed to create chat',
+                'details': f'Database error: {str(db_error)}',
+                'type': type(db_error).__name__
+            }), 500
+        
+        # Safely get chat dict with property info (including manager)
+        try:
+            chat_dict = new_chat.to_dict(include_property=True)
+            # Ensure messages array exists
+            if 'messages' not in chat_dict:
+                chat_dict['messages'] = []
+        except Exception as dict_error:
+            current_app.logger.warning(f"Error serializing chat {new_chat.id}: {str(dict_error)}")
+            # Return minimal chat data if serialization fails, but include manager info
+            try:
+                property_manager = User.query.get(property_obj.owner_id) if property_obj.owner_id else None
+                manager_info = None
+                if property_manager:
+                    manager_info = {
+                        'id': property_manager.id,
+                        'name': f"{property_manager.first_name} {property_manager.last_name}".strip() or property_manager.email,
+                        'email': property_manager.email
+                    }
+            except Exception:
+                manager_info = None
+            
+            chat_dict = {
+                'id': new_chat.id,
+                'tenant_id': new_chat.tenant_id,
+                'property_id': new_chat.property_id,
+                'subject': new_chat.subject,
+                'status': new_chat.status,
+                'messages': [],
+                'property': {
+                    'id': property_obj.id,
+                    'name': getattr(property_obj, 'name', 'Unknown'),
+                    'manager': manager_info
+                }
+            }
+        
+        return jsonify({
+            'message': 'Chat created successfully',
+            'chat': chat_dict
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        error_msg = str(e)
+        error_type = type(e).__name__
+        current_app.logger.error(f"Error in create_chat: {error_type} - {error_msg}", exc_info=True)
+        # Return more detailed error message for debugging
+        return jsonify({
+            'error': 'Failed to create chat',
+            'details': error_msg,
+            'type': error_type
+        }), 500
+
+@chat_bp.route('/<int:chat_id>', methods=['GET'])
+@jwt_required()
+def get_chat(chat_id):
+    """Get a specific chat with messages."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        # Update chat subject if it's still a default value
+        if chat.subject and chat.subject.lower() in ['new inquiry', 'new conversation']:
+            try:
+                # Get property manager's name
+                property_obj = Property.query.get(chat.property_id)
+                if property_obj and property_obj.owner_id:
+                    manager = User.query.get(property_obj.owner_id)
+                    if manager:
+                        first_name = getattr(manager, 'first_name', '') or ''
+                        last_name = getattr(manager, 'last_name', '') or ''
+                        if first_name or last_name:
+                            manager_name = f"{first_name} {last_name}".strip()
+                        else:
+                            email = getattr(manager, 'email', '')
+                            if email:
+                                manager_name = email.split('@')[0].replace('.', ' ').title()
+                            else:
+                                manager_name = f"Manager {manager.id}"
+                        
+                        # Update the chat subject
+                        chat.subject = manager_name
+                        db.session.commit()
+                        current_app.logger.info(f"Updated chat {chat.id} subject to {manager_name}")
+            except Exception as update_error:
+                current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
+                db.session.rollback()
+        
+        # Determine user role
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        # Check access permissions
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            # CRITICAL: Verify tenant owns the chat AND it's for their property
+            if not tenant or chat.tenant_id != tenant.id or chat.property_id != tenant.property_id:
+                return jsonify({'error': 'Access denied'}), 403
+        elif user_role_str in ['MANAGER']:
+            property_obj = Property.query.get(chat.property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+            
+            # Update chat subject to tenant's name if needed (for property manager view)
+            # Check if subject is a default value or matches property manager's name
+            should_update_subject = False
+            if chat.subject:
+                subject_lower = chat.subject.lower()
+                if subject_lower in ['new inquiry', 'new conversation']:
+                    should_update_subject = True
+                else:
+                    # Check if subject matches property manager's name (set from tenant side)
+                    try:
+                        manager = User.query.get(property_obj.owner_id) if property_obj.owner_id else None
+                        if manager:
+                            first_name = getattr(manager, 'first_name', '') or ''
+                            last_name = getattr(manager, 'last_name', '') or ''
+                            if first_name or last_name:
+                                manager_name = f"{first_name} {last_name}".strip()
+                                if chat.subject == manager_name:
+                                    should_update_subject = True
+                    except Exception:
+                        pass
+            
+            if should_update_subject:
+                try:
+                    if chat.tenant and chat.tenant.user:
+                        tenant_user = chat.tenant.user
+                        first_name = getattr(tenant_user, 'first_name', '') or ''
+                        last_name = getattr(tenant_user, 'last_name', '') or ''
+                        if first_name or last_name:
+                            tenant_name = f"{first_name} {last_name}".strip()
+                        else:
+                            email = getattr(tenant_user, 'email', '')
+                            if email:
+                                tenant_name = email.split('@')[0].replace('.', ' ').title()
+                            else:
+                                tenant_name = f"Tenant {chat.tenant.id}"
+                        
+                        chat.subject = tenant_name
+                        db.session.commit()
+                        current_app.logger.info(f"Updated chat {chat.id} subject to tenant name: {tenant_name}")
+                except Exception as update_error:
+                    current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
+                    db.session.rollback()
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        # Get messages
+        messages = Message.query.filter_by(chat_id=chat_id).order_by(Message.created_at.asc()).all()
+        
+        # Mark messages as read for the current user
+        sender_type = 'tenant' if user_role_str == 'TENANT' else 'property_manager'
+        opposite_type = 'property_manager' if sender_type == 'tenant' else 'tenant'
+        
+        unread_messages = Message.query.filter_by(
+            chat_id=chat_id,
+            sender_type=opposite_type,
+            is_read=False
+        ).all()
+        
+        for msg in unread_messages:
+            msg.mark_as_read()
+        
+        db.session.commit()
+        
+        # Get chat dict with messages
+        chat_dict = chat.to_dict(
+            include_messages=True,
+            include_tenant=(user_role_str in ['MANAGER']),
+            include_property=(user_role_str == 'TENANT')
+        )
+        
+        # Always include messages from the separately queried list to ensure they're included
+        # This ensures messages are always present even if the relationship wasn't loaded
+        try:
+            chat_dict['messages'] = [msg.to_dict(include_sender=True) for msg in messages]
+            current_app.logger.info(f"Chat {chat_id} has {len(messages)} messages")
+        except Exception as msg_error:
+            current_app.logger.warning(f"Error serializing messages for chat {chat_id}: {str(msg_error)}")
+            # Fallback to relationship if available
+            if 'messages' not in chat_dict:
+                chat_dict['messages'] = []
+        
+        return jsonify({
+            'chat': chat_dict
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in get_chat: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to fetch chat'}), 500
+
+@chat_bp.route('/<int:chat_id>/messages', methods=['GET'])
+@jwt_required()
+def get_messages(chat_id):
+    """Get messages for a specific chat."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        # Check access permissions
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            # CRITICAL: Verify tenant owns the chat AND it's for their property
+            if not tenant or chat.tenant_id != tenant.id or chat.property_id != tenant.property_id:
+                return jsonify({'error': 'Access denied'}), 403
+        elif user_role_str in ['MANAGER']:
+            property_obj = Property.query.get(chat.property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        # Get query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 100)
+        
+        # Get messages
+        messages_query = Message.query.filter_by(chat_id=chat_id).order_by(desc(Message.created_at))
+        messages = messages_query.paginate(page=page, per_page=per_page, error_out=False)
+        
+        # Mark messages as read
+        sender_type = 'tenant' if user_role_str == 'TENANT' else 'property_manager'
+        opposite_type = 'property_manager' if sender_type == 'tenant' else 'tenant'
+        
+        unread_messages = Message.query.filter_by(
+            chat_id=chat_id,
+            sender_type=opposite_type,
+            is_read=False
+        ).all()
+        
+        for msg in unread_messages:
+            msg.mark_as_read()
+        
+        # Update chat's last_message_at if needed
+        if unread_messages:
+            db.session.commit()
+        
+        return jsonify({
+            'messages': [msg.to_dict(include_sender=True) for msg in messages.items],
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': messages.total,
+                'pages': messages.pages,
+                'has_next': messages.has_next,
+                'has_prev': messages.has_prev
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in get_messages: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to fetch messages'}), 500
+
+@chat_bp.route('/<int:chat_id>/messages', methods=['POST'])
+@jwt_required()
+def send_message(chat_id):
+    """Send a message in a chat."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        content = data.get('content', '').strip()
+        if not content:
+            return jsonify({'error': 'Message content is required'}), 400
+        
+        # Determine user role and sender type
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        sender_type = 'tenant' if user_role_str == 'TENANT' else 'property_manager'
+        
+        # Check access permissions
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            # CRITICAL: Verify tenant owns the chat AND it's for their property
+            if not tenant or chat.tenant_id != tenant.id or chat.property_id != tenant.property_id:
+                return jsonify({'error': 'Access denied'}), 403
+        elif user_role_str in ['MANAGER']:
+            property_obj = Property.query.get(chat.property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        # Create message
+        new_message = Message(
+            chat_id=chat_id,
+            sender_id=current_user.id,
+            sender_type=sender_type,
+            content=content
+        )
+        
+        db.session.add(new_message)
+        
+        # Update chat's last_message_at
+        chat.last_message_at = datetime.now(timezone.utc)
+        chat.updated_at = datetime.now(timezone.utc)
+        
+        db.session.commit()
+        
+        current_app.logger.info(f"Message sent: {new_message.id} in chat {chat_id}")
+        
+        return jsonify({
+            'message': 'Message sent successfully',
+            'message_data': new_message.to_dict(include_sender=True)
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in send_message: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to send message'}), 500
+
+@chat_bp.route('/<int:chat_id>/read', methods=['PUT'])
+@jwt_required()
+def mark_chat_as_read(chat_id):
+    """Mark all messages in a chat as read."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        # Check access permissions
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            # CRITICAL: Verify tenant owns the chat AND it's for their property
+            if not tenant or chat.tenant_id != tenant.id or chat.property_id != tenant.property_id:
+                return jsonify({'error': 'Access denied'}), 403
+        elif user_role_str in ['MANAGER']:
+            property_obj = Property.query.get(chat.property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        # Mark all unread messages as read
+        sender_type = 'tenant' if user_role_str == 'TENANT' else 'property_manager'
+        opposite_type = 'property_manager' if sender_type == 'tenant' else 'tenant'
+        
+        unread_messages = Message.query.filter_by(
+            chat_id=chat_id,
+            sender_type=opposite_type,
+            is_read=False
+        ).all()
+        
+        for msg in unread_messages:
+            msg.mark_as_read()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Chat marked as read',
+            'marked_count': len(unread_messages)
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in mark_chat_as_read: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to mark chat as read'}), 500
+
+@chat_bp.route('/<int:chat_id>', methods=['PUT'])
+@jwt_required()
+def update_chat(chat_id):
+    """Update chat (status, subject, etc.)."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        chat = Chat.query.get(chat_id)
+        if not chat:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        # Check access permissions
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            # CRITICAL: Verify tenant owns the chat AND it's for their property
+            if not tenant or chat.tenant_id != tenant.id or chat.property_id != tenant.property_id:
+                return jsonify({'error': 'Access denied'}), 403
+        elif user_role_str in ['MANAGER']:
+            property_obj = Property.query.get(chat.property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'error': 'Access denied'}), 403
+        else:
+            return jsonify({'error': 'Access denied'}), 403
+        
+        data = request.get_json() or {}
+        
+        # Update allowed fields
+        if 'subject' in data:
+            chat.subject = data['subject'].strip() if data['subject'] else 'New Conversation'
+        
+        if 'status' in data:
+            status = data['status'].lower()
+            if status in ['active', 'archived', 'closed']:
+                chat.status = status
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Chat updated successfully',
+            'chat': chat.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in update_chat: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to update chat'}), 500
+
+@chat_bp.route('/unread-count', methods=['GET'])
+@jwt_required()
+def get_unread_count():
+    """Get total unread message count for current user."""
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Determine user role
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        property_id = get_property_id_from_request()
+        
+        if user_role_str == 'TENANT':
+            tenant = get_current_tenant()
+            if not tenant:
+                return jsonify({'unread_count': 0}), 200
+            
+            # Count unread messages for tenant (messages from property manager)
+            count = db.session.query(Message).join(Chat).filter(
+                Chat.tenant_id == tenant.id,
+                Message.sender_type == 'property_manager',
+                Message.is_read == False
+            ).count()
+            
+            return jsonify({'unread_count': count}), 200
+        
+        elif user_role_str in ['MANAGER']:
+            if not property_id:
+                return jsonify({'unread_count': 0}), 200
+            
+            # Verify property
+            property_obj = Property.query.get(property_id)
+            if not property_obj or property_obj.owner_id != current_user.id:
+                return jsonify({'unread_count': 0}), 200
+            
+            # Count unread messages for property manager (messages from tenants)
+            count = db.session.query(Message).join(Chat).filter(
+                Chat.property_id == property_id,
+                Message.sender_type == 'tenant',
+                Message.is_read == False
+            ).count()
+            
+            return jsonify({'unread_count': count}), 200
+        
+        else:
+            return jsonify({'unread_count': 0}), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error in get_unread_count: {str(e)}", exc_info=True)
+        return jsonify({'unread_count': 0}), 200  # Return 0 on error to prevent UI issues
+

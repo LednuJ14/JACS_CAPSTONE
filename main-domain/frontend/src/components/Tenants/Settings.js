@@ -305,42 +305,24 @@ const Settings = ({ onClose }) => {
                         </div>
                       ) : (
                         <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6">
-                          <p className="text-sm text-black mb-4 font-medium">Choose your preferred 2FA method:</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await ApiService.twofaEmailEnable();
-                                  setTwofa({ enabled: true, qr: '', secret: '', code: '' });
-                                  alert('Email-based 2FA enabled');
-                                } catch (e) {
-                                  alert(e?.message || 'Failed to enable email 2FA');
-                                }
-                              }}
-                              className="flex items-center justify-center space-x-2 px-6 py-3 text-sm font-semibold text-white bg-black rounded-2xl hover:bg-gray-800 transition-all duration-200 shadow-sm hover:shadow-md"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                              </svg>
-                              <span>Enable via Email</span>
-                            </button>
-                            <button
-                              onClick={async () => {
-                                try {
-                                  const res = await ApiService.twofaSetup();
-                                  setTwofa(s => ({ ...s, qr: res?.qr_data_url || '', secret: res?.secret || '' }));
-                                } catch (e) {
-                                  alert(e?.message || 'Failed to setup authenticator');
-                                }
-                              }}
-                              className="flex items-center justify-center space-x-2 px-6 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-200/60 rounded-2xl hover:bg-gray-50 transition-all duration-200 shadow-sm hover:shadow-md"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                              </svg>
-                              <span>Setup Authenticator</span>
-                            </button>
-                          </div>
+                          <p className="text-sm text-black mb-4 font-medium">Enable two-factor authentication via email:</p>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await ApiService.twofaEmailEnable();
+                                setTwofa({ enabled: true, qr: '', secret: '', code: '' });
+                                alert('Email-based 2FA enabled');
+                              } catch (e) {
+                                alert(e?.message || 'Failed to enable email 2FA');
+                              }
+                            }}
+                            className="flex items-center justify-center space-x-2 px-6 py-3 text-sm font-semibold text-white bg-black rounded-2xl hover:bg-gray-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                            <span>Enable via Email</span>
+                          </button>
                         </div>
                       )}
                     </div>

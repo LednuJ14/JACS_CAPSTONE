@@ -36,20 +36,63 @@ class NotificationService:
         try:
             # Explicitly set created_at to current UTC time
             from datetime import datetime, timezone
-            notification = Notification(
-                user_id=user_id,
-                type=notification_type,
-                title=title,
-                message=message,
-                related_id=related_id,
-                related_type=related_type,
-                is_read=False,
-                is_deleted=False,
-                created_at=datetime.utcnow()  # Explicitly set current time
-            )
-            db.session.add(notification)
+            from sqlalchemy import text
+            
+            # Use raw SQL to ensure we use the correct column names (related_entity_id, related_entity_type)
+            # The database schema uses related_entity_id/related_entity_type, not related_id/related_type
+            notification_type_value = notification_type.value if hasattr(notification_type, 'value') else str(notification_type)
+            
+            insert_sql = text("""
+                INSERT INTO notifications (
+                    user_id, notification_type, title, message, 
+                    related_entity_id, related_entity_type,
+                    is_read, is_deleted, created_at
+                ) VALUES (
+                    :user_id, :notification_type, :title, :message,
+                    :related_entity_id, :related_entity_type,
+                    :is_read, :is_deleted, NOW()
+                )
+            """)
+            
+            result = db.session.execute(insert_sql, {
+                'user_id': user_id,
+                'notification_type': notification_type_value,
+                'title': title,
+                'message': message,
+                'related_entity_id': related_id,
+                'related_entity_type': related_type,
+                'is_read': False,
+                'is_deleted': False
+            })
+            
             db.session.commit()
-            return notification
+            
+            # Fetch the created notification using raw SQL to match column names
+            notification_id = result.lastrowid
+            fetch_sql = text("""
+                SELECT id, user_id, notification_type, title, message, is_read,
+                       related_entity_id, related_entity_type, created_at, read_at, is_deleted
+                FROM notifications
+                WHERE id = :notification_id
+            """)
+            notification_row = db.session.execute(fetch_sql, {'notification_id': notification_id}).mappings().first()
+            
+            if notification_row:
+                # Create a simple dict representation since we're using raw SQL
+                return {
+                    'id': notification_row['id'],
+                    'user_id': notification_row['user_id'],
+                    'type': notification_row['notification_type'],
+                    'title': notification_row['title'],
+                    'message': notification_row['message'],
+                    'is_read': notification_row['is_read'],
+                    'related_entity_id': notification_row['related_entity_id'],
+                    'related_entity_type': notification_row['related_entity_type'],
+                    'created_at': notification_row['created_at'],
+                    'read_at': notification_row['read_at'],
+                    'is_deleted': notification_row['is_deleted']
+                }
+            return None
         except Exception as e:
             db.session.rollback()
             from flask import current_app

@@ -379,22 +379,27 @@ def get_my_properties(current_user):
             unit_counts_map = {}
             if property_ids:
                 from sqlalchemy import bindparam
+                # Calculate occupancy based on actual tenant assignments, not unit status
+                # A unit is occupied if there's an active tenant_units record (move_out_date is NULL or in the future)
                 counts_sql = text("""
-                    SELECT property_id,
-                           COUNT(*) AS total_units,
-                           SUM(CASE WHEN LOWER(status) IN ('occupied','rented','maintenance') THEN 1 ELSE 0 END) AS occupied_units,
-                           SUM(CASE WHEN LOWER(status) IN ('vacant','available','ready','pending') THEN 1 ELSE 0 END) AS vacant_units
-                    FROM units
-                    WHERE property_id IN :property_ids
-                    GROUP BY property_id
+                    SELECT 
+                        u.property_id,
+                        COUNT(DISTINCT u.id) AS total_units,
+                        COUNT(DISTINCT CASE 
+                            WHEN tu.id IS NOT NULL AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
+                            THEN u.id 
+                        END) AS occupied_units
+                    FROM units u
+                    LEFT JOIN tenant_units tu ON tu.unit_id = u.id 
+                        AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
+                    WHERE u.property_id IN :property_ids
+                    GROUP BY u.property_id
                 """).bindparams(bindparam('property_ids', expanding=True))
                 counts_rows = db.session.execute(counts_sql, {'property_ids': property_ids}).fetchall()
                 for cnt in counts_rows:
                     total_units = int(cnt.total_units or 0)
                     occupied_units = int(cnt.occupied_units or 0)
-                    vacant_units = int(cnt.vacant_units or (total_units - occupied_units))
-                    if vacant_units < 0:
-                        vacant_units = max(0, total_units - occupied_units)
+                    vacant_units = max(0, total_units - occupied_units)
                     unit_counts_map[cnt.property_id] = {
                         'total_units': total_units,
                         'occupied_units': occupied_units,
@@ -802,11 +807,11 @@ def update_property(current_user, property_id):
                 {'id': property_id}
             ).fetchone()
             
-            street = location_updates.get('street') if 'street' in location_updates else (current_prop.street if current_prop else None)
-            barangay = location_updates.get('barangay') if 'barangay' in location_updates else (current_prop.barangay if current_prop else None)
+            street = location_updates.get('street') if 'street' in location_updates else (getattr(current_prop, 'street', None) if current_prop else None)
+            barangay = location_updates.get('barangay') if 'barangay' in location_updates else (getattr(current_prop, 'barangay', None) if current_prop else None)
             city = location_updates.get('city') if 'city' in location_updates else (current_prop.city if current_prop else 'Cebu City')
             province = location_updates.get('province') if 'province' in location_updates else (current_prop.province if current_prop else 'Cebu')
-            postal_code = location_updates.get('postal_code') if 'postal_code' in location_updates else (current_prop.postal_code if current_prop else None)
+            postal_code = location_updates.get('postal_code') if 'postal_code' in location_updates else (getattr(current_prop, 'postal_code', None) if current_prop else None)
             
             # Build address from components
             address_parts = []
@@ -982,16 +987,33 @@ def get_dashboard_stats(current_user):
         rejected_result = db.session.execute(rejected_sql, {'owner_id': manager_user_id}).fetchone()
         rejected_properties = rejected_result.count if rejected_result else 0
         
-        # Calculate total monthly revenue from active properties
-        revenue_sql = text("""
-            SELECT COALESCE(SUM(monthly_rent), 0) as total_revenue
-            FROM properties 
+        # Calculate total monthly revenue from active tenant leases (actual revenue, not property base rent)
+        # Get property IDs first
+        property_ids_sql = text("""
+            SELECT id FROM properties 
             WHERE owner_id = :owner_id 
             AND LOWER(status) IN ('active', 'approved')
-            AND monthly_rent IS NOT NULL
         """)
-        revenue_result = db.session.execute(revenue_sql, {'owner_id': manager_user_id}).fetchone()
-        total_revenue = float(revenue_result.total_revenue) if revenue_result and revenue_result.total_revenue else 0.0
+        property_ids_result = db.session.execute(property_ids_sql, {'owner_id': manager_user_id}).fetchall()
+        property_ids = [row[0] for row in property_ids_result] if property_ids_result else []
+        
+        if property_ids:
+            # Use tuple for IN clause (MySQL/MariaDB compatible)
+            property_ids_tuple = tuple(property_ids) if len(property_ids) > 1 else (property_ids[0],)
+            
+            # Calculate real revenue from tenant_units (active leases)
+            revenue_sql = text("""
+                SELECT COALESCE(SUM(tu.monthly_rent), 0) as total_revenue
+                FROM tenant_units tu
+                INNER JOIN units u ON u.id = tu.unit_id
+                WHERE u.property_id IN :property_ids
+                AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
+                AND tu.move_in_date <= NOW()
+            """)
+            revenue_result = db.session.execute(revenue_sql, {'property_ids': property_ids_tuple}).fetchone()
+            total_revenue = float(revenue_result.total_revenue) if revenue_result and revenue_result.total_revenue else 0.0
+        else:
+            total_revenue = 0.0
         
         # Get portal statistics
         portals_sql = text("""
@@ -1060,8 +1082,8 @@ def get_manager_profile(current_user):
                 'email': manager_user.email,
                 'phone': manager_user.phone_number or '+63 912 345 6789',
                 'position': 'Property Manager',
-                'location': manager_user.location or 'Cebu City, Philippines',
-                'bio': manager_user.bio or f'Property manager with {len(recent_properties)} properties under management.',
+                'location': 'Cebu City, Philippines',  # Default value, field removed from database
+                'bio': f'Property manager with {len(recent_properties)} properties under management.',  # Default value, field removed from database
                 'avatar': '',
                 'two_factor_enabled': bool(manager_user.two_factor_enabled)
             },
@@ -1107,11 +1129,8 @@ def update_manager_profile(current_user):
                     return handle_api_error(409, "Email already in use")
                 manager_user.email = new_email
 
-        # Persist location, bio
-        if 'location' in personal_info:
-            manager_user.location = personal_info['location']
-        if 'bio' in personal_info:
-            manager_user.bio = personal_info['bio']
+        # location and bio fields removed - no longer persisted to database
+        # Values are provided as defaults in response only
         
         db.session.commit()
         
@@ -1134,8 +1153,8 @@ def update_manager_profile(current_user):
                     'email': manager_user.email,
                     'phone': manager_user.phone_number,
                     'position': 'Property Manager',
-                    'location': manager_user.location,
-                    'bio': manager_user.bio
+                    'location': 'Cebu City, Philippines',  # Default value, field removed
+                    'bio': f'Property manager managing properties.'  # Default value, field removed
                 }
             }
         }), 200

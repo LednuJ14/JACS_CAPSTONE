@@ -40,9 +40,7 @@ class User(db.Model):
     phone_number = db.Column(db.String(20))
     date_of_birth = db.Column(db.Date)
     profile_image_url = db.Column(db.String(255))
-    # Manager profile fields
-    location = db.Column(db.String(255))
-    bio = db.Column(db.Text)
+    # Manager profile fields removed: location, bio (not needed)
     
     # Address fields
     address_line1 = db.Column(db.String(255))
@@ -55,7 +53,7 @@ class User(db.Model):
     # Verification fields
     email_verified = db.Column(db.Boolean, default=False)
     email_verification_token = db.Column(db.String(255))
-    phone_verified = db.Column(db.Boolean, default=False)
+    # phone_verified removed - not used in system
     
     # Security fields
     last_login = db.Column(db.DateTime)
@@ -63,9 +61,9 @@ class User(db.Model):
     locked_until = db.Column(db.DateTime)
     password_reset_token = db.Column(db.String(255))
     password_reset_expires = db.Column(db.DateTime)
-    # Two-factor authentication (TOTP)
+    # Two-factor authentication (email-based)
     two_factor_enabled = db.Column(db.Boolean, default=False)
-    two_factor_secret = db.Column(db.String(32))
+    # two_factor_secret removed - system uses email-based 2FA, not TOTP
     # Two-factor via email code
     two_factor_email_code = db.Column(db.String(8))
     two_factor_email_expires = db.Column(db.DateTime)
@@ -73,8 +71,8 @@ class User(db.Model):
     # Audit fields
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
-    updated_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    # created_by removed - not critical for audit trail
+    # updated_by removed - not critical for audit trail
     
     # Relationships
     properties = db.relationship('Property', foreign_keys='Property.owner_id', backref='owner', lazy='dynamic')
@@ -194,8 +192,7 @@ class User(db.Model):
             'date_of_birth': dob_value,
             'profile_image_url': self.profile_image_url,
             'two_factor_enabled': bool(self.two_factor_enabled),
-            'location': self.location,
-            'bio': self.bio,
+            # location and bio removed - not needed for managers
             'address': {
                 'line1': self.address_line1,
                 'line2': self.address_line2,
@@ -205,7 +202,7 @@ class User(db.Model):
                 'country': self.country
             },
             'email_verified': self.email_verified,
-            'phone_verified': self.phone_verified,
+            # phone_verified removed - not used
             'created_at': safe_iso(self.created_at),
             'updated_at': safe_iso(self.updated_at),
             'last_login': safe_iso(self.last_login)

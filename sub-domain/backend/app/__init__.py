@@ -79,7 +79,7 @@ def create_app(config_name=None):
     CORS(app, 
          origins=allowed_origins_list,
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+         allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials", "X-Subdomain"],
          supports_credentials=True)
     
     # Handle preflight requests globally and allow subdomain origins
@@ -94,7 +94,7 @@ def create_app(config_name=None):
                 headers['Access-Control-Allow-Origin'] = origin
                 headers['Access-Control-Allow-Credentials'] = 'true'
             headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
             headers['Access-Control-Max-Age'] = '86400'
             return response
     
@@ -110,7 +110,7 @@ def create_app(config_name=None):
             response.headers['Access-Control-Allow-Credentials'] = 'true'
         # Always add these headers
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
         return response
     
     # Register SQLAlchemy event listeners for automatic tenant registration
@@ -170,6 +170,7 @@ def create_app(config_name=None):
     from routes.analytics_routes import analytics_bp
     from routes.feedback_routes import feedback_bp
     from routes.notification_routes import notification_bp
+    from routes.chat_routes import chat_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(user_bp, url_prefix='/api/users')
@@ -184,6 +185,7 @@ def create_app(config_name=None):
     app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
     app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
     app.register_blueprint(notification_bp, url_prefix='/api/notifications')
+    app.register_blueprint(chat_bp, url_prefix='/api/chats')
     
     # Create upload directories
     upload_dir = os.path.join(app.instance_path, app.config['UPLOAD_FOLDER'])
@@ -227,7 +229,7 @@ def create_app(config_name=None):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
         
         return response
     

@@ -6,8 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Eye, EyeOff, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiService } from '../../services/api';
+import { useProperty } from './PropertyContext';
 
 const LoginForm = ({ onForgotPassword }) => {
+  const { property } = useProperty();
+  const [displaySettings, setDisplaySettings] = useState(null);
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -19,6 +22,14 @@ const LoginForm = ({ onForgotPassword }) => {
   });
   const [twoFactorToken, setTwoFactorToken] = useState('');
   const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
+
+  // Load display settings from property context (no auth required)
+  useEffect(() => {
+    // Display settings should come from property.display_settings (from public endpoint)
+    if (property?.display_settings) {
+      setDisplaySettings(property.display_settings);
+    }
+  }, [property?.display_settings]);
 
   // Load saved credentials on component mount
   useEffect(() => {
@@ -309,7 +320,21 @@ const LoginForm = ({ onForgotPassword }) => {
 
         <Button
           type="submit"
-          className="w-full h-12 bg-black hover:bg-black/90 text-white font-medium rounded-lg transition-all duration-300 shadow-sm"
+          className="w-full h-12 text-white font-medium rounded-lg transition-all duration-300 shadow-sm"
+          style={{
+            backgroundColor: displaySettings?.primaryColor || '#000000',
+            borderColor: displaySettings?.primaryColor || '#000000'
+          }}
+          onMouseEnter={(e) => {
+            if (displaySettings?.primaryColor) {
+              e.currentTarget.style.opacity = '0.9';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (displaySettings?.primaryColor) {
+              e.currentTarget.style.opacity = '1';
+            }
+          }}
           disabled={isLoading}
         >
           {isLoading ? 'LOGGING IN...' : 'LOGIN'}

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Program Workflow Diagram - JACS Property Management</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #ffffff;
+            color: #000000;
+            line-height: 1.6;
+            padding: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 10px;
+        }
+        
+        h2 {
+            font-size: 24px;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #000000;
+            padding-bottom: 8px;
+        }
+        
+        h3 {
+            font-size: 20px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        
+        p {
+            margin-bottom: 15px;
+        }
+        
+        .mermaid {
+            background-color: #ffffff;
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #000000;
+            text-align: center;
+        }
+        
+        .section {
+            margin-bottom: 50px;
+            page-break-inside: avoid;
+        }
+        
+        .features-list {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .features-list li {
+            margin-bottom: 8px;
+            padding-left: 20px;
+        }
+        
+        .features-list li:before {
+            content: "✓ ";
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .workflow-states {
+            margin-top: 20px;
+        }
+        
+        .workflow-states ol {
+            margin-left: 20px;
+        }
+        
+        .workflow-states li {
+            margin-bottom: 8px;
+        }
+        
+        .notes {
+            margin-top: 40px;
+            padding: 15px;
+            border: 1px solid #000000;
+            background-color: #f9f9f9;
+        }
+        
+        hr {
+            border: none;
+            border-top: 1px solid #000000;
+            margin: 30px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Program Workflow Diagram</h1>
+    <p><strong>JACS Property Management Platform</strong></p>
+    <p>This document outlines the workflow diagrams separated by user roles: Admin, Property Manager, Tenants, and Staff (Optional).</p>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>1. Admin Workflow</h2>
+        <div class="mermaid">
+flowchart TD
+    Start([Admin Login]) --> Dashboard[Dashboard]
+    
+    Dashboard --> PropertyApproval[Property Approval]
+    Dashboard --> SubscriptionMgmt[Subscription Management]
+    Dashboard --> UserMgmt[User Management]
+    Dashboard --> SystemMgmt[System Management]
+    
+    PropertyApproval --> ViewPending[View Pending Properties]
+    ViewPending --> ReviewProperty[Review Property Details]
+    ReviewProperty --> Decision1{Approve or Reject?}
+    Decision1 -->|Approve| Approve[Approve Property]
+    Decision1 -->|Reject| Reject[Reject Property]
+    Approve --> GenerateSubdomain[Auto-generate Subdomain]
+    GenerateSubdomain --> NotifyManager[Notify Property Manager]
+    Reject --> NotifyManager2[Notify Property Manager]
+    NotifyManager --> End1([End])
+    NotifyManager2 --> End1
+    
+    SubscriptionMgmt --> ManagePlans[Manage Subscription Plans]
+    SubscriptionMgmt --> ManageSubscribers[Manage Subscribers]
+    SubscriptionMgmt --> ViewBilling[View Billing History]
+    
+    UserMgmt --> ViewUsers[View All Users]
+    ViewUsers --> EditUser[Edit User Information]
+    
+    SystemMgmt --> ViewAnalytics[View System Analytics]
+    SystemMgmt --> ManageDocuments[Review Documents]
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>2. Property Manager Workflow</h2>
+        <div class="mermaid">
+flowchart TD
+    Start([Property Manager Login]) --> Dashboard[Dashboard]
+    
+    Dashboard --> PropertyMgmt[Property Management]
+    Dashboard --> TenantMgmt[Tenant Management]
+    Dashboard --> Communication[Communication]
+    Dashboard --> Operations[Operations Management]
+    Dashboard --> Financial[Billing & Payments]
+    
+    PropertyMgmt --> AddProperty[Add New Property]
+    AddProperty --> SubmitApproval[Submit for Approval]
+    SubmitApproval --> WaitApproval{Wait for Admin Approval}
+    WaitApproval -->|Approved| SubdomainGenerated[Subdomain Auto-generated]
+    WaitApproval -->|Rejected| EditProperty[Edit & Resubmit]
+    SubdomainGenerated --> EnablePortal[Enable Portal]
+    PropertyMgmt --> ManageSubdomain[Manage Subdomain]
+    
+    TenantMgmt --> ViewTenants[View All Tenants]
+    ViewTenants --> Decision2{Action?}
+    Decision2 -->|Add| AddTenant[Add New Tenant]
+    Decision2 -->|Edit| EditTenant[Edit Tenant Information]
+    
+    Communication --> ViewChats[View Tenant Chats]
+    ViewChats --> ReplyChat[Reply to Messages]
+    
+    Communication --> FeedbackMgmt[Feedback Management]
+    FeedbackMgmt --> ViewFeedback[View All Feedback]
+    ViewFeedback --> FilterFeedback[Filter by Status/Type]
+    FilterFeedback --> ViewDetails[View Feedback Details]
+    ViewDetails --> Decision3{Action?}
+    Decision3 -->|Reply| ReplyFeedback[Reply to Feedback]
+    Decision3 -->|Resolve| ResolveFeedback[Mark as Resolved]
+    
+    Operations --> ViewRequests[View Maintenance Requests]
+    ViewRequests --> UpdateRequest[Update Request Status]
+    UpdateRequest --> Decision4{Assign to Staff?}
+    Decision4 -->|Yes| AssignStaff[Assign to Staff Member]
+    Decision4 -->|No| UpdateStatus[Update Status Only]
+    Operations --> ManageDocuments[Manage Documents]
+    Operations --> ViewAnnouncements[Manage Announcements]
+    
+    Financial --> ViewBills[View All Bills]
+    Financial --> CreateBill[Create New Bill]
+    ViewBills --> ReviewPayment[Review Payment Proof]
+    ReviewPayment --> Decision5{Approve Payment?}
+    Decision5 -->|Yes| ApprovePayment[Approve Payment]
+    Decision5 -->|No| RejectPayment[Reject Payment]
+    ApprovePayment --> UpdateBillStatus[Update Bill Status to Paid]
+    RejectPayment --> RequestNewProof[Request New Proof]
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>3. Tenant Workflow</h2>
+        <div class="mermaid">
+flowchart TD
+    Start([Tenant Login]) --> Dashboard[Dashboard]
+    
+    Dashboard --> Communication[Communication]
+    Dashboard --> Requests[Maintenance Requests]
+    Dashboard --> Billing[Billing & Payments]
+    Dashboard --> Feedback[Feedback & Complaints]
+    Dashboard --> Information[View Information]
+    
+    Communication --> ViewChats[View/Create Chat]
+    ViewChats --> SendMessage[Send Message to Manager]
+    
+    Requests --> Decision6{Action?}
+    Decision6 -->|Create| CreateRequest[Create Maintenance Request]
+    Decision6 -->|View| ViewRequests[View My Requests]
+    CreateRequest --> FillRequestForm[Fill Request Form]
+    FillRequestForm --> SubmitRequest[Submit Request]
+    ViewRequests --> Decision7{Request Status?}
+    Decision7 -->|Pending| UpdateRequest[Update Pending Request]
+    Decision7 -->|Completed| RateRequest[Rate Completed Request]
+    
+    Billing --> ViewBills[View My Bills]
+    ViewBills --> Decision8{Pay Bill?}
+    Decision8 -->|Yes| SelectMethod[Select Payment Method]
+    Decision8 -->|No| End2([End])
+    SelectMethod --> MakePayment[Make Payment]
+    MakePayment --> UploadProof[Upload Proof of Payment]
+    UploadProof --> SubmitPayment[Submit for Review]
+    SubmitPayment --> WaitReview{Wait for Manager Review}
+    WaitReview -->|Approved| PaymentApproved[Payment Approved]
+    WaitReview -->|Rejected| PaymentRejected[Payment Rejected]
+    PaymentApproved --> End3([End])
+    PaymentRejected --> UploadProof
+    
+    Feedback --> Decision9{Action?}
+    Decision9 -->|Submit| SubmitFeedback[Submit Feedback/Complaint]
+    Decision9 -->|View| ViewFeedback[View My Feedback]
+    SubmitFeedback --> FillForm[Fill Feedback Form]
+    FillForm --> SelectType[Select Type & Priority]
+    SelectType --> Submit[Submit Feedback]
+    Submit --> WaitResponse{Wait for Manager Response}
+    ViewFeedback --> ViewResponse[View Manager Response]
+    WaitResponse --> ViewResponse
+    
+    Information --> ViewAnnouncements[View Announcements]
+    Information --> ViewDocuments[View Documents]
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>4. Staff Workflow (Optional)</h2>
+        <div class="mermaid">
+flowchart TD
+    Start([Staff Login]) --> Dashboard[Dashboard]
+    
+    Dashboard --> Tasks[Assigned Tasks]
+    Dashboard --> Requests[Assigned Requests]
+    
+    Requests --> ViewRequests[View Assigned Requests]
+    ViewRequests --> ViewDetails2[View Request Details]
+    ViewDetails2 --> Decision10{Start Work?}
+    Decision10 -->|Yes| UpdateStatus[Update Status to In Progress]
+    Decision10 -->|No| AddNotes[Add Work Notes]
+    UpdateStatus --> AddNotes
+    AddNotes --> Decision11{Work Complete?}
+    Decision11 -->|Yes| MarkComplete[Mark Request Complete]
+    Decision11 -->|No| ContinueWork[Continue Working]
+    MarkComplete --> AddResolutionNotes[Add Resolution Notes]
+    AddResolutionNotes --> NotifyManager3[Notify Manager & Tenant]
+    ContinueWork --> ViewRequests
+    
+    Tasks --> ViewTasks[View Assigned Tasks]
+    ViewTasks --> UpdateTask[Update Task Status]
+    UpdateTask --> CompleteTask[Mark Task Complete]
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>5. Cross-Role Interaction Flow</h2>
+        <div class="mermaid">
+sequenceDiagram
+    participant A as Admin
+    participant PM as Property Manager
+    participant T as Tenant
+    participant S as Staff
+    participant SYS as System
+    
+    Note over PM,A: Property Management
+    PM->>SYS: Create Property
+    A->>SYS: Approve Property
+    
+    Note over T,PM: Operations
+    T->>SYS: Request/Communication
+    PM->>SYS: Manage Operations
+    S->>SYS: Complete Tasks
+    
+    Note over T,PM: Feedback
+    T->>SYS: Submit Feedback/Complaint
+    SYS->>PM: Notify New Feedback
+    PM->>SYS: Review & Reply
+    SYS->>T: Notify Response
+    
+    Note over T,PM: Financial
+    PM->>SYS: Create Bill
+    T->>SYS: Submit Payment
+    PM->>SYS: Review & Approve
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h2>6. System Features Summary</h2>
+        
+        <h3>Admin Features</h3>
+        <ul class="features-list">
+            <li>Property Approval (Auto-generates subdomain)</li>
+            <li>Subscription Plans & Subscriber Management</li>
+            <li>User Management</li>
+            <li>Document Review & System Analytics</li>
+        </ul>
+        
+        <h3>Property Manager Features</h3>
+        <ul class="features-list">
+            <li>Property Management (Add, Edit, Subdomain)</li>
+            <li>Tenant Management (Add, Edit, View)</li>
+            <li>Communication (Chat, Feedback Management)</li>
+            <li>Feedback Management (View, Reply, Resolve)</li>
+            <li>Operations (Maintenance Requests, Documents, Announcements)</li>
+            <li>Billing (Create Bills, Review Payment Proofs)</li>
+            <li>Optional Staff Management</li>
+        </ul>
+        
+        <h3>Tenant Features</h3>
+        <ul class="features-list">
+            <li>Communication (Chat with Manager)</li>
+            <li>Maintenance Requests (Create, Update, Rate)</li>
+            <li>Billing & Payments (View Bills, Pay, Upload Proof)</li>
+            <li>Feedback & Complaints (Submit, View Responses)</li>
+            <li>View Information (Announcements, Documents)</li>
+        </ul>
+        
+        <h3>Staff Features (Optional)</h3>
+        <ul class="features-list">
+            <li>View & Update Assigned Requests</li>
+            <li>Add Work Notes & Mark Complete</li>
+            <li>Task Management</li>
+        </ul>
+    </div>
+    
+    <hr>
+    
+    <div class="section workflow-states">
+        <h2>7. Key Workflow States</h2>
+        
+        <h3>Key States</h3>
+        <ul class="features-list">
+            <li><strong>Property:</strong> Pending → Approved/Rejected</li>
+            <li><strong>Request:</strong> Pending → In Progress → Completed</li>
+            <li><strong>Bill:</strong> Pending → Paid/Overdue</li>
+        </ul>
+        
+        <h3>User Roles</h3>
+        <ul class="features-list">
+            <li><strong>ADMIN</strong> - System Administrator (full system access, property approval, subscription management)</li>
+            <li><strong>MANAGER</strong> - Property Manager (full access to property operations, subdomain management)</li>
+            <li><strong>TENANT</strong> - Tenant (limited to own data)</li>
+            <li><strong>STAFF</strong> - Staff member (access to assigned tasks/requests)</li>
+        </ul>
+    </div>
+    
+    <hr>
+    
+    <div class="notes">
+        <h2>Notes</h2>
+        <ul class="features-list">
+            <li>All workflows require JWT authentication</li>
+            <li>Property isolation enforced for tenants</li>
+            <li>Subdomain auto-generated on property approval</li>
+            <li>Staff management is optional</li>
+            <li>Payment via Cash/GCash/Bank with proof upload</li>
+        </ul>
+    </div>
+    
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            themeVariables: {
+                primaryColor: '#ffffff',
+                primaryTextColor: '#000000',
+                primaryBorderColor: '#000000',
+                lineColor: '#000000',
+                secondaryColor: '#ffffff',
+                tertiaryColor: '#ffffff',
+                background: '#ffffff',
+                mainBkg: '#ffffff',
+                secondBkg: '#f0f0f0',
+                textColor: '#000000',
+                border1: '#000000',
+                border2: '#000000',
+                arrowheadColor: '#000000',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '14px'
+            },
+            flowchart: {
+                curve: 'linear',
+                useMaxWidth: true,
+                htmlLabels: true,
+                nodeSpacing: 100,
+                rankSpacing: 150,
+                padding: 40,
+                direction: 'TD',
+                defaultRenderer: 'dagre-wrapper'
+            },
+            sequence: {
+                diagramMarginX: 50,
+                diagramMarginY: 10,
+                actorMargin: 50,
+                width: 150,
+                height: 65,
+                boxMargin: 10,
+                boxTextMargin: 5,
+                noteMargin: 10,
+                messageMargin: 35,
+                mirrorActors: true,
+                bottomMarginAdj: 1,
+                useMaxWidth: true,
+                rightAngles: true,
+                curve: 'linear'
+            }
+        });
+    </script>
+</body>
+</html>
+

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Wrench, Plus, Clock, CheckCircle, AlertCircle, Search, Filter, MoreVertical, Calendar, AlertTriangle, Settings, FileText, X } from 'lucide-react';
+import { Loader2, Wrench, Plus, Clock, CheckCircle, AlertCircle, Search, Filter, MoreVertical, Calendar, AlertTriangle, Settings, FileText, X, Eye } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import Header from '../../components/Header';
 
@@ -11,6 +11,9 @@ const TenantRequestsPage = () => {
   const [requests, setRequests] = useState([]);
   const [tenant, setTenant] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [fullRequestData, setFullRequestData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -48,8 +51,61 @@ const TenantRequestsPage = () => {
             setTenant(myTenant);
             
             try {
-              const requestsData = await apiService.getMaintenanceRequests(undefined, undefined, undefined, myTenant.id);
-              setRequests(Array.isArray(requestsData) ? requestsData : []);
+              const requestsData = await apiService.getMaintenanceRequests(myTenant.id);
+              
+              // Transform API data to match frontend interface
+              const transformedRequests = (requestsData || []).map((request) => {
+                try {
+                  // Map backend status to frontend display status
+                  const backendStatus = (request.status || 'pending').toLowerCase();
+                  let displayStatus = 'Pending';
+                  if (backendStatus === 'in_progress') {
+                    displayStatus = 'In Progress';
+                  } else if (backendStatus === 'completed') {
+                    displayStatus = 'Completed';
+                  } else if (backendStatus === 'cancelled') {
+                    displayStatus = 'Cancelled';
+                  } else if (backendStatus === 'approved' || backendStatus === 'on_hold') {
+                    displayStatus = 'Approved';
+                  }
+
+                  return {
+                    id: request.id,
+                    request_id: request.request_number || request.request_id || `REQ-${request.id}`,
+                    issue: request.title || request.issue || 'Maintenance Request',
+                    issue_category: request.category || request.issue_category || 'General',
+                    priority_level: request.priority ? 
+                      (request.priority.charAt(0).toUpperCase() + request.priority.slice(1)) : 
+                      'Medium',
+                    status: displayStatus,
+                    backend_status: backendStatus,
+                    description: request.description || '',
+                    created_at: request.created_at || request.date || new Date().toISOString(),
+                    scheduled_date: request.scheduled_date,
+                    actual_completion: request.actual_completion,
+                    assigned_staff: request.assigned_staff,
+                    work_notes: request.work_notes,
+                    resolution_notes: request.resolution_notes,
+                    _fullData: request // Store full data for view modal
+                  };
+                } catch (err) {
+                  console.error('Error transforming request:', err, request);
+                  return {
+                    id: request?.id || 0,
+                    request_id: `REQ-${request?.id || 'N/A'}`,
+                    issue: request?.title || request?.issue || 'Maintenance Request',
+                    issue_category: request?.category || 'General',
+                    priority_level: 'Medium',
+                    status: 'Pending',
+                    backend_status: request?.status || 'pending',
+                    description: request?.description || '',
+                    created_at: request?.created_at || new Date().toISOString(),
+                    _fullData: request
+                  };
+                }
+              });
+              
+              setRequests(Array.isArray(transformedRequests) ? transformedRequests : []);
             } catch (reqsErr) {
               console.warn('Requests not available:', reqsErr);
               setRequests([]);
@@ -74,37 +130,126 @@ const TenantRequestsPage = () => {
     fetchData();
   }, [navigate]);
 
+  // Fetch full request details
+  const fetchFullRequestDetails = async (requestId) => {
+    try {
+      const fullData = await apiService.getMaintenanceRequest(requestId);
+      setFullRequestData(fullData);
+      return fullData;
+    } catch (err) {
+      console.error('Failed to fetch full request details:', err);
+      return null;
+    }
+  };
+
+  // Handle view request details
+  const handleViewRequest = async (request) => {
+    setSelectedRequest(request);
+    setShowViewModal(true);
+    // Fetch full details if not already loaded
+    if (!request._fullData || !request._fullData.description) {
+      await fetchFullRequestDetails(request.id);
+    } else {
+      setFullRequestData(request._fullData);
+    }
+  };
+
+  // Refresh requests list
+  const refreshRequests = async () => {
+    if (!tenant) return;
+    try {
+      const requestsData = await apiService.getMaintenanceRequests(tenant.id);
+      
+      // Transform API data
+      const transformedRequests = (requestsData || []).map((request) => {
+        try {
+          const backendStatus = (request.status || 'pending').toLowerCase();
+          let displayStatus = 'Pending';
+          if (backendStatus === 'in_progress') {
+            displayStatus = 'In Progress';
+          } else if (backendStatus === 'completed') {
+            displayStatus = 'Completed';
+          } else if (backendStatus === 'cancelled') {
+            displayStatus = 'Cancelled';
+          } else if (backendStatus === 'approved' || backendStatus === 'on_hold') {
+            displayStatus = 'Approved';
+          }
+
+          return {
+            id: request.id,
+            request_id: request.request_number || request.request_id || `REQ-${request.id}`,
+            issue: request.title || request.issue || 'Maintenance Request',
+            issue_category: request.category || request.issue_category || 'General',
+            priority_level: request.priority ? 
+              (request.priority.charAt(0).toUpperCase() + request.priority.slice(1)) : 
+              'Medium',
+            status: displayStatus,
+            backend_status: backendStatus,
+            description: request.description || '',
+            created_at: request.created_at || request.date || new Date().toISOString(),
+            scheduled_date: request.scheduled_date,
+            actual_completion: request.actual_completion,
+            assigned_staff: request.assigned_staff,
+            work_notes: request.work_notes,
+            resolution_notes: request.resolution_notes,
+            _fullData: request
+          };
+        } catch (err) {
+          console.error('Error transforming request:', err, request);
+          return {
+            id: request?.id || 0,
+            request_id: `REQ-${request?.id || 'N/A'}`,
+            issue: request?.title || request?.issue || 'Maintenance Request',
+            issue_category: request?.category || 'General',
+            priority_level: 'Medium',
+            status: 'Pending',
+            backend_status: request?.status || 'pending',
+            description: request?.description || '',
+            created_at: request?.created_at || new Date().toISOString(),
+            _fullData: request
+          };
+        }
+      });
+      
+      setRequests(Array.isArray(transformedRequests) ? transformedRequests : []);
+    } catch (err) {
+      console.error('Failed to refresh requests:', err);
+    }
+  };
+
   const handleCreateRequest = async (e) => {
     e.preventDefault();
     try {
       setSubmitting(true);
       setError(null);
-      // In frontend-only mode, mimic a successful submission and append to local list
-      try {
-        await apiService.createMaintenanceRequest({
-          ...newRequest,
-          tenant_id: tenant?.id || 1
-        });
-      } catch (_ignored) {}
+      setSuccessMessage('');
+      
+      if (!tenant) {
+        setError('Tenant profile not found. Please try logging in again.');
+        return;
+      }
+
+      // Map frontend fields to backend format
+      await apiService.createMaintenanceRequest({
+        title: newRequest.issue,
+        description: newRequest.description,
+        category: newRequest.issue_category.toLowerCase(),
+        priority: newRequest.priority_level.toLowerCase(),
+        tenant_id: tenant.id
+      });
+
       setShowCreateForm(false);
       setNewRequest({ issue: '', issue_category: '', priority_level: 'Medium', description: '' });
       setSuccessMessage('Maintenance request submitted successfully!');
-      // Optimistically add to local list in demo mode
-      setRequests((prev) => {
-        const nextId = (prev[0]?.id || 200) + 1;
-        const created = {
-          id: nextId,
-          ...newRequest,
-          status: 'Pending',
-          created_at: new Date().toISOString(),
-        };
-        return [created, ...prev];
-      });
+      
+      // Refresh the requests list
+      await refreshRequests();
+      
       // Clear success message after 3 seconds
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       console.error('Failed to create request:', err);
-      setError('Failed to submit request. Please try again.');
+      setError(err?.message || err?.error || 'Failed to submit request. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -138,12 +283,13 @@ const TenantRequestsPage = () => {
   }
 
   const getStatusColor = (status) => {
-    switch (status) {
-      case 'Completed': return 'text-green-600 bg-green-50';
-      case 'In Progress': return 'text-blue-600 bg-blue-50';
-      case 'Pending': return 'text-amber-600 bg-amber-50';
-      default: return 'text-gray-600 bg-gray-50';
-    }
+    const statusLower = (status || '').toLowerCase();
+    if (statusLower === 'completed') return 'text-green-600 bg-green-50';
+    if (statusLower === 'in progress') return 'text-blue-600 bg-blue-50';
+    if (statusLower === 'pending') return 'text-amber-600 bg-amber-50';
+    if (statusLower === 'cancelled' || statusLower === 'disapproved') return 'text-red-600 bg-red-50';
+    if (statusLower === 'approved') return 'text-blue-600 bg-blue-50';
+    return 'text-gray-600 bg-gray-50';
   };
 
   const getPriorityColor = (priority) => {
@@ -160,11 +306,19 @@ const TenantRequestsPage = () => {
 
   // Filter requests based on search, status, and priority
   const filteredRequests = requests.filter(request => {
-    const matchesSearch = request.issue.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         request.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         request.issue_category.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || request.status.toLowerCase() === statusFilter.toLowerCase();
-    const matchesPriority = priorityFilter === 'all' || request.priority_level.toLowerCase() === priorityFilter.toLowerCase();
+    const searchLower = searchTerm.toLowerCase();
+    const matchesSearch = !searchTerm || 
+                         (request.issue || '').toLowerCase().includes(searchLower) ||
+                         (request.description || '').toLowerCase().includes(searchLower) ||
+                         (request.issue_category || '').toLowerCase().includes(searchLower);
+    
+    const matchesStatus = statusFilter === 'all' || 
+                         (request.status || '').toLowerCase() === statusFilter.toLowerCase() ||
+                         (request.backend_status || '').toLowerCase() === statusFilter.toLowerCase();
+    
+    const matchesPriority = priorityFilter === 'all' || 
+                           (request.priority_level || '').toLowerCase() === priorityFilter.toLowerCase();
+    
     return matchesSearch && matchesStatus && matchesPriority;
   });
 
@@ -290,6 +444,7 @@ const TenantRequestsPage = () => {
                 <option value="pending">Pending</option>
                 <option value="in progress">In Progress</option>
                 <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
               </select>
               <select
                 value={priorityFilter}
@@ -347,12 +502,16 @@ const TenantRequestsPage = () => {
                         required
                       >
                         <option value="">Select category</option>
-                        <option value="Plumbing">Plumbing</option>
-                        <option value="Electrical">Electrical</option>
-                        <option value="HVAC">HVAC</option>
-                        <option value="General Maintenance">General Maintenance</option>
-                        <option value="Security">Security</option>
-                        <option value="Other">Other</option>
+                        <option value="plumbing">Plumbing</option>
+                        <option value="electrical">Electrical</option>
+                        <option value="hvac">HVAC</option>
+                        <option value="appliance">Appliance</option>
+                        <option value="carpentry">Carpentry</option>
+                        <option value="painting">Painting</option>
+                        <option value="cleaning">Cleaning</option>
+                        <option value="pest_control">Pest Control</option>
+                        <option value="security">Security</option>
+                        <option value="other">Other</option>
                       </select>
                     </div>
                     
@@ -472,10 +631,11 @@ const TenantRequestsPage = () => {
                         </div>
                         <div className="flex items-center space-x-1">
                           <button
-                            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
-                            title="More options"
+                            onClick={() => handleViewRequest(request)}
+                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
+                            title="View details"
                           >
-                            <MoreVertical className="w-4 h-4" />
+                            <Eye className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -487,6 +647,119 @@ const TenantRequestsPage = () => {
           </div>
         </div>
       </div>
+
+      {/* View Request Details Modal */}
+      {showViewModal && selectedRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+              <h2 className="text-2xl font-bold text-gray-900">Request Details</h2>
+              <button
+                onClick={() => {
+                  setShowViewModal(false);
+                  setSelectedRequest(null);
+                  setFullRequestData(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {fullRequestData ? (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Request Number</h3>
+                      <p className="text-lg font-semibold text-gray-900">{fullRequestData.request_number || selectedRequest.request_id}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Status</h3>
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(selectedRequest.status)}`}>
+                        {selectedRequest.status}
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Issue</h3>
+                      <p className="text-lg font-semibold text-gray-900">{fullRequestData.title || selectedRequest.issue}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Category</h3>
+                      <p className="text-lg font-semibold text-gray-900 capitalize">{fullRequestData.category || selectedRequest.issue_category}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Priority</h3>
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getPriorityColor(selectedRequest.priority_level)}`}>
+                        {fullRequestData.priority ? (fullRequestData.priority.charAt(0).toUpperCase() + fullRequestData.priority.slice(1)) : selectedRequest.priority_level}
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Created Date</h3>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {fullRequestData.description && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-2">Description</h3>
+                      <p className="text-gray-900 whitespace-pre-wrap">{fullRequestData.description}</p>
+                    </div>
+                  )}
+
+                  {fullRequestData.assigned_staff && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Assigned Staff</h3>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {fullRequestData.assigned_staff.user?.first_name} {fullRequestData.assigned_staff.user?.last_name}
+                      </p>
+                    </div>
+                  )}
+
+                  {fullRequestData.scheduled_date && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Scheduled Date</h3>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {new Date(fullRequestData.scheduled_date).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+
+                  {fullRequestData.work_notes && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-2">Work Notes</h3>
+                      <p className="text-gray-900 whitespace-pre-wrap">{fullRequestData.work_notes}</p>
+                    </div>
+                  )}
+
+                  {fullRequestData.resolution_notes && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-2">Resolution Notes</h3>
+                      <p className="text-gray-900 whitespace-pre-wrap">{fullRequestData.resolution_notes}</p>
+                    </div>
+                  )}
+
+                  {fullRequestData.actual_completion && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-1">Completed Date</h3>
+                      <p className="text-lg font-semibold text-gray-900">
+                        {new Date(fullRequestData.actual_completion).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                  <span className="ml-2 text-gray-600">Loading request details...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

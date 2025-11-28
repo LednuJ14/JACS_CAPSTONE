@@ -2,17 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User, Building, Phone, Mail, Calendar, Search, Filter, Plus, Edit, Trash2, ChevronDown, Settings, LogOut, X, Briefcase, Clock, MoreVertical, Eye, CheckCircle, AlertTriangle, ArrowRight, Users, Home, CreditCard, MessageSquare, Wrench, Activity } from 'lucide-react';
 import { apiService } from '../../../services/api';
+import { useProperty } from '../../components/PropertyContext';
 import Header from '../../components/Header';
 
 const StaffPage = () => {
+  const { property } = useProperty();
+  
   // Feature flag: if disabled, show a friendly notice and avoid any actions
-  let staffEnabled = true;
-  try {
-    const stored = localStorage.getItem('feature.staffManagementEnabled');
-    staffEnabled = stored === null ? true : JSON.parse(stored);
-  } catch (e) {
-    staffEnabled = true;
-  }
+  // Read from property display settings (property-specific), default to true
+  const staffEnabled = property?.display_settings?.staffManagementEnabled !== undefined
+    ? property.display_settings.staffManagementEnabled
+    : true;
 
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -353,7 +353,6 @@ const StaffPage = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Position & Department</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact Info</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employment Details</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Salary</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
@@ -361,7 +360,7 @@ const StaffPage = () => {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {currentStaff.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="px-6 py-12 text-center">
+                      <td colSpan="6" className="px-6 py-12 text-center">
                         <div className="flex flex-col items-center">
                           <User className="w-12 h-12 text-gray-400 mb-4" />
                           <h3 className="text-lg font-medium text-gray-900 mb-2">No staff found</h3>
@@ -414,12 +413,6 @@ const StaffPage = () => {
                             Supervisor: {staffMember.supervisor}
                           </div>
                         )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          ₱{staffMember.salary.toLocaleString()}
-                        </div>
-                        <div className="text-sm text-gray-500">monthly</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${

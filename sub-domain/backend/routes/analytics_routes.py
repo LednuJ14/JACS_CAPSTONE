@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, current_app, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from sqlalchemy import func, extract, or_, text
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
 import re
 
@@ -221,9 +221,11 @@ def get_dashboard_data():
 def get_manager_dashboard(property_id):
     """Get property manager dashboard data for a specific property."""
     try:
+        current_app.logger.info(f"Getting manager dashboard for property_id: {property_id}")
         # Verify property exists
         property_obj = Property.query.get(property_id)
         if not property_obj:
+            current_app.logger.warning(f"Property {property_id} not found")
             return jsonify({'error': 'Property not found'}), 404
         
         # Key Metrics - Property-specific with error handling
@@ -245,66 +247,99 @@ def get_manager_dashboard(property_id):
             current_app.logger.warning(f"Error getting total units: {str(e)}")
             total_units = 0
         
-        try:
-            # Use string values since status is now String type (matches database enum)
-            occupied_units = Unit.query.filter(
-                Unit.property_id == property_id,
-                or_(Unit.status == 'occupied', Unit.status == 'rented')
-            ).count()
-        except Exception as e:
-            current_app.logger.warning(f"Error getting occupied units: {str(e)}")
-            occupied_units = 0
+        # Calculate occupied and available units based on actual tenant-unit relationships
+        # This ensures consistency with active_tenants count
+        occupied_units = 0
+        active_tenants = 0
         
         try:
-            # Use string values since status is now String type (matches database enum)
-            available_units = Unit.query.filter(
-                Unit.property_id == property_id,
-                or_(Unit.status == 'available', Unit.status == 'vacant')
-            ).count()
-        except Exception as e:
-            current_app.logger.warning(f"Error getting available units: {str(e)}")
-            available_units = 0
-        
-        try:
-            # Try to get active tenants for this property - handle case where TenantUnit table might not exist
+            # Try to get occupied units and active tenants from TenantUnit relationships
             if TENANT_UNIT_AVAILABLE and TenantUnit and table_exists('tenant_units'):
                 try:
-                    # Get tenants for units in this property
-                    # Use date-based check for active rentals (simplified structure)
-                    from datetime import date
+                    today = date.today()
+                    
+                    # Get distinct units that have active tenants (occupied units)
+                    occupied_unit_ids = db.session.query(Unit.id).join(TenantUnit).filter(
+                        Unit.property_id == property_id,
+                        TenantUnit.move_in_date.isnot(None),
+                        or_(
+                            TenantUnit.move_out_date.is_(None),  # Ongoing lease (no move-out date)
+                            TenantUnit.move_out_date >= today   # Future move-out date
+                        )
+                    ).distinct().all()
+                    
+                    occupied_units = len(occupied_unit_ids)
+                    
+                    # Count active tenants
                     active_tenants = Tenant.query.join(TenantUnit).join(Unit).filter(
                         Unit.property_id == property_id,
                         TenantUnit.move_in_date.isnot(None),
-                        TenantUnit.move_out_date.isnot(None),
-                        TenantUnit.move_out_date >= date.today()
+                        or_(
+                            TenantUnit.move_out_date.is_(None),  # Ongoing lease (no move-out date)
+                            TenantUnit.move_out_date >= today   # Future move-out date
+                        )
                     ).count()
+                    
+                    current_app.logger.info(f"Property {property_id}: {active_tenants} active tenants in {occupied_units} occupied units")
+                    
                 except Exception as join_error:
                     current_app.logger.warning(f"Error joining TenantUnit: {str(join_error)}")
-                    # Fallback: count tenants with units in this property
+                    # Fallback: use unit status if TenantUnit join fails
                     try:
+                        occupied_units = Unit.query.filter(
+                            Unit.property_id == property_id,
+                            or_(Unit.status == 'occupied', Unit.status == 'rented')
+                        ).count()
                         active_tenants = db.session.query(Tenant).join(TenantUnit).join(Unit).filter(
                             Unit.property_id == property_id
                         ).count()
+                        current_app.logger.info(f"Using fallback: {active_tenants} tenants, {occupied_units} occupied units (by status)")
                     except Exception:
+                        occupied_units = 0
                         active_tenants = 0
             else:
-                # TenantUnit table doesn't exist or model not available
+                # TenantUnit table doesn't exist - fallback to unit status
+                current_app.logger.warning(f"TenantUnit not available for property {property_id}, using unit status")
+                try:
+                    occupied_units = Unit.query.filter(
+                        Unit.property_id == property_id,
+                        or_(Unit.status == 'occupied', Unit.status == 'rented')
+                    ).count()
+                except Exception as e:
+                    current_app.logger.warning(f"Error getting occupied units by status: {str(e)}")
+                    occupied_units = 0
                 active_tenants = 0
         except Exception as e:
-            current_app.logger.warning(f"Error getting active tenants: {str(e)}")
+            current_app.logger.warning(f"Error getting occupied units and active tenants: {str(e)}")
+            occupied_units = 0
             active_tenants = 0
         
+        # Calculate available units: total - occupied
         try:
-            if hasattr(EmploymentStatus, 'ACTIVE'):
-                active_staff = Staff.query.filter_by(employment_status=EmploymentStatus.ACTIVE).count()
-            else:
-                active_staff = Staff.query.filter_by(employment_status='ACTIVE').count()
+            available_units = max(0, total_units - occupied_units)
         except Exception as e:
-            current_app.logger.warning(f"Error getting active staff: {str(e)}")
+            current_app.logger.warning(f"Error calculating available units: {str(e)}")
+            available_units = 0
+        
+        # Count active staff for this specific property
+        # Note: Staff model doesn't have employment_status column - all staff are active
+        # So we just count all staff members for this property
+        try:
+            if table_exists('staff'):
+                active_staff = Staff.query.filter_by(property_id=property_id).count()
+                current_app.logger.info(f"Property {property_id}: Found {active_staff} staff members")
+            else:
+                current_app.logger.warning("Staff table does not exist")
+                active_staff = 0
+        except Exception as e:
+            current_app.logger.warning(f"Error getting active staff for property {property_id}: {str(e)}")
             active_staff = 0
         
         # Calculate occupancy rate
         occupancy_rate = round((occupied_units / total_units * 100), 2) if total_units > 0 else 0
+        
+        # Log unit metrics for debugging
+        current_app.logger.info(f"Property {property_id} unit metrics: total={total_units}, occupied={occupied_units}, available={available_units}, rate={occupancy_rate}%")
         
         # Financial metrics - current month
         current_month = datetime.now().month
@@ -501,6 +536,107 @@ def get_manager_dashboard(property_id):
         # Get current month name
         current_month_name = datetime.now().strftime('%B %Y')
         
+        # Additional metrics: Bookings today (tenants moved in today)
+        bookings_today = 0
+        try:
+            if TENANT_UNIT_AVAILABLE and TenantUnit and table_exists('tenant_units'):
+                today = date.today()
+                bookings_today = db.session.query(TenantUnit).join(Unit).filter(
+                    Unit.property_id == property_id,
+                    func.date(TenantUnit.move_in_date) == today
+                ).count()
+        except Exception as e:
+            current_app.logger.warning(f"Error getting bookings today: {str(e)}")
+            bookings_today = 0
+        
+        # Inquiries this month (from chats with "new inquiry" or "new conversation" subject)
+        inquiries_this_month = 0
+        try:
+            if table_exists('chats'):
+                from models.chat import Chat
+                current_month_start = datetime(current_year, current_month, 1)
+                inquiries_this_month = Chat.query.filter(
+                    Chat.property_id == property_id,
+                    Chat.created_at >= current_month_start,
+                    or_(
+                        func.lower(Chat.subject).like('%inquiry%'),
+                        func.lower(Chat.subject).like('%conversation%'),
+                        Chat.subject.is_(None)
+                    )
+                ).count()
+        except Exception as e:
+            current_app.logger.warning(f"Error getting inquiries this month: {str(e)}")
+            inquiries_this_month = 0
+        
+        # Average resolution days (from completed maintenance requests)
+        avg_resolution_days = 0
+        try:
+            if table_exists('maintenance_requests') and table_exists('units'):
+                try:
+                    if hasattr(RequestStatus, 'COMPLETED'):
+                        completed_requests = MaintenanceRequest.query.join(Unit).filter(
+                            Unit.property_id == property_id,
+                            MaintenanceRequest.status == RequestStatus.COMPLETED,
+                            MaintenanceRequest.resolved_at.isnot(None)
+                        ).all()
+                    else:
+                        completed_requests = MaintenanceRequest.query.join(Unit).filter(
+                            Unit.property_id == property_id,
+                            MaintenanceRequest.status == 'COMPLETED',
+                            MaintenanceRequest.resolved_at.isnot(None)
+                        ).all()
+                    
+                    if completed_requests:
+                        total_days = 0
+                        for req in completed_requests:
+                            try:
+                                if req.resolved_at and req.created_at:
+                                    resolved = req.resolved_at
+                                    created = req.created_at
+                                    # Ensure both are timezone-aware
+                                    if resolved.tzinfo is None:
+                                        resolved = resolved.replace(tzinfo=timezone.utc)
+                                    if created.tzinfo is None:
+                                        created = created.replace(tzinfo=timezone.utc)
+                                    days = (resolved - created).days
+                                    total_days += days
+                            except Exception:
+                                continue
+                        avg_resolution_days = round(total_days / len(completed_requests), 1) if completed_requests else 0
+                except Exception as e:
+                    current_app.logger.warning(f"Error calculating avg resolution days: {str(e)}")
+                    avg_resolution_days = 0
+        except Exception as e:
+            current_app.logger.warning(f"Error getting avg resolution days: {str(e)}")
+            avg_resolution_days = 0
+        
+        # Average monthly rent (from bills or units)
+        avg_monthly_rent = 0
+        try:
+            if table_exists('bills') and table_exists('units'):
+                # Get average rent from bills for this property
+                bills_with_rent = Bill.query.join(Unit).filter(
+                    Unit.property_id == property_id
+                ).all()
+                
+                if bills_with_rent:
+                    total_rent = sum(float(bill.amount) for bill in bills_with_rent if hasattr(bill, 'amount'))
+                    avg_monthly_rent = round(total_rent / len(bills_with_rent), 2) if bills_with_rent else 0
+                else:
+                    # Fallback: try to get from units if they have rent info
+                    try:
+                        units_with_rent = Unit.query.filter_by(property_id=property_id).all()
+                        if units_with_rent:
+                            # If units have monthly_rent field
+                            rents = [float(u.monthly_rent) for u in units_with_rent if hasattr(u, 'monthly_rent') and u.monthly_rent]
+                            if rents:
+                                avg_monthly_rent = round(sum(rents) / len(rents), 2)
+                    except Exception:
+                        pass
+        except Exception as e:
+            current_app.logger.warning(f"Error getting avg monthly rent: {str(e)}")
+            avg_monthly_rent = 0
+        
         # Safely serialize objects to dictionaries
         maintenance_requests_data = []
         for req in recent_requests:
@@ -526,9 +662,22 @@ def get_manager_dashboard(property_id):
                 current_app.logger.warning(f"Error serializing announcement {ann.id}: {str(e)}")
                 continue
         
+        # Safely get property name
+        property_name = None
+        try:
+            property_name = getattr(property_obj, 'name', None) or getattr(property_obj, 'title', None) or f'Property {property_id}'
+        except Exception:
+            property_name = f'Property {property_id}'
+        
+        # Log final metrics for debugging
+        current_app.logger.info(f"Dashboard data for property {property_id} ({property_name}): "
+                              f"revenue={float(monthly_income)}, tenants={active_tenants}, "
+                              f"units={total_units}/{occupied_units}/{available_units}, "
+                              f"occupancy={occupancy_rate}%")
+        
         return jsonify({
             'property_id': property_id,
-            'property_name': property_obj.name if property_obj else None,
+            'property_name': property_name,
             'metrics': {
                 'total_income': float(monthly_income),
                 'current_month': current_month_name,
@@ -536,7 +685,11 @@ def get_manager_dashboard(property_id):
                 'active_staff': active_staff,
                 'total_properties': total_properties,
                 'occupancy_rate': occupancy_rate,
-                'outstanding_balance': float(outstanding_balance)
+                'outstanding_balance': float(outstanding_balance),
+                'bookings_today': bookings_today,
+                'inquiries_this_month': inquiries_this_month,
+                'avg_resolution_days': avg_resolution_days,
+                'avg_monthly_rent': float(avg_monthly_rent)
             },
             'properties': {
                 'total': total_properties,
@@ -647,7 +800,7 @@ def get_tenant_dashboard(user_id):
         tenant = user.tenant_profile
         
         # Current lease info
-        current_lease = tenant.current_lease
+        current_rent = tenant.current_rent
         
         # Recent bills
         recent_bills = Bill.query.filter_by(
@@ -686,8 +839,8 @@ def get_tenant_dashboard(user_id):
                     })
         
         return jsonify({
-            'tenant_info': tenant.to_dict(include_user=True, include_lease=True),
-            'current_lease': current_lease.to_dict(include_unit=True) if current_lease else None,
+            'tenant_info': tenant.to_dict(include_user=True, include_rent=True),
+            'current_rent': current_rent.to_dict(include_unit=True) if current_rent else None,
             'financial_summary': {
                 'outstanding_balance': float(outstanding_balance),
                 'total_paid': tenant.total_rent_paid,
@@ -709,8 +862,10 @@ def get_financial_summary():
     try:
         # Get property_id from request (subdomain, query param, header, or JWT)
         property_id = get_property_id_from_request()
+        current_app.logger.info(f"Financial summary request - property_id: {property_id}")
         
         if not property_id:
+            current_app.logger.warning("Financial summary: No property_id found in request")
             return jsonify({
                 'error': 'Property ID is required. Please access through your property subdomain.'
             }), 400
@@ -839,6 +994,11 @@ def get_financial_summary():
         except Exception:
             property_name = f'Property {property_id}'
         
+        # Log financial summary for debugging
+        current_app.logger.info(f"Financial summary for property {property_id} ({property_name}): "
+                              f"total_revenue={float(total_revenue)}, outstanding={float(total_outstanding)}, "
+                              f"overdue_bills={overdue_bills}, months={len(monthly_data)}")
+        
         return jsonify({
             'property_id': property_id,
             'property_name': property_name,
@@ -870,8 +1030,10 @@ def get_occupancy_report():
     try:
         # Get property_id from request (subdomain, query param, header, or JWT)
         property_id = get_property_id_from_request()
+        current_app.logger.info(f"Occupancy report request - property_id: {property_id}")
         
         if not property_id:
+            current_app.logger.warning("Occupancy report: No property_id found in request")
             return jsonify({
                 'error': 'Property ID is required. Please access through your property subdomain.'
             }), 400
@@ -913,17 +1075,45 @@ def get_occupancy_report():
                 return jsonify({'error': 'Property not found'}), 404
         
         # Overall occupancy - Property-specific
+        # Calculate based on actual tenant-unit relationships for accuracy
         try:
             if table_exists('units'):
                 total_units = Unit.query.filter_by(property_id=property_id).count()
-                occupied_units = Unit.query.filter(
-                    Unit.property_id == property_id,
-                    or_(Unit.status == 'occupied', Unit.status == 'rented')
-                ).count()
-                available_units = Unit.query.filter(
-                    Unit.property_id == property_id,
-                    or_(Unit.status == 'available', Unit.status == 'vacant')
-                ).count()
+                
+                # Calculate occupied units based on TenantUnit relationships
+                occupied_units = 0
+                if TENANT_UNIT_AVAILABLE and TenantUnit and table_exists('tenant_units'):
+                    try:
+                        today = date.today()
+                        
+                        # Get distinct units that have active tenants (occupied units)
+                        occupied_unit_ids = db.session.query(Unit.id).join(TenantUnit).filter(
+                            Unit.property_id == property_id,
+                            TenantUnit.move_in_date.isnot(None),
+                            or_(
+                                TenantUnit.move_out_date.is_(None),  # Ongoing lease (no move-out date)
+                                TenantUnit.move_out_date >= today   # Future move-out date
+                            )
+                        ).distinct().all()
+                        
+                        occupied_units = len(occupied_unit_ids)
+                        current_app.logger.info(f"Occupancy report: {occupied_units} occupied units (from TenantUnit) for property {property_id}")
+                    except Exception as join_error:
+                        current_app.logger.warning(f"Error joining TenantUnit in occupancy report: {str(join_error)}")
+                        # Fallback to unit status
+                        occupied_units = Unit.query.filter(
+                            Unit.property_id == property_id,
+                            or_(Unit.status == 'occupied', Unit.status == 'rented')
+                        ).count()
+                else:
+                    # Fallback to unit status if TenantUnit not available
+                    occupied_units = Unit.query.filter(
+                        Unit.property_id == property_id,
+                        or_(Unit.status == 'occupied', Unit.status == 'rented')
+                    ).count()
+                
+                # Available units = total - occupied
+                available_units = max(0, total_units - occupied_units)
                 occupancy_rate = round((occupied_units / total_units * 100), 2) if total_units > 0 else 0
             else:
                 total_units = 0
@@ -961,6 +1151,12 @@ def get_occupancy_report():
             property_name = getattr(property_obj, 'name', None) or getattr(property_obj, 'title', None) or f'Property {property_id}'
         except Exception:
             property_name = f'Property {property_id}'
+        
+        # Log occupancy report for debugging
+        current_app.logger.info(f"Occupancy report for property {property_id} ({property_name}): "
+                              f"total={total_units}, occupied={occupied_units}, "
+                              f"available={available_units}, rate={occupancy_rate}%, "
+                              f"breakdown_items={len(unit_type_data)}")
         
         return jsonify({
             'property_id': property_id,

@@ -101,7 +101,11 @@ class ApiService {
     if (body !== undefined) {
       if (isFormData) {
         config.body = body;
+      } else if (typeof body === 'string') {
+        // Body is already a string (e.g., already JSON stringified)
+        config.body = body;
       } else {
+        // Body is an object, stringify it
         config.body = JSON.stringify(body);
       }
     }
@@ -174,7 +178,9 @@ class ApiService {
         } else if (response.status === 403) {
           throw new Error('Access denied. You may not have permission for this action.');
         } else if (response.status === 500) {
-          throw new Error(`Server error: ${data.error || data.message || 'Internal server error'}`);
+          const errorMsg = data.error || data.message || 'Internal server error';
+          const details = data.details ? ` - ${data.details}` : '';
+          throw new Error(`Server error: ${errorMsg}${details}`);
         }
         
         const errorMessage = data.error || data.message || `HTTP error! status: ${response.status}`;
@@ -369,6 +375,45 @@ class ApiService {
     }
   }
 
+  async getPropertyBySubdomain(subdomain) {
+    try {
+      // Public endpoint - no auth required
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+      const subdomainToUse = subdomain || hostname.split('.')[0];
+      
+      // Use query parameter only - no custom headers to avoid CORS issues
+      const response = await fetch(`${this.propertyBaseURL}/properties/public/by-subdomain?subdomain=${encodeURIComponent(subdomainToUse)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const property = await response.json();
+        return property;
+      } else {
+        // Only log if it's a meaningful error (4xx/5xx), not connection issues
+        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch property' }));
+        // Silent handling - connection errors are expected when backend is down
+        return null;
+      }
+    } catch (error) {
+      // Silently handle connection errors (backend not running)
+      // These are expected when the backend server is down
+      const isConnectionError = error?.message?.includes('Failed to fetch') || 
+                                error?.message?.includes('ERR_CONNECTION_REFUSED') ||
+                                error?.name === 'TypeError';
+      
+      // Only log non-connection errors to avoid noise in console
+      if (!isConnectionError) {
+        console.warn('Failed to load property by subdomain:', error);
+      }
+      // Connection errors are handled silently - return null to allow fallback behavior
+      return null;
+    }
+  }
+
   async getDashboardContext() {
     try {
       // Try to load properties from backend - use property base URL
@@ -404,7 +449,7 @@ class ApiService {
     try {
       return await this.makeRequest(`/properties/${propertyId}/display-settings`, {
         method: 'PUT',
-        body: JSON.stringify(settings),
+        body: settings, // makeRequest will handle JSON.stringify
         baseURL: this.propertyBaseURL
       });
     } catch (error) {
@@ -752,15 +797,129 @@ class ApiService {
     }
   }
 
-  // Chats
+  // Chats - Tenant and Property Manager communication
+  async getChats(filters = {}) {
+    try {
+      const params = new URLSearchParams();
+      if (filters.status) params.append('status', filters.status);
+      if (filters.property_id) params.append('property_id', filters.property_id);
+      
+      const queryString = params.toString();
+      const url = `/chats${queryString ? `?${queryString}` : ''}`;
+      
+      const response = await this.makeRequest(url, {
+        baseURL: this.propertyBaseURL
+      });
+      
+      return response.chats || [];
+    } catch (error) {
+      console.error('Failed to fetch chats:', error);
+      return [];
+    }
+  }
+
+  async createChat(chatData) {
+    try {
+      const response = await this.makeRequest('/chats', {
+        method: 'POST',
+        body: chatData,  // Let makeRequest handle JSON stringification
+        baseURL: this.propertyBaseURL
+      });
+      return response.chat || response;
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+      throw error;
+    }
+  }
+
+  async getChat(chatId) {
+    try {
+      const response = await this.makeRequest(`/chats/${chatId}`, {
+        baseURL: this.propertyBaseURL
+      });
+      return response.chat || response;
+    } catch (error) {
+      console.error('Failed to fetch chat:', error);
+      throw error;
+    }
+  }
+
+  async getChatMessages(chatId, page = 1, perPage = 50) {
+    try {
+      const params = new URLSearchParams();
+      params.append('page', page);
+      params.append('per_page', perPage);
+      
+      const response = await this.makeRequest(`/chats/${chatId}/messages?${params.toString()}`, {
+        baseURL: this.propertyBaseURL
+      });
+      return response.messages || [];
+    } catch (error) {
+      console.error('Failed to fetch chat messages:', error);
+      return [];
+    }
+  }
+
+  async sendMessage(messageData) {
+    try {
+      const { chat_id, content } = messageData;
+      const response = await this.makeRequest(`/chats/${chat_id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+        baseURL: this.propertyBaseURL
+      });
+      return response.message_data || response;
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      throw error;
+    }
+  }
+
+  async markChatAsRead(chatId) {
+    try {
+      const response = await this.makeRequest(`/chats/${chatId}/read`, {
+        method: 'PUT',
+        baseURL: this.propertyBaseURL
+      });
+      return response;
+    } catch (error) {
+      console.error('Failed to mark chat as read:', error);
+      throw error;
+    }
+  }
+
+  async updateChat(chatId, updateData) {
+    try {
+      const response = await this.makeRequest(`/chats/${chatId}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData),
+        baseURL: this.propertyBaseURL
+      });
+      return response.chat || response;
+    } catch (error) {
+      console.error('Failed to update chat:', error);
+      throw error;
+    }
+  }
+
+  async getChatUnreadCount() {
+    try {
+      const response = await this.makeRequest('/chats/unread-count', {
+        baseURL: this.propertyBaseURL
+      });
+      return response.unread_count || 0;
+    } catch (error) {
+      console.error('Failed to fetch unread count:', error);
+      return 0;
+    }
+  }
+
+  // Legacy methods for backward compatibility (deprecated - use new methods above)
   async getContacts() { return []; }
   async createContact() { return { success: true }; }
   async updateContact() { return { success: true }; }
   async convertProspectToTenant() { return { success: true }; }
-  async getChats() { return []; }
-  async createChat() { return { success: true }; }
   async getChatMessages() { return []; }
-  async sendMessage() { return { success: true }; }
   async markMessageAsRead() { return { success: true }; }
   async getChatsSummary() { return {}; }
   async getContactsSummary() { return {}; }
@@ -906,7 +1065,13 @@ class ApiService {
       });
       return response || {};
     } catch (error) {
+      // Endpoint doesn't exist in sub-domain backend - return empty stats
+      // Frontend should compute stats from requests list instead
+      if (error.status === 404) {
+        console.warn('Requests dashboard endpoint not available - compute stats from requests list instead');
+      } else {
       console.error('Failed to fetch requests dashboard:', error);
+      }
       return {};
     }
   }

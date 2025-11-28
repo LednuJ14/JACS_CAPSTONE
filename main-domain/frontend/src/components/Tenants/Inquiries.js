@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import api from '../../services/api';
 
 // Props:
@@ -134,7 +134,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
   };
 
   // Helper to get attachments for a specific message (by matching timestamp - only match if attachment was uploaded BEFORE message)
-  const getMessageAttachments = (message, inquiryId) => {
+  const getMessageAttachments = useCallback((message, inquiryId) => {
     if (!attachments[inquiryId] || !message.created_at) return [];
     const messageTime = new Date(message.created_at).getTime();
     return attachments[inquiryId].filter(att => {
@@ -146,10 +146,10 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       const timeDiff = messageTime - attTime;
       return timeDiff >= 0 && timeDiff < 2000; // 0 to 2 seconds after attachment
     });
-  };
+  }, [attachments]);
 
   // Helper to get unmatched attachments (attachments that don't belong to any message)
-  const getUnmatchedAttachments = (inquiryId, messages) => {
+  const getUnmatchedAttachments = useCallback((inquiryId, messages) => {
     if (!attachments[inquiryId] || !messages || messages.length === 0) {
       // If no messages, show all attachments
       return attachments[inquiryId] || [];
@@ -165,7 +165,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     
     // Return attachments that weren't matched to any message
     return (attachments[inquiryId] || []).filter(att => !matchedAttachmentIds.has(att.id));
-  };
+  }, [attachments, getMessageAttachments]);
 
   // Helper function to format time consistently
   const formatMessageTime = (dateString) => {
@@ -687,7 +687,8 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     };
 
     ensureInquiry();
-  }, [initialChat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChat?.propertyId]);
 
   const selectedChat = useMemo(() => chats.find(c => c.id === selectedChatId) || null, [chats, selectedChatId]);
 
@@ -730,7 +731,8 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       clearTimeout(timeout1);
       clearTimeout(timeout2);
     };
-  }, [selectedChatId, chats, initialChat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedChatId, initialChat?.propertyId]);
 
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedChat) return;
@@ -1011,10 +1013,10 @@ const Inquiries = ({ onClose, initialChat = null }) => {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Combine messages and unmatched attachments, then sort by timestamp */}
-              {(() => {
-                const unmatchedAttachments = getUnmatchedAttachments(selectedChat?.id, selectedChat?.messages || []);
-                console.log('Unmatched attachments for inquiry', selectedChat?.id, ':', unmatchedAttachments);
-                console.log('All attachments for inquiry', selectedChat?.id, ':', attachments[selectedChat?.id]);
+              {useMemo(() => {
+                if (!selectedChat?.id) return [];
+                
+                const unmatchedAttachments = getUnmatchedAttachments(selectedChat.id, selectedChat.messages || []);
                 const allItems = [];
                 
                 // Add all messages
@@ -1123,7 +1125,9 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                   } else {
                     // Regular message
                     const msg = item.data;
-                    const messageAttachments = getMessageAttachments(msg, selectedChat.id);
+                    const inquiryId = selectedChat?.id;
+                    if (!inquiryId) return null;
+                    const messageAttachments = getMessageAttachments(msg, inquiryId);
                     const hasAttachments = messageAttachments.length > 0;
                     const hasText = msg.text && msg.text.trim().length > 0;
                     
@@ -1225,7 +1229,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                     );
                   }
                 });
-              })()}
+              }, [selectedChat?.id, selectedChat?.messages, attachments, chats])}
               
               {(!selectedChat?.messages || selectedChat.messages.length === 0) && 
                (!attachments[selectedChat?.id] || attachments[selectedChat.id].length === 0) && (

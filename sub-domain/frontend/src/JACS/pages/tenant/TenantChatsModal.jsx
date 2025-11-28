@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Loader2, MessageCircle, Send, User, Clock, Search, MoreVertical, Phone, Video, Paperclip, Smile, Check, CheckCheck } from 'lucide-react';
+import { X, Loader2, MessageCircle, Send, User, Clock, Search, MoreVertical, Paperclip, Smile, Check, CheckCheck } from 'lucide-react';
 import { apiService } from '../../../services/api';
 
 const TenantChatsModal = ({ isOpen, onClose }) => {
@@ -20,26 +20,54 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
           setLoading(true);
           setError(null);
           
-          try {
-            const myTenant = await apiService.getMyTenant();
-            setTenant(myTenant || getMockTenant());
-            
-            try {
-              const chatsData = await apiService.getChats();
-              const refTenant = myTenant || getMockTenant();
-              const tenantChats = (Array.isArray(chatsData) ? chatsData : getMockChats()).filter(chat => 
-                chat.tenant_id === refTenant.id || chat.messages?.some(msg => msg.sender_id === refTenant.id)
-              );
-              setChats(tenantChats.length ? tenantChats : getMockChats());
-            } catch (chatsErr) {
-              console.warn('Chats not available:', chatsErr);
-              setChats(getMockChats());
+          const myTenant = await apiService.getMyTenant();
+          if (!myTenant) {
+            setError('Tenant profile not found. Please contact management.');
+            setLoading(false);
+            return;
+          }
+          
+          setTenant(myTenant);
+          
+          const chatsData = await apiService.getChats();
+          const chatsList = Array.isArray(chatsData) ? chatsData : [];
+          setChats(chatsList);
+          
+          // Automatically open/create a conversation
+          if (chatsList.length > 0) {
+            // If there are existing chats, open the first one (most recent)
+            const firstChat = chatsList[0];
+            // Ensure messages array exists
+            if (!firstChat.messages) {
+              firstChat.messages = [];
             }
-          } catch (tenantErr) {
-            console.warn('No tenant record found:', tenantErr);
-            const fallbackTenant = getMockTenant();
-            setTenant(fallbackTenant);
-            setChats(getMockChats());
+            setCurrentChat(firstChat);
+          } else {
+            // If no chats exist, automatically create a new one
+            // Backend will automatically use property manager's name as subject
+            try {
+              const newChat = await apiService.createChat({
+                // Subject will be set by backend to property manager's name
+              });
+              // Ensure messages array exists
+              if (!newChat.messages) {
+                newChat.messages = [];
+              }
+              setCurrentChat(newChat);
+              // Update chats list to include the new chat
+              setChats([newChat]);
+            } catch (createErr) {
+              console.error('Failed to auto-create chat:', createErr);
+              // Don't show error to user, just log it - they can manually create one
+              // Create a placeholder chat object so UI doesn't break
+              const placeholderChat = {
+                id: null,
+                subject: 'New Inquiry',
+                messages: [],
+                created_at: new Date().toISOString()
+              };
+              setCurrentChat(placeholderChat);
+            }
           }
         } catch (err) {
           console.error('Failed to load chats:', err);
@@ -53,6 +81,37 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
     }
   }, [isOpen]);
 
+  // Load messages when a chat is selected
+  useEffect(() => {
+    if (currentChat && currentChat.id) {
+      const loadMessages = async () => {
+        try {
+          const chatData = await apiService.getChat(currentChat.id);
+          if (chatData) {
+            // Ensure messages array exists (even if empty)
+            if (!chatData.messages) {
+              chatData.messages = [];
+            }
+            setCurrentChat(chatData);
+            // Update chat in chats list
+            setChats(prev => prev.map(c => c.id === chatData.id ? chatData : c));
+          }
+        } catch (err) {
+          console.error('Failed to load messages:', err);
+          // If loading fails, ensure currentChat still has messages array
+          if (currentChat && !currentChat.messages) {
+            setCurrentChat({ ...currentChat, messages: [] });
+          }
+        }
+      };
+      
+      // Only load if chat doesn't already have messages loaded
+      if (!currentChat.messages || currentChat.messages.length === 0) {
+        loadMessages();
+      }
+    }
+  }, [currentChat?.id]);
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !currentChat || sendingMessage) return;
@@ -60,36 +119,21 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
     try {
       setSendingMessage(true);
       setError(null);
-      try {
-        await apiService.sendMessage({
-          chat_id: currentChat.id,
-          content: newMessage,
-          sender_id: tenant.id,
-          sender_type: 'tenant'
-        });
-      } catch (_ignore) {
-        // Frontend-only: append locally when API is unavailable
-        setChats(prev => prev.map(c => c.id === currentChat.id ? {
-          ...c,
-          messages: [...(c.messages || []), {
-            id: Date.now(), chat_id: c.id, sender_id: tenant.id, sender_type: 'tenant', content: newMessage, created_at: new Date().toISOString()
-          }]
-        } : c));
-      }
+      
+      await apiService.sendMessage({
+        chat_id: currentChat.id,
+        content: newMessage
+      });
+      
       setNewMessage('');
-      // Refresh chats with fallback
-      let chatsData = [];
-      try {
-        chatsData = await apiService.getChats();
-      } catch (_e) {
-        chatsData = getMockChats();
-      }
-      const tenantChats = chatsData.filter(chat => 
-        chat.tenant_id === tenant.id || chat.messages?.some(msg => msg.sender_id === tenant.id)
-      );
-      setChats(tenantChats.length ? tenantChats : getMockChats());
-      const updatedChat = (tenantChats.length ? tenantChats : getMockChats()).find(chat => chat.id === currentChat.id) || currentChat;
+      
+      // Reload chat with messages
+      const updatedChat = await apiService.getChat(currentChat.id);
       setCurrentChat(updatedChat);
+      
+      // Refresh chats list
+      const chatsData = await apiService.getChats();
+      setChats(Array.isArray(chatsData) ? chatsData : []);
     } catch (err) {
       console.error('Failed to send message:', err);
       setError('Failed to send message. Please try again.');
@@ -102,28 +146,17 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
     try {
       setCreatingChat(true);
       setError(null);
-      let newChat;
-      try {
-        newChat = await apiService.createChat({
-          tenant_id: tenant.id,
-          subject: 'New Inquiry'
-        });
-      } catch (_ignore) {
-        newChat = { id: Date.now(), tenant_id: tenant.id, subject: 'New Inquiry', created_at: new Date().toISOString(), messages: [] };
-        setChats(prev => [newChat, ...prev]);
-      }
+      
+      // Backend will automatically use property manager's name as subject
+      const newChat = await apiService.createChat({
+        // Subject will be set by backend to property manager's name
+      });
+      
       setCurrentChat(newChat);
-      // Refresh chats
-      let chatsData = [];
-      try {
-        chatsData = await apiService.getChats();
-      } catch (_e) {
-        chatsData = getMockChats();
-      }
-      const tenantChats = chatsData.filter(chat => 
-        chat.tenant_id === tenant.id || chat.messages?.some(msg => msg.sender_id === tenant.id)
-      );
-      setChats(tenantChats.length ? tenantChats : getMockChats());
+      
+      // Refresh chats list
+      const chatsData = await apiService.getChats();
+      setChats(Array.isArray(chatsData) ? chatsData : []);
     } catch (err) {
       console.error('Failed to create chat:', err);
       setError('Failed to create new chat. Please try again.');
@@ -304,12 +337,6 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                            <Phone className="w-4 h-4" />
-                          </button>
-                          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                            <Video className="w-4 h-4" />
-                          </button>
                           <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
                             <MoreVertical className="w-4 h-4" />
                           </button>

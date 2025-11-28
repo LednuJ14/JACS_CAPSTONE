@@ -21,8 +21,8 @@ def get_active_units():
         filters = []
         binds = {}
 
-        # unit available
-        filters.append("(u.status = 'vacant' OR u.status = 'available')")
+        # Filter out occupied units - a unit is occupied if there's an active tenant_units record
+        # (move_out_date is NULL or in the future). We'll add this in the JOIN clause.
         # property active - we'll try with status filter and retry without it if it fails
         # Store the status filter separately so we can remove it if needed
         status_filter = "(p.status = 'active' OR p.status = 'approved')"
@@ -116,12 +116,15 @@ def get_active_units():
         where_sql = " AND ".join(filters) if filters else "1=1"
         
         try:
-            # total count
+            # total count - exclude units with active tenant assignments
             total_sql = text(f"""
               SELECT COUNT(*) AS cnt
               FROM units u
               JOIN properties p ON p.id = u.property_id
+              LEFT JOIN tenant_units tu ON tu.unit_id = u.id 
+                  AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
               WHERE {where_sql}
+                  AND tu.id IS NULL
             """)
             total_count = db.session.execute(total_sql, binds).scalar() or 0
 
@@ -160,7 +163,10 @@ def get_active_units():
                 p.owner_id
               FROM units u
               JOIN properties p ON p.id = u.property_id
+              LEFT JOIN tenant_units tu ON tu.unit_id = u.id 
+                  AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
               WHERE {where_sql}
+                  AND tu.id IS NULL
               ORDER BY COALESCE(u.updated_at, u.created_at) DESC
               LIMIT :limit OFFSET :offset
             """)
@@ -178,7 +184,10 @@ def get_active_units():
                   SELECT COUNT(*) AS cnt
                   FROM units u
                   JOIN properties p ON p.id = u.property_id
+                  LEFT JOIN tenant_units tu ON tu.unit_id = u.id 
+                      AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
                   WHERE {where_sql}
+                      AND tu.id IS NULL
                 """)
                 total_count = db.session.execute(total_sql, binds).scalar() or 0
 
@@ -217,7 +226,10 @@ def get_active_units():
                     p.owner_id
                   FROM units u
                   JOIN properties p ON p.id = u.property_id
+                  LEFT JOIN tenant_units tu ON tu.unit_id = u.id 
+                      AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
                   WHERE {where_sql}
+                      AND tu.id IS NULL
                   ORDER BY COALESCE(u.updated_at, u.created_at) DESC
                   LIMIT :limit OFFSET :offset
                 """)

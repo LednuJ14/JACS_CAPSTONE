@@ -485,6 +485,57 @@ class NotificationService:
             return None
     
     @staticmethod
+    def notify_request_cancelled(request, reason=None):
+        """Create notification when a maintenance request is cancelled/rejected."""
+        try:
+            tenant = request.tenant
+            if not tenant:
+                return None
+            
+            title = f"Maintenance Request Cancelled"
+            reason_text = f" Reason: {reason}" if reason else ""
+            message = f"Your maintenance request '{request.title}' has been cancelled.{reason_text}"
+            
+            return NotificationService.create_notification(
+                tenant_id=tenant.id,
+                notification_type=NotificationType.REQUEST_UPDATED,
+                title=title,
+                message=message,
+                priority=NotificationPriority.HIGH,
+                related_entity_type='request',
+                related_entity_id=request.id,
+                action_url=f'/tenant/requests/{request.id}'
+            )
+        except Exception as e:
+            current_app.logger.error(f"Error in notify_request_cancelled: {str(e)}", exc_info=True)
+            return None
+    
+    @staticmethod
+    def notify_request_approved(request):
+        """Create notification when a maintenance request is approved (status changed to in_progress)."""
+        try:
+            tenant = request.tenant
+            if not tenant:
+                return None
+            
+            title = f"Maintenance Request Approved"
+            message = f"Your maintenance request '{request.title}' has been approved and is now in progress."
+            
+            return NotificationService.create_notification(
+                tenant_id=tenant.id,
+                notification_type=NotificationType.REQUEST_ASSIGNED,
+                title=title,
+                message=message,
+                priority=NotificationPriority.MEDIUM,
+                related_entity_type='request',
+                related_entity_id=request.id,
+                action_url=f'/tenant/requests/{request.id}'
+            )
+        except Exception as e:
+            current_app.logger.error(f"Error in notify_request_approved: {str(e)}", exc_info=True)
+            return None
+    
+    @staticmethod
     def notify_request_updated(request, update_message=None):
         """Create notification when a maintenance request is updated."""
         try:

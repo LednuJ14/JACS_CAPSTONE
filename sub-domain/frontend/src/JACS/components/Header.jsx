@@ -130,14 +130,16 @@ const Header = ({ userType = 'manager' }) => {
         { path: '/staff/feedback', label: 'Feedback' }
       ];
     } else {
-      // Read feature flag from localStorage (default true)
-      let staffEnabled = true;
-      try {
-        const stored = localStorage.getItem('feature.staffManagementEnabled');
-        staffEnabled = stored === null ? true : JSON.parse(stored);
-      } catch (e) {
-        staffEnabled = true;
-      }
+      // Read feature flag from property display settings (property-specific)
+      // Check if display_settings exists and is an object (parsed JSON)
+      const displaySettings = property?.display_settings;
+      const hasDisplaySettings = displaySettings && typeof displaySettings === 'object' && displaySettings !== null;
+      
+      // If display_settings exists, use the value (defaults to true if not explicitly set)
+      // If display_settings doesn't exist, default to true for backward compatibility
+      const staffEnabled = hasDisplaySettings
+        ? (displaySettings.staffManagementEnabled !== false) // true if not explicitly false
+        : true; // Default to true for backward compatibility
 
       const items = [
         { path: '/dashboard', label: 'Dashboard' },
@@ -155,15 +157,28 @@ const Header = ({ userType = 'manager' }) => {
     }
   };
 
-  // React to feature flag changes at runtime
+  // React to feature flag changes at runtime and property updates
+  // Component automatically re-renders when `property` from context changes
+  // Event listeners provide immediate feedback when settings are updated
   useEffect(() => {
-    const handler = () => {
-      // force re-render by toggling state (no-op state here)
-      setProfileDropdownOpen(prev => prev); // minimal state touch to trigger render
+    // Listen for display settings updates (e.g., when logo is uploaded)
+    const handleDisplaySettingsUpdate = () => {
+      // Property context will automatically refresh via propertyContextRefresh event
+      // This effect will re-run when property changes, updating the logo
     };
-    window.addEventListener('featureFlagsChanged', handler);
-    return () => window.removeEventListener('featureFlagsChanged', handler);
+
+    window.addEventListener('displaySettingsUpdated', handleDisplaySettingsUpdate);
+
+    return () => {
+      window.removeEventListener('displaySettingsUpdated', handleDisplaySettingsUpdate);
+    };
   }, []);
+
+  // Re-render when property or display settings change
+  useEffect(() => {
+    // No-op effect - just ensures component re-evaluates when property changes
+    // The getNavigationItems function will automatically use the updated property value
+  }, [property, property?.display_settings?.staffManagementEnabled, property?.display_settings?.logoUrl]);
 
   const getFallbackPropertyName = () => {
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
@@ -186,9 +201,75 @@ const Header = ({ userType = 'manager' }) => {
       <div className="flex items-center justify-between">
         {/* Left Side - Branding */}
         <div className="flex items-center space-x-4">
-          {/* Logo Icon */}
-          <div className={`w-16 h-16 ${isTenant ? 'bg-gray-800' : 'bg-white'} rounded-2xl flex items-center justify-center shadow-lg`}>
-            <Building2 className={`w-8 h-8 ${isTenant ? 'text-white' : 'text-gray-900'}`} />
+          {/* Logo Icon - Uses uploaded logo from display settings */}
+          <div className={`w-16 h-16 ${isTenant ? 'bg-gray-800' : 'bg-white'} rounded-2xl flex items-center justify-center shadow-xl overflow-hidden relative border-2 ${isTenant ? 'border-gray-700/50' : 'border-gray-200/80'} transition-all duration-300 hover:shadow-2xl hover:scale-105`}>
+            {/* Decorative curved accent - subtle glow effects */}
+            <div className="absolute inset-0 overflow-hidden rounded-2xl">
+              <div className={`absolute -top-2 -right-2 w-8 h-8 rounded-full ${isTenant ? 'bg-white/10' : 'bg-gray-100/60'} blur-md`}></div>
+              <div className={`absolute -bottom-2 -left-2 w-6 h-6 rounded-full ${isTenant ? 'bg-white/10' : 'bg-gray-100/60'} blur-md`}></div>
+              {/* Subtle gradient overlay */}
+              <div className={`absolute inset-0 bg-gradient-to-br ${isTenant ? 'from-white/5 to-transparent' : 'from-gray-50/50 to-transparent'} rounded-2xl`}></div>
+            </div>
+            
+            {property?.display_settings?.logoUrl && property.display_settings.logoUrl.trim() !== '' ? (
+              <img
+                key={`header-logo-${property.display_settings.logoUrl}-${property?.id || 'none'}`}
+                src={(() => {
+                  const logoUrl = property.display_settings.logoUrl;
+                  let fullUrl;
+                  if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+                    fullUrl = logoUrl;
+                  } else if (logoUrl.startsWith('/api/')) {
+                    // Already has /api/ prefix (e.g., /api/properties/11/logo/filename.png)
+                    fullUrl = `http://localhost:5001${logoUrl}`;
+                  } else if (logoUrl.startsWith('/')) {
+                    // Starts with / but not /api/
+                    fullUrl = `http://localhost:5001${logoUrl}`;
+                  } else {
+                    // No leading slash
+                    fullUrl = `http://localhost:5001/api/${logoUrl}`;
+                  }
+                  // Add cache busting query parameter to ensure fresh logo loads when updated
+                  // Use property ID and logo URL hash to create a stable but unique cache buster
+                  const cacheBuster = property?.id ? `${property.id}-${logoUrl.split('/').pop()}` : Date.now();
+                  return `${fullUrl}?v=${cacheBuster}`;
+                })()}
+                alt="Property Logo"
+                className="w-full h-full object-contain object-center relative z-10"
+                style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+                onError={(e) => {
+                  console.error('Header: Failed to load logo:', {
+                    logoUrl: property.display_settings.logoUrl,
+                    src: e.target.src,
+                    propertyId: property?.id
+                  });
+                  e.target.style.display = 'none';
+                  const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                  if (fallback) {
+                    fallback.style.display = 'flex';
+                    fallback.classList.remove('hidden');
+                  }
+                }}
+                onLoad={(e) => {
+                  console.log('Header: Logo loaded successfully:', e.target.src);
+                  const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                  if (fallback) {
+                    fallback.style.display = 'none';
+                    fallback.classList.add('hidden');
+                  }
+                }}
+              />
+            ) : null}
+            <div 
+              className={`logo-fallback w-full h-full flex items-center justify-center relative z-10 ${property?.display_settings?.logoUrl && property.display_settings.logoUrl.trim() !== '' ? 'hidden' : ''}`}
+              style={{ 
+                display: property?.display_settings?.logoUrl && property.display_settings.logoUrl.trim() !== '' ? 'none' : 'flex',
+                position: 'absolute',
+                inset: 0
+              }}
+            >
+              <Building2 className={`w-8 h-8 ${isTenant ? 'text-white' : 'text-gray-900'}`} />
+            </div>
           </div>
           
           {/* Brand Text */}

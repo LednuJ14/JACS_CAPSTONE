@@ -71,18 +71,53 @@ def get_my_tenant():
 def get_tenants():
     """Get all tenants with their user info."""
     try:
-        tenants = db.session.query(Tenant).join(User).all()
+        # Load tenants with user relationship
+        from sqlalchemy.orm import joinedload
+        try:
+            tenants = db.session.query(Tenant).options(
+                joinedload(Tenant.user)
+            ).join(User).all()
+        except Exception as e:
+            # Fallback to simple query if eager loading fails
+            current_app.logger.warning(f"Eager loading failed, using simple query: {str(e)}")
+            tenants = db.session.query(Tenant).join(User).all()
         print(f"Found {len(tenants)} tenants in database")
         
         tenant_list = []
         for tenant in tenants:
             try:
                 # Use the to_dict method which handles the simplified schema
-                tenant_data = tenant.to_dict(include_user=True, include_lease=False)
+                # Include rent to get unit information
+                current_app.logger.info(f"Fetching tenant {tenant.id} data with include_rent=True")
+                tenant_data = tenant.to_dict(include_user=True, include_rent=True)
+                
+                # Debug: Log what we got for troubleshooting
+                if tenant_data.get('current_rent'):
+                    unit_info = tenant_data['current_rent'].get('unit')
+                    if unit_info:
+                        unit_name = unit_info.get('unit_name') or unit_info.get('unit_number') or unit_info.get('name') or 'Unknown'
+                        current_app.logger.info(f"✓ Tenant {tenant.id} has current_rent with unit: {unit_name}")
+                    else:
+                        current_app.logger.warning(f"⚠ Tenant {tenant.id} has current_rent but no unit data. unit_id={tenant_data['current_rent'].get('unit_id')}")
+                else:
+                    current_app.logger.warning(f"✗ Tenant {tenant.id} has NO current_rent in response. Checking database directly...")
+                    # Direct database check
+                    from sqlalchemy import text
+                    direct_check = db.session.execute(
+                        text("SELECT id, unit_id FROM tenant_units WHERE tenant_id = :tenant_id LIMIT 1"),
+                        {'tenant_id': tenant.id}
+                    ).first()
+                    if direct_check:
+                        current_app.logger.warning(f"  → Database HAS tenant_units record: id={direct_check[0]}, unit_id={direct_check[1]}")
+                    else:
+                        current_app.logger.warning(f"  → Database has NO tenant_units record for tenant {tenant.id}")
+                
                 tenant_list.append(tenant_data)
             except Exception as tenant_error:
                 # Fallback: create minimal tenant data if to_dict fails
-                current_app.logger.warning(f"Error serializing tenant {tenant.id}: {str(tenant_error)}")
+                import traceback
+                error_trace = traceback.format_exc()
+                current_app.logger.warning(f"Error serializing tenant {tenant.id}: {str(tenant_error)}\n{error_trace}")
                 try:
                     tenant_data = {
                         'id': tenant.id,
@@ -91,6 +126,8 @@ def get_tenants():
                         'phone_number': getattr(tenant, 'phone_number', None),
                         'email': getattr(tenant, 'email', None),
                         'room_number': tenant.assigned_room or 'N/A',
+                        'assigned_room': tenant.assigned_room or None,
+                        'is_approved': tenant.is_approved,
                         'status': 'Active' if tenant.is_approved else 'Pending',
                         'property': {
                             'id': getattr(tenant, 'property_id', None),
@@ -106,6 +143,12 @@ def get_tenants():
                         'created_at': tenant.created_at.isoformat() if tenant.created_at else None,
                         'updated_at': tenant.updated_at.isoformat() if tenant.updated_at else None
                     }
+                    # Try to include current lease if available
+                    try:
+                        if tenant.current_lease:
+                            tenant_data['current_lease'] = tenant.current_lease.to_dict(include_unit=True)
+                    except Exception:
+                        pass
                     tenant_list.append(tenant_data)
                 except Exception:
                     # Skip this tenant if even minimal serialization fails

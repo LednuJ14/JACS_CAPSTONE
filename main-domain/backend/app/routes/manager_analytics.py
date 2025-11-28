@@ -77,12 +77,15 @@ def get_manager_analytics(current_user):
         property_ids_tuple = tuple(property_ids)
         
         # Calculate real revenue from tenant_units (active leases)
+        # Revenue represents total monthly rent from all currently active leases
+        # This is the recurring monthly revenue, not filtered by period
         revenue_sql = text("""
             SELECT COALESCE(SUM(tu.monthly_rent), 0) as total_revenue
             FROM tenant_units tu
             INNER JOIN units u ON u.id = tu.unit_id
             WHERE u.property_id IN :property_ids
             AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
+            AND tu.move_in_date <= NOW()
         """)
         revenue_result = db.session.execute(revenue_sql, {'property_ids': property_ids_tuple}).mappings().first()
         total_revenue = float(revenue_result['total_revenue']) if revenue_result else 0.0
@@ -137,8 +140,24 @@ def get_manager_analytics(current_user):
         if satisfaction_result and satisfaction_result['avg_rating']:
             tenant_satisfaction = round(float(satisfaction_result['avg_rating']), 1)
         
-        # Calculate expenses (estimate as 30% of revenue for now, since no expenses table)
-        total_expenses = round(total_revenue * 0.3, 2)
+        # Calculate real expenses from subscription bills (paid/verified bills within period)
+        expenses_sql = text("""
+            SELECT COALESCE(SUM(sb.amount), 0) as total_expenses
+            FROM subscription_bills sb
+            WHERE sb.user_id = :user_id
+            AND sb.status IN ('paid', 'verified', 'completed')
+            AND (
+                (sb.billing_period_start >= :period_start AND sb.billing_period_start <= NOW())
+                OR (sb.payment_date >= :period_start AND sb.payment_date <= NOW())
+                OR (sb.created_at >= :period_start AND sb.created_at <= NOW())
+            )
+        """)
+        expenses_result = db.session.execute(
+            expenses_sql,
+            {'user_id': current_user.id, 'period_start': period_start}
+        ).mappings().first()
+        total_expenses = float(expenses_result['total_expenses']) if expenses_result else 0.0
+        total_expenses = round(total_expenses, 2)
         net_income = round(total_revenue - total_expenses, 2)
         
         # Get property performance data
@@ -201,7 +220,25 @@ def get_manager_analytics(current_user):
                 {'property_ids': property_ids_tuple, 'month_start': month_start, 'month_end': month_end}
             ).mappings().first()
             month_revenue = float(month_revenue_result['revenue']) if month_revenue_result else 0.0
-            month_expenses = round(month_revenue * 0.3, 2)
+            
+            # Calculate monthly expenses from subscription bills
+            month_expenses_sql = text("""
+                SELECT COALESCE(SUM(sb.amount), 0) as expenses
+                FROM subscription_bills sb
+                WHERE sb.user_id = :user_id
+                AND sb.status IN ('paid', 'verified', 'completed')
+                AND (
+                    (sb.billing_period_start >= :month_start AND sb.billing_period_start <= :month_end)
+                    OR (sb.payment_date >= :month_start AND sb.payment_date <= :month_end)
+                    OR (sb.created_at >= :month_start AND sb.created_at <= :month_end)
+                )
+            """)
+            month_expenses_result = db.session.execute(
+                month_expenses_sql,
+                {'user_id': current_user.id, 'month_start': month_start, 'month_end': month_end}
+            ).mappings().first()
+            month_expenses = float(month_expenses_result['expenses']) if month_expenses_result else 0.0
+            month_expenses = round(month_expenses, 2)
             
             monthly_data.append({
                 'month': month_date.strftime('%b'),

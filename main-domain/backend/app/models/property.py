@@ -62,7 +62,7 @@ class Property(db.Model):
     latitude = db.Column(db.Numeric(10, 8), nullable=True)
     longitude = db.Column(db.Numeric(11, 8), nullable=True)
     building_name = db.Column(db.String(255))
-    contact_person = db.Column(db.String(255))
+    # contact_person removed from here (duplicate - already defined above)
     contact_phone = db.Column(db.String(20))
     contact_email = db.Column(db.String(120))
     amenities = db.Column(db.Text)
@@ -73,6 +73,7 @@ class Property(db.Model):
     total_units = db.Column(db.Integer, default=0)
     portal_enabled = db.Column(db.Boolean, default=False)
     portal_subdomain = db.Column(db.String(100))
+    display_settings = db.Column(db.Text)  # JSON string for sub-domain display settings
     
     # Property details - bedrooms field removed (not in database schema)
     
@@ -137,10 +138,12 @@ class Property(db.Model):
             'city': self.city,
             'province': self.province,
             'postal_code': getattr(self, 'postal_code', None),
-            'building_name': self.building_name,
-            'contact_person': self.contact_person,
-            'contact_phone': self.contact_phone,
-            'contact_email': self.contact_email,
+            'latitude': float(self.latitude) if hasattr(self, 'latitude') and self.latitude else None,
+            'longitude': float(self.longitude) if hasattr(self, 'longitude') and self.longitude else None,
+            'building_name': getattr(self, 'building_name', None),
+            'contact_person': getattr(self, 'contact_person', None),
+            'contact_phone': getattr(self, 'contact_phone', None),
+            'contact_email': getattr(self, 'contact_email', None),
             'amenities': self.amenities,
             'images': self.images,
             'legal_documents': self.legal_documents,
@@ -152,6 +155,7 @@ class Property(db.Model):
             'portal_subdomain': self.portal_subdomain,
             'subdomain': self.portal_subdomain,  # Add alias for frontend compatibility
             'management_status': self.management_status,  # Now a string, no need for safe_enum_value
+            'display_settings': getattr(self, 'display_settings', None),  # For sub-domain customization
             'created_at': safe_iso(self.created_at),
             'updated_at': safe_iso(self.updated_at),
             'owner_id': self.owner_id,

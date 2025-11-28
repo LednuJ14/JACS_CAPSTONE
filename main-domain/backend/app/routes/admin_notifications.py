@@ -21,7 +21,7 @@ def get_admin_notifications(current_user):
         
         # Get system notifications (notifications where type is SYSTEM or related to admin actions)
         query = text("""
-            SELECT id, type, title, message, is_read, related_id, related_type, created_at, read_at
+            SELECT id, notification_type, title, message, is_read, related_entity_id, related_entity_type, created_at, read_at
             FROM notifications
             WHERE user_id = :user_id
             AND is_deleted = 0
@@ -34,7 +34,7 @@ def get_admin_notifications(current_user):
         notifications = []
         for row in result:
             # Safely handle enum conversion
-            notification_type = row.get('type')
+            notification_type = row.get('notification_type')
             try:
                 if isinstance(notification_type, str):
                     type_value = notification_type
@@ -61,8 +61,8 @@ def get_admin_notifications(current_user):
                 'title': row['title'],
                 'message': row['message'],
                 'is_read': bool(row['is_read']),
-                'related_id': row['related_id'],
-                'related_type': row['related_type'],
+                'related_id': row['related_entity_id'],
+                'related_type': row['related_entity_type'],
                 'created_at': safe_iso(row['created_at']),
                 'read_at': safe_iso(row['read_at'])
             })

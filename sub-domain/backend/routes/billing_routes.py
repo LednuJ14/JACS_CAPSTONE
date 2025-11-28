@@ -418,6 +418,187 @@ def create_bill(current_user):
             error_msg += f': {str(e)}'
         return jsonify({'error': error_msg, 'details': str(e) if current_app.config.get('DEBUG', False) else None}), 500
 
+@billing_bp.route('/bills/<int:bill_id>', methods=['PUT'])
+@require_role(['MANAGER'])
+def update_bill(current_user, bill_id):
+    """Update a bill (Property Manager only)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Get bill
+        bill = Bill.query.get(bill_id)
+        if not bill:
+            return jsonify({'error': 'Bill not found'}), 404
+        
+        # Get property context
+        property_id = get_property_id_from_request(data=data)
+        
+        # If still no property_id, try to get from user's managed properties
+        if not property_id:
+            if isinstance(current_user.role, UserRole):
+                user_role = current_user.role.value
+            else:
+                user_role = str(current_user.role).upper()
+            
+            if user_role in ['MANAGER', 'PROPERTY_MANAGER']:
+                try:
+                    managed_property = Property.query.filter_by(
+                        manager_id=current_user.id
+                    ).first()
+                    if managed_property:
+                        property_id = managed_property.id
+                except Exception as e:
+                    current_app.logger.warning(f"Error getting managed property: {str(e)}")
+        
+        if not property_id:
+            return jsonify({'error': 'Property context is required'}), 400
+        
+        # Verify bill belongs to this property
+        unit = Unit.query.get(bill.unit_id)
+        if not unit or unit.property_id != property_id:
+            return jsonify({'error': 'Bill does not belong to this property'}), 403
+        
+        # Update fields if provided
+        if 'tenant_id' in data:
+            tenant = Tenant.query.get(data['tenant_id'])
+            if not tenant:
+                return jsonify({'error': 'Tenant not found'}), 404
+            bill.tenant_id = data['tenant_id']
+        
+        if 'unit_id' in data:
+            unit_id = data['unit_id']
+            unit_obj = Unit.query.get(unit_id)
+            if not unit_obj or unit_obj.property_id != property_id:
+                return jsonify({'error': 'Unit does not belong to this property'}), 400
+            bill.unit_id = unit_id
+        
+        if 'bill_type' in data:
+            bill_type_str = str(data['bill_type']).lower().strip()
+            valid_bill_types = ['rent', 'utilities', 'maintenance', 'parking', 'other']
+            if bill_type_str not in valid_bill_types:
+                return jsonify({'error': f'Invalid bill type: {data["bill_type"]}'}), 400
+            bill.bill_type = bill_type_str
+        
+        if 'title' in data:
+            bill.title = data['title'].strip()
+        
+        if 'amount' in data:
+            bill.amount = Decimal(str(data['amount']))
+            # Recalculate amount_due
+            bill.amount_due = bill.amount - bill.amount_paid
+        
+        if 'due_date' in data:
+            due_date_str = data['due_date']
+            if 'T' in due_date_str:
+                due_date_str = due_date_str.split('T')[0]
+            bill.due_date = datetime.strptime(due_date_str, '%Y-%m-%d').date()
+        
+        if 'description' in data:
+            bill.description = data.get('description')
+        
+        if 'is_recurring' in data:
+            bill.is_recurring = data.get('is_recurring', False)
+        
+        if 'recurring_frequency' in data:
+            bill.recurring_frequency = data.get('recurring_frequency')
+        
+        if 'notes' in data:
+            bill.notes = data.get('notes')
+        
+        # Update status if provided (but be careful - don't override if bill has payments)
+        if 'status' in data and not bill.payments:
+            status_str = str(data['status']).lower().strip()
+            valid_statuses = ['pending', 'paid', 'partial', 'overdue', 'cancelled']
+            if status_str in valid_statuses:
+                bill.status = status_str
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Bill updated successfully',
+            'bill': bill.to_dict(include_tenant=True, include_unit=True, include_payments=True)
+        }), 200
+        
+    except ValueError as e:
+        db.session.rollback()
+        current_app.logger.error(f"Update bill ValueError: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Invalid data format: {str(e)}'}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Update bill error: {str(e)}", exc_info=True)
+        error_msg = 'Failed to update bill'
+        if current_app.config.get('DEBUG', False):
+            error_msg += f': {str(e)}'
+        return jsonify({'error': error_msg, 'details': str(e) if current_app.config.get('DEBUG', False) else None}), 500
+
+@billing_bp.route('/bills/<int:bill_id>', methods=['DELETE'])
+@require_role(['MANAGER'])
+def delete_bill(current_user, bill_id):
+    """Delete a bill (Property Manager only)."""
+    try:
+        # Get bill
+        bill = Bill.query.get(bill_id)
+        if not bill:
+            return jsonify({'error': 'Bill not found'}), 404
+        
+        # Get property context
+        property_id = get_property_id_from_request()
+        
+        # If still no property_id, try to get from user's managed properties
+        if not property_id:
+            if isinstance(current_user.role, UserRole):
+                user_role = current_user.role.value
+            else:
+                user_role = str(current_user.role).upper()
+            
+            if user_role in ['MANAGER', 'PROPERTY_MANAGER']:
+                try:
+                    managed_property = Property.query.filter_by(
+                        manager_id=current_user.id
+                    ).first()
+                    if managed_property:
+                        property_id = managed_property.id
+                except Exception as e:
+                    current_app.logger.warning(f"Error getting managed property: {str(e)}")
+        
+        if not property_id:
+            return jsonify({'error': 'Property context is required'}), 400
+        
+        # Verify bill belongs to this property
+        unit = Unit.query.get(bill.unit_id)
+        if not unit or unit.property_id != property_id:
+            return jsonify({'error': 'Bill does not belong to this property'}), 403
+        
+        # Check if bill has payments - if so, warn or prevent deletion
+        if bill.payments and len(bill.payments) > 0:
+            # Check if any payments are approved or completed
+            has_approved_payments = any(
+                payment.status in ['approved', 'completed'] 
+                for payment in bill.payments
+            )
+            if has_approved_payments:
+                return jsonify({
+                    'error': 'Cannot delete bill with approved or completed payments. Please cancel the bill instead.'
+                }), 400
+        
+        # Delete bill (cascade will handle payments if configured)
+        db.session.delete(bill)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Bill deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Delete bill error: {str(e)}", exc_info=True)
+        error_msg = 'Failed to delete bill'
+        if current_app.config.get('DEBUG', False):
+            error_msg += f': {str(e)}'
+        return jsonify({'error': error_msg, 'details': str(e) if current_app.config.get('DEBUG', False) else None}), 500
+
 # =====================================================
 # PAYMENT PROOF SUBMISSION (Tenant)
 # =====================================================

@@ -5,6 +5,7 @@ import ForgotPassword from '../components/ForgotPassword';
 import PasswordResetModal from '../components/PasswordResetModal';
 import GeometricBackground from '../components/GeometricBackground';
 import { useProperty } from '../components/PropertyContext';
+import { apiService } from '../../services/api';
 
 const LoginPage = () => {
   const [searchParams] = useSearchParams();
@@ -12,6 +13,62 @@ const LoginPage = () => {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetToken, setResetToken] = useState(null);
   const { property } = useProperty();
+  const [displaySettings, setDisplaySettings] = useState(null);
+  const [propertyData, setPropertyData] = useState(null);
+
+  // Load property data by subdomain (for login page when not authenticated)
+  const loadPropertyBySubdomain = async () => {
+    try {
+      const hostname = window.location.hostname || '';
+      const subdomain = hostname.split('.')[0];
+      
+      if (subdomain && subdomain.toLowerCase() !== 'localhost') {
+        const property = await apiService.getPropertyBySubdomain(subdomain);
+        if (property) {
+          setPropertyData(property);
+          // Display settings will be set in the separate useEffect
+        }
+      }
+    } catch (error) {
+      // Silently handle connection errors (backend not running)
+      const isConnectionError = error?.message?.includes('Failed to fetch') || 
+                                error?.message?.includes('ERR_CONNECTION_REFUSED') ||
+                                error?.name === 'TypeError';
+      
+      // Only log non-connection errors
+      if (!isConnectionError) {
+        console.warn('Failed to load property by subdomain:', error);
+      }
+      // Connection errors are handled silently - app continues with fallback data
+    }
+  };
+
+  useEffect(() => {
+    // Always try to load by subdomain to get the latest data (including logo)
+    // This ensures we get fresh data even if property context has stale data
+    loadPropertyBySubdomain();
+    
+    // Also use property from context as fallback
+    if (property && !propertyData) {
+      setPropertyData(property);
+    }
+  }, [property]);
+
+  // Listen for display settings updates (e.g., when logo is uploaded)
+  useEffect(() => {
+    const handleDisplaySettingsUpdate = (event) => {
+      // Reload property data to get updated logo
+      loadPropertyBySubdomain();
+    };
+
+    window.addEventListener('displaySettingsUpdated', handleDisplaySettingsUpdate);
+    window.addEventListener('propertyContextRefresh', handleDisplaySettingsUpdate);
+
+    return () => {
+      window.removeEventListener('displaySettingsUpdated', handleDisplaySettingsUpdate);
+      window.removeEventListener('propertyContextRefresh', handleDisplaySettingsUpdate);
+    };
+  }, []);
 
   const formatName = (value) => {
     if (!value || typeof value !== 'string') return null;
@@ -38,17 +95,38 @@ const LoginPage = () => {
     return candidate.replace(/-\d+$/, '');
   };
 
+  // Load display settings from property data (no auth required)
+  useEffect(() => {
+    // Display settings should come from propertyData or property (from public endpoint)
+    const currentProperty = propertyData || property;
+    
+    // Prioritize propertyData (from subdomain lookup) as it's more up-to-date
+    if (propertyData?.display_settings) {
+      setDisplaySettings(propertyData.display_settings);
+    } else if (currentProperty?.display_settings) {
+      setDisplaySettings(currentProperty.display_settings);
+    } else {
+      // Initialize empty display settings if not found
+      setDisplaySettings({});
+    }
+  }, [propertyData, property]);
+
   const propertyName = useMemo(() => {
+    // Use propertyData (from subdomain lookup) or property (from context)
+    const currentProperty = propertyData || property;
+    
+    // Always use real property name from database (not from display_settings)
+    // Priority: property name from database > host
     const fromProperty = formatName(
-      property?.property_name ||
-      property?.name ||
-      property?.title ||
-      property?.building_name
+      currentProperty?.property_name ||
+      currentProperty?.name ||
+      currentProperty?.title ||
+      currentProperty?.building_name
     );
     if (fromProperty) return fromProperty;
     const fromHost = formatName(getHostSegment());
     return fromHost || 'Your Property';
-  }, [property]);
+  }, [property, propertyData]);
 
   // Check for password reset token in URL
   useEffect(() => {
@@ -119,9 +197,75 @@ const LoginPage = () => {
             <div className="absolute inset-0 flex flex-col justify-between p-8 z-10">
               {/* Top Logo with animation */}
               <div className="flex items-center space-x-4 justify-start animate-in slide-in-from-left-4 duration-700">
-                <div className="w-14 h-14 rounded-2xl bg-white/15 border border-white/20 backdrop-blur flex items-center justify-center shadow-lg">
+                <div className="w-14 h-14 rounded-2xl bg-white/15 border-2 border-white/30 backdrop-blur flex items-center justify-center shadow-xl overflow-hidden relative transition-all duration-300 hover:shadow-2xl hover:scale-105">
+                  {/* Decorative curved accent elements */}
+                  <div className="absolute inset-0 overflow-hidden rounded-2xl">
+                    <div className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white/25 blur-md"></div>
+                    <div className="absolute -bottom-1.5 -left-1.5 w-5 h-5 rounded-full bg-white/25 blur-md"></div>
+                    {/* Curved line accent - elegant swoosh */}
+                    <svg className="absolute inset-0 w-full h-full opacity-25" viewBox="0 0 56 56" fill="none" preserveAspectRatio="none">
+                      <path d="M8 28 Q28 8, 48 28" stroke="white" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+                      <path d="M8 28 Q28 48, 48 28" stroke="white" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+                    </svg>
+                    {/* Subtle gradient overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent rounded-2xl"></div>
+                  </div>
+                  
+                  {displaySettings?.logoUrl && displaySettings.logoUrl.trim() !== '' ? (
+                    <img
+                      key={`logo-${displaySettings.logoUrl}-${propertyData?.id || property?.id || 'none'}-${Date.now()}`}
+                      src={(() => {
+                        const logoUrl = displaySettings.logoUrl;
+                        let fullUrl;
+                        if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+                          fullUrl = logoUrl;
+                        } else if (logoUrl.startsWith('/api/')) {
+                          // Already has /api/ prefix (e.g., /api/properties/11/logo/filename.png)
+                          fullUrl = `http://localhost:5001${logoUrl}`;
+                        } else if (logoUrl.startsWith('/')) {
+                          // Starts with / but not /api/
+                          fullUrl = `http://localhost:5001${logoUrl}`;
+                        } else {
+                          // No leading slash
+                          fullUrl = `http://localhost:5001/api/${logoUrl}`;
+                        }
+                        // Add cache busting query parameter to ensure fresh logo loads
+                        return `${fullUrl}?t=${Date.now()}`;
+                      })()}
+                      alt="Property Logo"
+                      className="w-full h-full object-contain object-center relative z-10"
+                      style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+                      onError={(e) => {
+                        console.error('LoginPage: Failed to load logo:', {
+                          logoUrl: displaySettings.logoUrl,
+                          src: e.target.src,
+                          displaySettings: displaySettings
+                        });
+                        e.target.style.display = 'none';
+                        const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                        if (fallback) {
+                          fallback.style.display = 'block';
+                          fallback.classList.remove('hidden');
+                        }
+                      }}
+                      onLoad={(e) => {
+                        console.log('LoginPage: Logo loaded successfully:', e.target.src);
+                        const fallback = e.target.parentElement.querySelector('.logo-fallback');
+                        if (fallback) {
+                          fallback.style.display = 'none';
+                          fallback.classList.add('hidden');
+                        }
+                      }}
+                    />
+                  ) : null}
                   <svg
-                    className="w-8 h-8 text-white"
+                    className={`w-8 h-8 text-white logo-fallback relative z-10 ${displaySettings?.logoUrl && displaySettings.logoUrl.trim() !== '' ? 'hidden' : ''}`}
+                    style={{ 
+                      display: displaySettings?.logoUrl && displaySettings.logoUrl.trim() !== '' ? 'none' : 'block',
+                      position: 'absolute',
+                      inset: 0,
+                      margin: 'auto'
+                    }}
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"

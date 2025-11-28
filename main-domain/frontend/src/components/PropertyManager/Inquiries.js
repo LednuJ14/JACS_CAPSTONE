@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import api from '../../services/api';
 
 const Inquiries = ({ isOpen, onClose }) => {
@@ -57,7 +57,7 @@ const Inquiries = ({ isOpen, onClose }) => {
   };
 
   // Helper to get attachments for a specific message (by matching timestamp - only match if attachment was uploaded BEFORE message)
-  const getMessageAttachments = (message, inquiryId) => {
+  const getMessageAttachments = useCallback((message, inquiryId) => {
     if (!attachments[inquiryId] || !message.created_at) return [];
     const messageTime = new Date(message.created_at).getTime();
     return attachments[inquiryId].filter(att => {
@@ -69,10 +69,10 @@ const Inquiries = ({ isOpen, onClose }) => {
       const timeDiff = messageTime - attTime;
       return timeDiff >= 0 && timeDiff < 2000; // 0 to 2 seconds after attachment
     });
-  };
+  }, [attachments]);
 
   // Helper to get unmatched attachments (attachments that don't belong to any message)
-  const getUnmatchedAttachments = (inquiryId, messages) => {
+  const getUnmatchedAttachments = useCallback((inquiryId, messages) => {
     if (!attachments[inquiryId] || !messages || messages.length === 0) {
       // If no messages, show all attachments
       return attachments[inquiryId] || [];
@@ -88,7 +88,7 @@ const Inquiries = ({ isOpen, onClose }) => {
     
     // Return attachments that weren't matched to any message
     return (attachments[inquiryId] || []).filter(att => !matchedAttachmentIds.has(att.id));
-  };
+  }, [attachments, getMessageAttachments]);
 
   // Media Display Component
   const MediaDisplay = ({ attachment, type, getMediaUrl, getAttachmentUrl, onImageClick }) => {
@@ -312,6 +312,33 @@ const Inquiries = ({ isOpen, onClose }) => {
   }, [showAssignModal]);
 
   const selectedChat = useMemo(() => inquiries.find(c => c.id === selectedChatId) || null, [inquiries, selectedChatId]);
+
+  // Memoize the combined messages and attachments for the selected chat
+  const chatMessagesWithAttachments = useMemo(() => {
+    if (!selectedChat?.id) return [];
+    
+    const unmatchedAttachments = getUnmatchedAttachments(selectedChat.id, selectedChat.messages || []);
+    const allItems = [];
+    
+    // Add all messages
+    (selectedChat.messages || []).forEach(msg => {
+      allItems.push({ type: 'message', data: msg, timestamp: msg.created_at ? new Date(msg.created_at).getTime() : 0 });
+    });
+    
+    // Add unmatched attachments as virtual messages
+    unmatchedAttachments.forEach(att => {
+      allItems.push({ 
+        type: 'attachment', 
+        data: att, 
+        timestamp: att.created_at ? new Date(att.created_at).getTime() : 0 
+      });
+    });
+    
+    // Sort by timestamp
+    allItems.sort((a, b) => a.timestamp - b.timestamp);
+    
+    return allItems;
+  }, [selectedChat?.id, selectedChat?.messages, attachments, inquiries, getUnmatchedAttachments]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedChat) return;
@@ -702,29 +729,8 @@ const Inquiries = ({ isOpen, onClose }) => {
 
                   {/* Messages */}
                   <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {/* Combine messages and unmatched attachments, then sort by timestamp */}
-                    {(() => {
-                      const unmatchedAttachments = getUnmatchedAttachments(selectedChat.id, selectedChat.messages || []);
-                      const allItems = [];
-                      
-                      // Add all messages
-                      (selectedChat.messages || []).forEach(msg => {
-                        allItems.push({ type: 'message', data: msg, timestamp: msg.created_at ? new Date(msg.created_at).getTime() : 0 });
-                      });
-                      
-                      // Add unmatched attachments as virtual messages
-                      unmatchedAttachments.forEach(att => {
-                        allItems.push({ 
-                          type: 'attachment', 
-                          data: att, 
-                          timestamp: att.created_at ? new Date(att.created_at).getTime() : 0 
-                        });
-                      });
-                      
-                      // Sort by timestamp
-                      allItems.sort((a, b) => a.timestamp - b.timestamp);
-                      
-                      return allItems.map((item, idx) => {
+                    {/* Render combined messages and unmatched attachments */}
+                    {chatMessagesWithAttachments.map((item, idx) => {
                         if (item.type === 'attachment') {
                           const att = item.data;
                           // Determine sender based on uploaded_by
@@ -811,7 +817,9 @@ const Inquiries = ({ isOpen, onClose }) => {
                         } else {
                           // Regular message
                           const message = item.data;
-                          const messageAttachments = getMessageAttachments(message, selectedChat.id);
+                          const inquiryId = selectedChat?.id;
+                          if (!inquiryId) return null;
+                          const messageAttachments = getMessageAttachments(message, inquiryId);
                           const hasAttachments = messageAttachments.length > 0;
                           const hasText = (message.text || message.content) && (message.text || message.content).trim().length > 0;
                           
@@ -908,8 +916,7 @@ const Inquiries = ({ isOpen, onClose }) => {
                             </div>
                           );
                         }
-                      });
-                    })()}
+                      })}
                     
                     {(!selectedChat.messages || selectedChat.messages.length === 0) && 
                      (!attachments[selectedChat.id] || attachments[selectedChat.id].length === 0) && (
@@ -1012,11 +1019,25 @@ const Inquiries = ({ isOpen, onClose }) => {
                 inquiries.filter(i => i.status === 'new' || i.status === 'pending').map((inquiry) => (
                   <div key={inquiry.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start space-x-4">
-                      <img
-                        src={inquiry.property?.images?.[0] || '/placeholder-property.jpg'}
-                        alt={inquiry.property?.title}
-                        className="w-16 h-16 object-cover rounded-lg"
-                      />
+                      {inquiry.property?.images?.[0] ? (
+                        <img
+                          src={inquiry.property.images[0]}
+                          alt={inquiry.property?.title}
+                          className="w-16 h-16 object-cover rounded-lg"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div 
+                        className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center"
+                        style={{ display: inquiry.property?.images?.[0] ? 'none' : 'flex' }}
+                      >
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                        </svg>
+                      </div>
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div>

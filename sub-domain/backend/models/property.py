@@ -3,6 +3,7 @@ from app import db
 from sqlalchemy import Numeric
 from sqlalchemy.orm import backref
 import enum
+import json
 
 class PropertyType(enum.Enum):
     BED_SPACE = 'bed_space'
@@ -124,18 +125,43 @@ class Property(db.Model):
     @property
     def occupied_units(self):
         """Get count of occupied units."""
-        # Use string values since status is now String type
-        return self.units.filter(
-            db.or_(Unit.status == 'occupied', Unit.status == 'rented')
-        ).count()
+        try:
+            # Use string values since status is now String type
+            # Access Unit model via string reference to avoid circular import
+            Unit = db.Model._decl_class_registry.get('Unit')
+            if Unit:
+                return self.units.filter(
+                    db.or_(Unit.status == 'occupied', Unit.status == 'rented')
+                ).count()
+            else:
+                # Fallback: iterate through units
+                return sum(1 for u in self.units.all() if str(getattr(u, 'status', '')).lower() in ['occupied', 'rented'])
+        except Exception:
+            # Fallback: iterate through units
+            try:
+                return sum(1 for u in self.units.all() if str(getattr(u, 'status', '')).lower() in ['occupied', 'rented'])
+            except:
+                return 0
     
     @property
     def available_units(self):
         """Get count of available units."""
-        # Use string values since status is now String type
-        return self.units.filter(
-            db.or_(Unit.status == 'available', Unit.status == 'vacant')
-        ).count()
+        try:
+            # Use string values since status is now String type
+            Unit = db.Model._decl_class_registry.get('Unit')
+            if Unit:
+                return self.units.filter(
+                    db.or_(Unit.status == 'available', Unit.status == 'vacant')
+                ).count()
+            else:
+                # Fallback: iterate through units
+                return sum(1 for u in self.units.all() if str(getattr(u, 'status', '')).lower() in ['available', 'vacant'])
+        except Exception:
+            # Fallback: iterate through units
+            try:
+                return sum(1 for u in self.units.all() if str(getattr(u, 'status', '')).lower() in ['available', 'vacant'])
+            except:
+                return 0
     
     @property
     def occupancy_rate(self):
@@ -144,47 +170,129 @@ class Property(db.Model):
             return 0
         return round((self.occupied_units / self.total_units) * 100, 2)
     
+    @property
+    def manager_id(self):
+        """Compatibility property - returns owner_id since manager_id doesn't exist in database."""
+        return self.owner_id
+    
+    @property
+    def manager_phone(self):
+        """Compatibility property - returns contact_phone."""
+        return self.contact_phone
+    
+    @property
+    def manager_email(self):
+        """Compatibility property - returns contact_email."""
+        return self.contact_email
+    
+    def _parse_display_settings(self):
+        """Parse display_settings from JSON string to dict."""
+        display_settings = getattr(self, 'display_settings', None)
+        if not display_settings:
+            return {}
+        
+        # If it's already a dict, return it
+        if isinstance(display_settings, dict):
+            return display_settings
+        
+        # If it's a string, try to parse it as JSON
+        if isinstance(display_settings, str):
+            try:
+                return json.loads(display_settings)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        
+        # Fallback to empty dict
+        return {}
+    
     def to_dict(self, include_units=False):
         """Convert property to dictionary."""
-        data = {
-            'id': self.id,
-            'name': self.name,
-            'description': self.description,
-            'address': self.address,
-            'city': self.city,
-            'state': self.state,
-            'zip_code': self.zip_code,
-            'country': self.country,
-            'full_address': self.full_address,
-            'property_type': self.property_type.value,
-            'status': self.status.value,
-            'total_units': self.total_units,
-            'occupied_units': self.occupied_units,
-            'available_units': self.available_units,
-            'occupancy_rate': self.occupancy_rate,
-            'year_built': self.year_built,
-            'total_floors': self.total_floors,
-            'property_value': float(self.property_value) if self.property_value else None,
-            'monthly_maintenance_fee': float(self.monthly_maintenance_fee) if self.monthly_maintenance_fee else 0.00,
-            'manager_id': self.manager_id,
-            'manager_phone': self.manager_phone,
-            'manager_email': self.manager_email,
-            'amenities': self.amenities or [],
-            'parking_spaces': self.parking_spaces,
-            'has_elevator': self.has_elevator,
-            'has_security': self.has_security,
-            'has_gym': self.has_gym,
-            'has_pool': self.has_pool,
-            'has_laundry': self.has_laundry,
-            'display_settings': getattr(self, 'display_settings', None) or {},
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
-        }
-        
-        if include_units:
-            data['units'] = [unit.to_dict() for unit in self.units.all()]
-        
-        return data
+        try:
+            # Safely get computed properties with error handling
+            try:
+                occupied_units = self.occupied_units
+            except Exception:
+                occupied_units = 0
+            
+            try:
+                available_units = self.available_units
+            except Exception:
+                available_units = 0
+            
+            try:
+                occupancy_rate = self.occupancy_rate
+            except Exception:
+                occupancy_rate = 0.0
+            
+            try:
+                full_address = self.full_address
+            except Exception:
+                full_address = f"{getattr(self, 'address', '')}, {getattr(self, 'city', '')}"
+            
+            data = {
+                'id': self.id,
+                'name': getattr(self, 'name', None) or getattr(self, 'title', None),
+                'description': getattr(self, 'description', None),
+                'address': getattr(self, 'address', None),
+                'city': getattr(self, 'city', None),
+                'province': getattr(self, 'province', None),
+                'building_name': getattr(self, 'building_name', None),
+                'state': self.state,
+                'zip_code': self.zip_code,
+                'country': self.country,
+                'full_address': full_address,
+                'property_type': self.property_type if isinstance(self.property_type, str) else (self.property_type.value if hasattr(self.property_type, 'value') else str(self.property_type)),
+                'status': self.status if isinstance(self.status, str) else (self.status.value if hasattr(self.status, 'value') else str(self.status)),
+                'total_units': getattr(self, 'total_units', 0) or 0,
+                'occupied_units': occupied_units,
+                'available_units': available_units,
+                'occupancy_rate': occupancy_rate,
+                'year_built': getattr(self, 'year_built', None),
+                'total_floors': getattr(self, 'total_floors', None),
+                'property_value': float(getattr(self, 'property_value', None)) if hasattr(self, 'property_value') and getattr(self, 'property_value', None) else None,
+                'monthly_maintenance_fee': float(getattr(self, 'monthly_maintenance_fee', 0)) if hasattr(self, 'monthly_maintenance_fee') and getattr(self, 'monthly_maintenance_fee', None) else 0.00,
+                'manager_id': self.manager_id,
+                'manager_phone': self.manager_phone,
+                'manager_email': self.manager_email,
+                'contact_person': getattr(self, 'contact_person', None),
+                'contact_phone': getattr(self, 'contact_phone', None),
+                'contact_email': getattr(self, 'contact_email', None),
+                'owner_id': getattr(self, 'owner_id', None),
+                'amenities': getattr(self, 'amenities', None) or '',
+                'images': getattr(self, 'images', None),
+                'portal_enabled': getattr(self, 'portal_enabled', False),
+                'portal_subdomain': getattr(self, 'portal_subdomain', None),
+                'parking_spaces': getattr(self, 'parking_spaces', 0),
+                'has_elevator': getattr(self, 'has_elevator', False),
+                'has_security': getattr(self, 'has_security', False),
+                'has_gym': getattr(self, 'has_gym', False),
+                'has_pool': getattr(self, 'has_pool', False),
+                'has_laundry': getattr(self, 'has_laundry', False),
+                'display_settings': self._parse_display_settings(),
+                'created_at': self.created_at.isoformat() if self.created_at else None,
+                'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            }
+            
+            if include_units:
+                try:
+                    data['units'] = [unit.to_dict() for unit in self.units.all()]
+                except Exception as e:
+                    data['units'] = []
+            
+            return data
+        except Exception as e:
+            # Return minimal data if full conversion fails
+            import traceback
+            traceback.print_exc()
+            return {
+                'id': self.id,
+                'name': getattr(self, 'name', None) or getattr(self, 'title', None),
+                'address': getattr(self, 'address', None),
+                'city': getattr(self, 'city', None),
+                'portal_subdomain': getattr(self, 'portal_subdomain', None),
+                'portal_enabled': getattr(self, 'portal_enabled', False),
+                'error': f'Error converting property: {str(e)}'
+            }
     
     def __repr__(self):
         return f'<Property {self.name} in {self.city}>'
@@ -226,7 +334,8 @@ class Unit(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc), nullable=False)
     
     # Relationships
-    tenant_units = db.relationship('TenantUnit', backref='unit', cascade='all, delete-orphan')
+    # Use back_populates instead of backref to avoid conflicts
+    tenant_units = db.relationship('TenantUnit', back_populates='unit', cascade='all, delete-orphan')
     
     def __init__(self, property_id, unit_number, monthly_rent=None, **kwargs):
         self.property_id = property_id
@@ -241,11 +350,18 @@ class Unit(db.Model):
     @property
     def current_tenant(self):
         """Get current tenant for this unit."""
-        active_tenant_unit = TenantUnit.query.filter_by(
-            unit_id=self.id,
-            is_active=True
-        ).first()
-        return active_tenant_unit.tenant if active_tenant_unit else None
+        try:
+            # Use string reference to avoid circular import
+            TenantUnit = db.Model._decl_class_registry.get('TenantUnit')
+            if TenantUnit:
+                active_tenant_unit = TenantUnit.query.filter_by(
+                    unit_id=self.id,
+                    is_active=True
+                ).first()
+                return active_tenant_unit.tenant if active_tenant_unit else None
+        except Exception:
+            pass
+        return None
     
     @property
     def is_occupied(self):
@@ -261,8 +377,48 @@ class Unit(db.Model):
     
     def to_dict(self, include_tenant=False):
         """Convert unit to dictionary - matches actual database schema."""
-        # Map bathrooms enum to value
-        bathrooms_value = self.bathrooms.value if hasattr(self.bathrooms, 'value') else str(self.bathrooms) if self.bathrooms else 'own'
+        # Map bathrooms enum to value - handle enum properly
+        # Database enum expects: OWN, SHARE (uppercase names)
+        # Python enum has: OWN = 'own', SHARE = 'share' (name = uppercase, value = lowercase)
+        bathrooms_value = 'own'  # default lowercase for frontend
+        try:
+            # Safely access bathrooms attribute - might fail if enum validation error
+            bathrooms_attr = None
+            try:
+                bathrooms_attr = self.bathrooms
+            except Exception as attr_error:
+                # If accessing bathrooms fails due to enum validation, get raw value from database
+                try:
+                    from sqlalchemy import text
+                    raw_value = db.session.execute(
+                        text("SELECT bathrooms FROM units WHERE id = :unit_id"),
+                        {'unit_id': self.id}
+                    ).first()
+                    if raw_value and raw_value[0]:
+                        bathrooms_attr = raw_value[0]
+                except:
+                    pass
+            
+            if bathrooms_attr:
+                if hasattr(bathrooms_attr, 'name'):
+                    # Enum name (OWN, SHARE) - convert to lowercase for frontend
+                    bathrooms_value = bathrooms_attr.name.lower()
+                elif hasattr(bathrooms_attr, 'value'):
+                    # Enum value ('own', 'share') - use as is
+                    bathrooms_value = str(bathrooms_attr.value).lower()
+                elif isinstance(bathrooms_attr, str):
+                    # String value - normalize to lowercase
+                    bathrooms_value = bathrooms_attr.lower()
+                else:
+                    bathrooms_value = str(bathrooms_attr).lower()
+        except Exception as bathroom_error:
+            # If bathroom enum conversion fails, use default
+            try:
+                from flask import current_app
+                current_app.logger.warning(f"Error converting bathroom enum for unit {self.id}: {str(bathroom_error)}")
+            except:
+                pass
+            bathrooms_value = 'own'
         
         # Map status enum to value - handle both enum and string (database returns string)
         if self.status is None:
@@ -278,8 +434,10 @@ class Unit(db.Model):
             'id': self.id,
             'property_id': self.property_id,
             'unit_number': self.unit_number,
+            'unit_name': self.unit_number,  # Alias for compatibility
+            'name': self.unit_number,  # Another alias for compatibility
             'bedrooms': self.bedrooms or 0,
-            'bathrooms': bathrooms_value,
+            'bathrooms': bathrooms_value,  # Return lowercase for frontend compatibility
             'size_sqm': self.size_sqm,
             # Compatibility aliases for frontend
             'square_feet': None,  # Not in database

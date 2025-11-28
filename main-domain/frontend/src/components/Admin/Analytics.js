@@ -116,7 +116,7 @@ const AdminAnalytics = () => {
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 mb-8 overflow-hidden">
           <div className="bg-black px-6 py-2">
             <nav className="flex space-x-8">
-              {['overview', 'properties', 'revenue', 'tenants'].map((tab) => (
+              {['overview', 'properties', 'revenue', 'managers'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -392,8 +392,8 @@ const AdminAnalytics = () => {
             </div>
           )}
 
-          {/* Tenants Tab */}
-          {activeTab === 'tenants' && (
+          {/* Managers Tab */}
+          {activeTab === 'managers' && (
             <div className="p-6 space-y-6">
               {/* Manager Performance */}
               <div className="bg-white rounded-2xl shadow-lg border border-gray-100">

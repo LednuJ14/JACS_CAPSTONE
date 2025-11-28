@@ -10,7 +10,6 @@ const TenantsPage = () => {
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedProperty, setSelectedProperty] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
@@ -24,9 +23,12 @@ const TenantsPage = () => {
     first_name: '',
     last_name: '',
     phone_number: '',
-    property_id: ''
+    property_id: '',
+    unit_id: ''
   });
   const [properties, setProperties] = useState([]);
+  const [units, setUnits] = useState([]); // All units for the selected property
+  const [currentTenantUnitId, setCurrentTenantUnitId] = useState(null); // Current unit ID when editing
   const [showViewModal, setShowViewModal] = useState(false);
   const [viewingTenant, setViewingTenant] = useState(null);
   const navigate = useNavigate();
@@ -42,6 +44,30 @@ const TenantsPage = () => {
     fetchProperties();
     fetchTenantsData();
   }, []);
+
+  const fetchUnitsForProperty = async (propertyId) => {
+    try {
+      if (!propertyId) {
+        setUnits([]);
+        return;
+      }
+      // Use the direct units endpoint (most reliable)
+      try {
+        const unitsData = await apiService.get(`/properties/${propertyId}/units`);
+        if (Array.isArray(unitsData)) {
+          setUnits(unitsData);
+          return;
+        }
+      } catch (err) {
+        console.warn('Could not fetch units from units endpoint:', err);
+        // If units endpoint fails, set empty array
+        setUnits([]);
+      }
+    } catch (error) {
+      console.error('Error fetching units:', error);
+      setUnits([]);
+    }
+  };
 
   const fetchProperties = async () => {
     try {
@@ -91,6 +117,30 @@ const TenantsPage = () => {
       try {
         const tenantsData = await apiService.getTenants();
         console.log('Tenants data received:', tenantsData);
+        // Debug: Log unit information for each tenant
+        if (Array.isArray(tenantsData)) {
+          tenantsData.forEach(tenant => {
+            console.log(`\n=== Tenant ${tenant.id} Debug ===`);
+            console.log('Full tenant object:', JSON.stringify(tenant, null, 2));
+            if (tenant.current_rent) {
+              console.log('Has current_rent:', true);
+              console.log('current_rent.unit:', tenant.current_rent.unit);
+              if (tenant.current_rent.unit) {
+                console.log('Unit data:', {
+                  unit_name: tenant.current_rent.unit.unit_name,
+                  unit_number: tenant.current_rent.unit.unit_number,
+                  name: tenant.current_rent.unit.name,
+                  id: tenant.current_rent.unit.id
+                });
+              } else {
+                console.log('WARNING: current_rent exists but unit is missing!');
+                console.log('current_rent object:', tenant.current_rent);
+              }
+            } else {
+              console.log('No current_rent - tenant may not be assigned to a unit');
+            }
+          });
+        }
         setTenants(Array.isArray(tenantsData) ? tenantsData : []);
         setError(null);
       } catch (apiError) {
@@ -122,8 +172,10 @@ const TenantsPage = () => {
       first_name: '',
       last_name: '',
       phone_number: '',
-      property_id: propertyId || ''
+      property_id: propertyId || '',
+      unit_id: ''
     });
+    setUnits([]);
   };
 
   const handleAddTenant = () => {
@@ -133,6 +185,11 @@ const TenantsPage = () => {
 
   const handleEditTenant = (tenant) => {
     setEditingTenant(tenant);
+    
+    // Get the tenant's current unit ID
+    const currentUnitId = tenant.current_rent?.unit_id || tenant.current_rent?.unit?.id || null;
+    setCurrentTenantUnitId(currentUnitId);
+    
     setFormData({
       email: tenant.user?.email || tenant.email || '',
       username: tenant.user?.username || '',
@@ -140,8 +197,13 @@ const TenantsPage = () => {
       first_name: tenant.user?.first_name || '',
       last_name: tenant.user?.last_name || '',
       phone_number: tenant.user?.phone_number || tenant.phone_number || '',
-      property_id: tenant?.property_id || tenant?.property?.id || ''
+      property_id: tenant?.property_id || tenant?.property?.id || '',
+      unit_id: currentUnitId || ''
     });
+    // Fetch units for the selected property
+    if (tenant?.property_id || tenant?.property?.id) {
+      fetchUnitsForProperty(tenant?.property_id || tenant?.property?.id);
+    }
     setShowEditModal(true);
   };
 
@@ -201,7 +263,8 @@ const TenantsPage = () => {
         username: formData.username.trim() || '',
         first_name: formData.first_name.trim() || '',
         last_name: formData.last_name.trim() || '',
-        phone_number: formData.phone_number.trim() || ''
+        phone_number: formData.phone_number.trim() || '',
+        unit_id: formData.unit_id || null
       };
       
       // Add password for new tenants (required)
@@ -241,6 +304,7 @@ const TenantsPage = () => {
       setShowAddModal(false);
       setShowEditModal(false);
       setEditingTenant(null);
+      setCurrentTenantUnitId(null);
       resetForm();
       
       // Show success message
@@ -266,16 +330,22 @@ const TenantsPage = () => {
     // Safe access to nested properties
     const userName = tenant?.user?.first_name || tenant?.user?.last_name || '';
     const userEmail = tenant?.user?.email || tenant?.email || '';
-    const roomNumber = tenant?.room_number || tenant?.unit?.unit_name || tenant?.unit?.unit_number || '';
+    // Get room number from current rent (active rental) first, then fallback
+    const currentRent = tenant?.current_rent;
+    const unitFromRent = currentRent?.unit;
+    const roomNumber = unitFromRent?.unit_name || 
+                      unitFromRent?.unit_number ||
+                      unitFromRent?.name ||
+                      tenant?.room_number || 
+                      tenant?.unit?.unit_name || 
+                      tenant?.unit?.unit_number || 
+                      tenant?.assigned_room || 
+                      '';
     
     const matchesSearch = searchTerm === '' || 
                          userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          userEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          roomNumber.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    // Status check - handle multiple status formats
-    const tenantStatus = tenant?.status || (tenant?.is_approved ? 'Active' : 'Pending') || 'Pending';
-    const matchesStatus = selectedStatus === 'all' || tenantStatus === selectedStatus;
     
     // Property check - handle different property formats
     const propertyName = tenant?.property?.name || 
@@ -284,7 +354,7 @@ const TenantsPage = () => {
                         (tenant?.property_id ? `Property ${tenant.property_id}` : 'Unknown');
     const matchesProperty = selectedProperty === 'all' || propertyName === selectedProperty;
     
-    return matchesSearch && matchesStatus && matchesProperty;
+    return matchesSearch && matchesProperty;
   });
 
   // Pagination
@@ -364,7 +434,7 @@ const TenantsPage = () => {
 
           {/* Quick Stats */}
           {!loading && tenants.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
                 <div className="flex items-center justify-between">
                   <div>
@@ -383,10 +453,7 @@ const TenantsPage = () => {
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">Active Tenants</p>
                     <p className="text-2xl font-bold text-green-600">
-                      {tenants.filter(t => {
-                        const status = t?.status || (t?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                        return status === 'Active';
-                      }).length}
+                      {tenants.filter(t => t?.is_approved || t?.current_rent).length}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">currently renting</p>
                   </div>
@@ -401,35 +468,12 @@ const TenantsPage = () => {
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">Pending</p>
                     <p className="text-2xl font-bold text-amber-600">
-                      {tenants.filter(t => {
-                        const status = t?.status || (t?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                        return status === 'Pending';
-                      }).length}
+                      {tenants.filter(t => !t?.is_approved && !t?.current_rent).length}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">awaiting approval</p>
+                    <p className="text-xs text-gray-500 mt-1">unassigned</p>
                   </div>
                   <div className="p-3 bg-amber-50 rounded-lg">
                     <Clock className="w-6 h-6 text-amber-600" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">Properties</p>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {new Set(tenants.map(t => {
-                        return t?.property?.name || 
-                               t?.property?.title || 
-                               t?.property_name ||
-                               (t?.property_id ? `Property ${t.property_id}` : 'Unknown');
-                      })).size}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">managed buildings</p>
-                  </div>
-                  <div className="p-3 bg-purple-50 rounded-lg">
-                    <Building className="w-6 h-6 text-purple-600" />
                   </div>
                 </div>
               </div>
@@ -449,16 +493,6 @@ const TenantsPage = () => {
                   className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="all">All Status</option>
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-                <option value="Pending">Pending</option>
-              </select>
               <select
                 value={selectedProperty}
                 onChange={(e) => setSelectedProperty(e.target.value)}
@@ -494,9 +528,8 @@ const TenantsPage = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TENANT</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ROOM</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CONTACT INFO</th>
-                    
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">STATUS</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CONTACT INFO</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ACTIONS</th>
                   </tr>
                 </thead>
@@ -521,7 +554,14 @@ const TenantsPage = () => {
                           <Building className="w-4 h-4 text-gray-400" />
                           <span className="text-sm text-gray-900">
                             {(() => {
-                              const unitInfo = tenant?.unit?.unit_name || 
+                              // Get unit info from current_rent (active rental) first, then fallback to other sources
+                              const currentRent = tenant?.current_rent;
+                              const unitFromRent = currentRent?.unit;
+                              
+                              const unitInfo = unitFromRent?.unit_name || 
+                                              unitFromRent?.unit_number ||
+                                              unitFromRent?.name ||
+                                              tenant?.unit?.unit_name || 
                                               tenant?.unit?.unit_number || 
                                               tenant?.room_number || 
                                               tenant?.assigned_room || 
@@ -530,6 +570,15 @@ const TenantsPage = () => {
                             })()}
                           </span>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          tenant?.is_approved || tenant?.current_rent 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {tenant?.is_approved || tenant?.current_rent ? 'Active' : 'Pending'}
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="space-y-1">
@@ -546,24 +595,6 @@ const TenantsPage = () => {
                             </span>
                           </div>
                         </div>
-                      </td>
-                      
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded-full ${
-                          (() => {
-                            const status = tenant?.status || (tenant?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                            return status === 'Active' ? 'bg-green-100 text-green-800' :
-                                   status === 'Inactive' ? 'bg-red-100 text-red-800' :
-                                   'bg-amber-100 text-amber-800';
-                          })()
-                        }`}>
-                          {(() => {
-                            const status = tenant?.status || (tenant?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                            if (status === 'Active') return <><CheckCircle className="w-3 h-3 mr-1" />{status}</>;
-                            if (status === 'Inactive') return <><AlertTriangle className="w-3 h-3 mr-1" />{status}</>;
-                            return <><Clock className="w-3 h-3 mr-1" />{status}</>;
-                          })()}
-                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
@@ -672,6 +703,7 @@ const TenantsPage = () => {
                     setShowAddModal(false);
                     setShowEditModal(false);
                     setEditingTenant(null);
+                    setCurrentTenantUnitId(null);
                     resetForm();
                   }}
                   className="text-gray-400 hover:text-gray-600"
@@ -765,7 +797,18 @@ const TenantsPage = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-1">Property *</label>
                         <select
                           value={formData.property_id}
-                          onChange={(e) => handleInputChange('property_id', e.target.value)}
+                          onChange={(e) => {
+                            handleInputChange('property_id', e.target.value);
+                            // Fetch units when property changes
+                            if (e.target.value) {
+                              fetchUnitsForProperty(e.target.value);
+                            } else {
+                              setUnits([]);
+                            }
+                            // Reset unit_id and current tenant unit when property changes
+                            handleInputChange('unit_id', '');
+                            setCurrentTenantUnitId(null);
+                          }}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                           required
                         >
@@ -777,6 +820,79 @@ const TenantsPage = () => {
                           ))}
                         </select>
                         <p className="text-xs text-gray-500 mt-1">Select the property for this tenant</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+                        <select
+                          value={formData.unit_id}
+                          onChange={(e) => handleInputChange('unit_id', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          disabled={!formData.property_id || units.length === 0}
+                        >
+                          <option value="">Select Unit</option>
+                          {(() => {
+                            // Get all occupied unit IDs from tenants (excluding the current tenant if editing)
+                            const occupiedUnitIds = new Set();
+                            tenants.forEach(tenant => {
+                              // Skip the tenant being edited - their current unit should still be available
+                              if (editingTenant && tenant.id === editingTenant.id) {
+                                return;
+                              }
+                              
+                              // Check if tenant has an active unit assignment
+                              const tenantUnitId = tenant.current_rent?.unit_id || 
+                                                  tenant.current_rent?.unit?.id || 
+                                                  null;
+                              
+                              if (tenantUnitId) {
+                                occupiedUnitIds.add(tenantUnitId);
+                              }
+                            });
+                            
+                            // Filter units: show current tenant's unit + truly available units
+                            const filteredUnits = units.filter(unit => {
+                              const unitId = unit.id;
+                              
+                              // Always show the tenant's current unit if editing
+                              if (editingTenant && currentTenantUnitId && unitId === currentTenantUnitId) {
+                                return true;
+                              }
+                              
+                              // Don't show occupied units (unless it's the current tenant's unit)
+                              if (occupiedUnitIds.has(unitId)) {
+                                return false;
+                              }
+                              
+                              // Show units with available/vacant status only
+                              const status = (unit.status || 'vacant').toLowerCase();
+                              // Exclude explicitly occupied/rented units
+                              if (status === 'occupied' || status === 'rented') {
+                                return false;
+                              }
+                              // Include only available or vacant units
+                              return status === 'available' || status === 'vacant';
+                            });
+                            
+                            return filteredUnits.map(unit => {
+                              const isCurrentUnit = editingTenant && currentTenantUnitId && unit.id === currentTenantUnitId;
+                              const unitName = unit.unit_name || unit.unit_number || unit.name || `Unit ${unit.id}`;
+                              return (
+                                <option key={unit.id} value={unit.id}>
+                                  {unitName}{isCurrentUnit ? ' (Current)' : ''}
+                                </option>
+                              );
+                            });
+                          })()}
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {!formData.property_id 
+                            ? 'Select a property first' 
+                            : units.length === 0 
+                            ? 'No units available for this property' 
+                            : editingTenant
+                            ? 'Showing current unit and available units only'
+                            : 'Select an available unit for this tenant'}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -792,6 +908,7 @@ const TenantsPage = () => {
                       setShowAddModal(false);
                       setShowEditModal(false);
                       setEditingTenant(null);
+                      setCurrentTenantUnitId(null);
                       resetForm();
                     }}
                     className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -877,41 +994,37 @@ const TenantsPage = () => {
                     <div>
                       <label className="block text-sm font-medium text-gray-500 mb-1">Unit/Room</label>
                       <p className="text-sm text-gray-900">
-                        {viewingTenant?.unit?.unit_name || 
+                        {(() => {
+                          const currentRent = viewingTenant?.current_rent;
+                          const unitFromRent = currentRent?.unit;
+                          
+                          return unitFromRent?.unit_name || 
+                                 unitFromRent?.unit_number ||
+                                 unitFromRent?.name ||
+                                 viewingTenant?.unit?.unit_name || 
                          viewingTenant?.unit?.unit_number || 
                          viewingTenant?.room_number || 
                          viewingTenant?.assigned_room || 
-                         'Unassigned'}
+                                 'Unassigned';
+                        })()}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Status Information */}
+                {/* Tenant Information */}
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Status Information</h3>
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Tenant Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-500 mb-1">Status</label>
-                      <span className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded-full ${
-                        (() => {
-                          const status = viewingTenant?.status || (viewingTenant?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                          return status === 'Active' ? 'bg-green-100 text-green-800' :
-                                 status === 'Inactive' ? 'bg-red-100 text-red-800' :
-                                 'bg-amber-100 text-amber-800';
-                        })()
-                      }`}>
-                        {(() => {
-                          const status = viewingTenant?.status || (viewingTenant?.is_approved ? 'Active' : 'Pending') || 'Pending';
-                          if (status === 'Active') return <><CheckCircle className="w-3 h-3 mr-1" />{status}</>;
-                          if (status === 'Inactive') return <><AlertTriangle className="w-3 h-3 mr-1" />{status}</>;
-                          return <><Clock className="w-3 h-3 mr-1" />{status}</>;
-                        })()}
-                      </span>
-                    </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-500 mb-1">Tenant ID</label>
                       <p className="text-sm text-gray-900">{viewingTenant?.id || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-1">Has Active Rental</label>
+                      <p className="text-sm text-gray-900">
+                        {viewingTenant?.is_approved || viewingTenant?.current_rent ? 'Yes' : 'No'}
+                      </p>
                     </div>
                   </div>
                 </div>
