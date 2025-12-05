@@ -44,10 +44,24 @@ function App() {
     }
   }, []);
 
-  // Check for existing session on app load
+  // Check for existing session on app load (only once)
   useEffect(() => {
     const checkExistingSession = () => {
       try {
+        // Don't restore session if we're on verification or signup pages
+        const urlParams = new URLSearchParams(window.location.search);
+        const isVerificationPage = window.location.pathname === '/verify-email' && urlParams.get('token');
+        const isSignupPage = window.location.pathname === '/signup' || currentPage === 'signup';
+        const isLoginPage = currentPage === 'login';
+        const isResetPasswordPage = currentPage === 'reset-password';
+        const isForgotPasswordPage = currentPage === 'forgot-password';
+        
+        // Don't restore session on auth pages
+        if (isVerificationPage || isSignupPage || isLoginPage || isResetPasswordPage || isForgotPasswordPage) {
+          setIsLoadingSession(false);
+          return;
+        }
+        
         const token = localStorage.getItem('access_token');
         const savedRole = localStorage.getItem('user_role');
         const userId = localStorage.getItem('user_id');
@@ -57,16 +71,27 @@ function App() {
           setIsAuthenticated(true);
           setUserRole(savedRole.toLowerCase());
           
-          // Set appropriate landing page based on role
-          if (savedRole.toLowerCase() === 'admin') {
-            setCurrentPage('admin-dashboard');
-          } else if (savedRole.toLowerCase() === 'manager') {
-            setCurrentPage('dashboard');
-          } else {
-            setCurrentPage('dashboard');
+          // Check if user is already on a specific authenticated page
+          // If so, don't redirect - let them stay where they are
+          const authenticatedPages = [
+            'rent-space', 'analyticsReports', 'billingPayment', 'manageProperty',
+            'admin-dashboard', 'admin-profile', 'admin-settings', 'admin-property-review',
+            'admin-analytics', 'admin-subscription-management', 'admin-document-management',
+            'admin-property-approval'
+          ];
+          
+          const isOnAuthenticatedPage = authenticatedPages.includes(currentPage);
+          
+          // Only redirect to default dashboard if we're on the public landing page
+          // Don't override if user is already on an authenticated page
+          if (!isOnAuthenticatedPage && currentPage === 'dashboard') {
+            if (savedRole.toLowerCase() === 'admin') {
+              setCurrentPage('admin-dashboard');
+            }
+            // For manager and tenant, 'dashboard' is correct, so don't change it
           }
           
-          console.log('Session restored:', { role: savedRole, userId });
+          console.log('Session restored:', { role: savedRole, userId, currentPage });
         } else {
           console.log('No existing session found');
         }
@@ -82,6 +107,8 @@ function App() {
     };
 
     checkExistingSession();
+    // Only run once on mount, not when currentPage changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for navigation to login events (from PropertyGrid when user tries to inquire without login)
@@ -164,7 +191,7 @@ function App() {
     // Handle Tenant and public pages
     switch (currentPage) {
       case 'dashboard':
-        return <LandingDashboard />;
+        return <LandingDashboard onPageChange={handlePageChange} />;
       case 'rent-space':
         return (
           <>
@@ -262,19 +289,28 @@ function App() {
     return (
       <EmailVerification
         onVerificationComplete={(user) => {
-          // Auto-login the user after successful verification
-          setIsAuthenticated(true);
-          const userRole = user.role ? user.role.toLowerCase() : 'tenant';
-          setUserRole(userRole);
-          localStorage.setItem('user_role', user.role || 'tenant');
-          localStorage.setItem('user_id', user.id);
+          // Clear any existing session data first to prevent logging in to wrong account
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          localStorage.removeItem('token'); // Legacy token key
+          localStorage.removeItem('user_role');
+          localStorage.removeItem('user_id');
           
-          // Route to appropriate dashboard based on role
-          if (userRole === 'manager') {
-            setCurrentPage('dashboard'); // Manager dashboard
-          } else {
-            setCurrentPage('dashboard'); // Tenant dashboard
+          // Clear any pending verification data
+          localStorage.removeItem('pending_verification_session');
+          localStorage.removeItem('pending_verification_email');
+          
+          // Store verified email to show success message on login page
+          if (user && user.email) {
+            localStorage.setItem('verified_email', user.email);
           }
+          
+          // Reset authentication state
+          setIsAuthenticated(false);
+          setUserRole('tenant');
+          
+          // Redirect to login page - user needs to log in to get JWT token
+          setCurrentPage('login');
         }}
         onBack={() => setCurrentPage('login')}
       />
@@ -289,6 +325,30 @@ function App() {
           // Optional: Show success message or update UI
         }}
         onBackToLogin={() => setCurrentPage('login')}
+        onVerificationReceived={(user) => {
+          // Clear any existing session data first to prevent logging in to wrong account
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          localStorage.removeItem('token'); // Legacy token key
+          localStorage.removeItem('user_role');
+          localStorage.removeItem('user_id');
+          
+          // Clear verification session
+          localStorage.removeItem('pending_verification_session');
+          localStorage.removeItem('pending_verification_email');
+          
+          // Store verified email to show success message on login page
+          if (user && user.email) {
+            localStorage.setItem('verified_email', user.email);
+          }
+          
+          // Reset authentication state
+          setIsAuthenticated(false);
+          setUserRole('tenant');
+          
+          // Redirect to login page - user needs to log in to get JWT token
+          setCurrentPage('login');
+        }}
       />
     );
   }

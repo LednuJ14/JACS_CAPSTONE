@@ -202,12 +202,16 @@ const Inquiries = ({ isOpen, onClose }) => {
   };
 
   // Load inquiries from backend API
+  // Note: Backend automatically filters inquiries to only include those for properties
+  // owned by the currently logged-in property manager
   const loadInquiries = async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await api.getManagerInquiries();
       if (response && response.inquiries) {
+        // Backend has already filtered inquiries by manager's properties
+        // All inquiries returned here are for properties owned by this manager
         const mapped = response.inquiries.map(inquiry => ({
           id: inquiry.id,
           tenantName: inquiry.tenant?.first_name && inquiry.tenant?.last_name 

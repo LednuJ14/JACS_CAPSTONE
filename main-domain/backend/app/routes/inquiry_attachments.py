@@ -244,11 +244,33 @@ def get_attachments(current_user, inquiry_id):
             
             attachments_data = []
             for row in attachments_rows:
+                file_path = row.get('file_path')
+                
+                # Verify file exists before including in response
+                # This prevents 404 errors on the frontend for missing files
+                if file_path:
+                    file_path = os.path.normpath(file_path)
+                    
+                    # Check if file exists
+                    file_exists = os.path.exists(file_path)
+                    
+                    # If not absolute path, try relative to UPLOAD_FOLDER
+                    if not file_exists and not os.path.isabs(file_path):
+                        alternative_path = os.path.join(UPLOAD_FOLDER, str(inquiry_id), os.path.basename(file_path))
+                        if os.path.exists(alternative_path):
+                            file_path = alternative_path
+                            file_exists = True
+                    
+                    # Only include attachment if file exists
+                    if not file_exists:
+                        current_app.logger.warning(f'Attachment {row.get("id")} file not found at: {file_path}')
+                        continue  # Skip this attachment - file doesn't exist
+                
                 attachments_data.append({
                     'id': row.get('id'),
                     'inquiry_id': row.get('inquiry_id'),
                     'file_name': row.get('file_name'),
-                    'file_path': row.get('file_path'),
+                    'file_path': file_path,  # Use verified path
                     'file_type': str(row.get('file_type')).lower() if row.get('file_type') else 'other',
                     'file_size': row.get('file_size'),
                     'mime_type': row.get('mime_type'),

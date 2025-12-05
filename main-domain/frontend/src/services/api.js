@@ -57,14 +57,72 @@ class ApiService {
       // Remove isFormData and responseType from options before passing to fetch
       const { isFormData: _, responseType, ...fetchOptions } = options;
       
-      const res = await fetch(url, {
-        ...fetchOptions,
-        headers,
-      });
+      // Suppress console errors for 404s on attachment downloads
+      const isAttachmentDownload = url.includes('/inquiries/attachments/');
+      const originalConsoleError = console.error;
+      const originalConsoleWarn = console.warn;
+      
+      if (isAttachmentDownload) {
+        // Temporarily suppress console.error and console.warn for attachment downloads
+        console.error = (...args) => {
+          const errorStr = args.join(' ');
+          // Only suppress 404 errors - these are expected when files are missing
+          if (!errorStr.includes('404') && !errorStr.includes('NOT FOUND') && !errorStr.includes('not found')) {
+            originalConsoleError.apply(console, args);
+          }
+        };
+        console.warn = (...args) => {
+          const warnStr = args.join(' ');
+          // Suppress 404 warnings for attachments
+          if (!warnStr.includes('404') && !warnStr.includes('NOT FOUND') && !warnStr.includes('not found')) {
+            originalConsoleWarn.apply(console, args);
+          }
+        };
+      }
+      
+      let res;
+      try {
+        // For attachment downloads, use a silent fetch that won't log 404s
+        // Note: Browser will still log network errors in DevTools, but we handle them gracefully
+        res = await fetch(url, {
+          ...fetchOptions,
+          headers,
+        });
+      } catch (fetchError) {
+        // If fetch itself fails (network error, not HTTP error), restore console and rethrow
+        if (isAttachmentDownload) {
+          console.error = originalConsoleError;
+          console.warn = originalConsoleWarn;
+        }
+        throw fetchError;
+      } finally {
+        // Restore console.error and console.warn
+        if (isAttachmentDownload) {
+          console.error = originalConsoleError;
+          console.warn = originalConsoleWarn;
+        }
+      }
       
       // Handle blob responses
       if (responseType === 'blob') {
         if (!res.ok) {
+          // Silently handle 404s and 429s for attachment downloads
+          const isAttachmentDownload = url.includes('/inquiries/attachments/');
+          if (isAttachmentDownload) {
+            if (res.status === 404) {
+              // Return null for missing attachments instead of throwing
+              // This is expected behavior when attachment records exist but files were deleted/moved
+              // Don't log or throw - component will handle gracefully by showing "Image unavailable"
+              return null;
+            }
+            if (res.status === 429) {
+              // Handle rate limiting - throw error so component can retry
+              const error = new Error('Rate limit exceeded. Please try again later');
+              error.status = 429;
+              throw error;
+            }
+          }
+          
           // Attempt refresh on 401 only for protected endpoints (not public auth routes)
           const isAuthPublic = url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/verify-2fa');
           const canTryRefresh = res.status === 401 && this.refreshToken && !url.includes('/refresh') && !isAuthPublic && !options._retried;
@@ -294,6 +352,46 @@ class ApiService {
     return this.request(url);
   }
 
+  async downloadAdminAnalyticsReport(format, params = {}) {
+    let endpoint;
+    switch (format.toLowerCase()) {
+      case 'pdf':
+        endpoint = API_ENDPOINTS.ADMIN.ANALYTICS_DOWNLOAD_PDF;
+        break;
+      case 'excel':
+      case 'xlsx':
+        endpoint = API_ENDPOINTS.ADMIN.ANALYTICS_DOWNLOAD_EXCEL;
+        break;
+      case 'csv':
+        endpoint = API_ENDPOINTS.ADMIN.ANALYTICS_DOWNLOAD_CSV;
+        break;
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+    
+    const qs = new URLSearchParams(params).toString();
+    const url = qs ? `${endpoint}?${qs}` : endpoint;
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData = null;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        errorData = { error: errorText };
+      }
+      throw new Error(errorData.error || errorData.message || `Failed to download ${format} report`);
+    }
+    
+    return await response.blob();
+  }
+
   async adminAllProperties(params = {}) {
     const qs = new URLSearchParams(params).toString();
     const url = qs ? `${API_ENDPOINTS.ADMIN.ALL_PROPERTIES}?${qs}` : API_ENDPOINTS.ADMIN.ALL_PROPERTIES;
@@ -507,9 +605,27 @@ class ApiService {
   }
 
   async downloadInquiryAttachment(attachmentId) {
-    return this.request(API_ENDPOINTS.INQUIRIES.ATTACHMENT_DOWNLOAD(attachmentId), {
-      responseType: 'blob'
-    });
+    try {
+      return await this.request(API_ENDPOINTS.INQUIRIES.ATTACHMENT_DOWNLOAD(attachmentId), {
+        responseType: 'blob'
+      });
+    } catch (error) {
+      // Silently handle 404s for missing attachments - they're expected
+      if (error?.status === 404 || 
+          error?.response?.status === 404 ||
+          error?.statusCode === 404 ||
+          (error?.message && (
+            error.message.includes('404') || 
+            error.message.includes('not found') ||
+            error.message.includes('NOT FOUND') ||
+            error.message.toLowerCase().includes('file not found')
+          ))) {
+        // Return null instead of throwing - component will handle it
+        return null;
+      }
+      // Re-throw 429 and other errors so component can handle retries
+      throw error;
+    }
   }
 
   async deleteInquiryAttachment(attachmentId) {
@@ -691,10 +807,64 @@ class ApiService {
     return this.request(url);
   }
 
+  async downloadAnalyticsReport(format, params = {}) {
+    let endpoint;
+    switch (format.toLowerCase()) {
+      case 'pdf':
+        endpoint = API_ENDPOINTS.MANAGER.ANALYTICS_DOWNLOAD_PDF;
+        break;
+      case 'excel':
+      case 'xlsx':
+        endpoint = API_ENDPOINTS.MANAGER.ANALYTICS_DOWNLOAD_EXCEL;
+        break;
+      case 'csv':
+        endpoint = API_ENDPOINTS.MANAGER.ANALYTICS_DOWNLOAD_CSV;
+        break;
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+    
+    const qs = new URLSearchParams(params).toString();
+    const url = qs ? `${endpoint}?${qs}` : endpoint;
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData = null;
+      try {
+        errorData = errorText ? JSON.parse(errorText) : null;
+      } catch {
+        errorData = null;
+      }
+      const message = (errorData && (errorData.message || errorData.error)) || response.statusText;
+      const error = new Error(message || 'Failed to download report');
+      error.status = response.status;
+      throw error;
+    }
+    
+    return response.blob();
+  }
+
   async updateManagerProfile(profileData) {
     return this.request(API_ENDPOINTS.MANAGER.PROFILE, {
       method: 'PUT',
       body: JSON.stringify(profileData)
+    });
+  }
+
+  async uploadManagerProfileImage(file) {
+    const form = new FormData();
+    form.append('image', file);
+    return this.request(API_ENDPOINTS.MANAGER.PROFILE_UPLOAD_IMAGE, {
+      method: 'POST',
+      body: form,
+      // Let browser set Content-Type boundary
+      isFormData: true
     });
   }
 
@@ -801,13 +971,22 @@ class ApiService {
         if (errorData.details) {
           errorMessage += `: ${errorData.details}`;
         }
+        // Special handling for subdomain documents
+        if (documentId.startsWith('subdomain_') && response.status === 404) {
+          errorMessage = 'Subdomain document not available. The subdomain server may be offline or the document may have been deleted.';
+        }
       } catch (e) {
         // If response is not JSON, use status text
         errorMessage = response.statusText || errorMessage;
+        // Special handling for subdomain documents
+        if (documentId.startsWith('subdomain_') && response.status === 404) {
+          errorMessage = 'Subdomain document not available. The subdomain server may be offline or the document may have been deleted.';
+        }
       }
       
       const error = new Error(errorMessage);
       error.response = response;
+      error.status = response.status;
       throw error;
     }
     
@@ -832,6 +1011,16 @@ class ApiService {
     const form = new FormData();
     form.append('image', file);
     return this.request(API_ENDPOINTS.MANAGER.UPLOAD_UNIT_IMAGE, {
+      method: 'POST',
+      body: form,
+      isFormData: true
+    });
+  }
+
+  async uploadLegalDocument(file) {
+    const form = new FormData();
+    form.append('document', file);
+    return this.request(API_ENDPOINTS.MANAGER.UPLOAD_LEGAL_DOCUMENT, {
       method: 'POST',
       body: form,
       isFormData: true

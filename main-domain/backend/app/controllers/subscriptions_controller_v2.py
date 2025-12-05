@@ -122,3 +122,29 @@ def process_payment(current_user, billing_id):
     except Exception as e:
         current_app.logger.error(f'Process payment error: {e}')
         return jsonify({'error': 'Payment processing failed', 'message': str(e)}), 500
+
+
+@subscriptions_bp.route('/cancel', methods=['POST'])
+@manager_required
+def cancel_subscription(current_user):
+    try:
+        result = SubscriptionsService().cancel_subscription(current_user)
+        return jsonify(result), 200
+    except Exception as e:
+        current_app.logger.error(f'Cancel subscription error: {e}')
+        if hasattr(e, 'status_code'):
+            return jsonify({'error': str(e)}), e.status_code
+        return jsonify({'error': 'Failed to cancel subscription', 'message': str(e)}), 500
+
+
+@subscriptions_bp.route('/billing/<int:billing_id>/cancel', methods=['POST'])
+@manager_required
+def cancel_billing_entry(current_user, billing_id):
+    try:
+        result = SubscriptionsService().cancel_billing_entry(current_user, billing_id)
+        return jsonify(result), 200
+    except Exception as e:
+        current_app.logger.error(f'Cancel billing entry error: {e}')
+        if hasattr(e, 'status_code'):
+            return jsonify({'error': str(e)}), e.status_code
+        return jsonify({'error': 'Failed to cancel billing entry', 'message': str(e)}), 500

@@ -6,6 +6,7 @@ const AdminProfileDropdown = ({ onPageChange }) => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const dropdownRef = useRef(null);
 
+  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -13,11 +14,14 @@ const AdminProfileDropdown = ({ onPageChange }) => {
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, []);
+  }, [isOpen]);
 
   const handleLogout = () => {
     onPageChange('logout');

@@ -527,16 +527,21 @@ def login():
         # Log user found for debugging
         current_app.logger.info(f"User found: id={user.id}, email={user.email}, username={getattr(user, 'username', None)}, role={user.role}")
         
-        # Check if user is active
+        # Check if user is active using status enum
         try:
-            is_active = getattr(user, 'is_active', True)
-            if is_active is None:
-                is_active = True  # Default to True if NULL
-            if not is_active:
-                current_app.logger.warning(f"Login attempt failed - account deactivated: user_id={user.id}")
-                return jsonify({'error': 'Account is deactivated'}), 401
+            if not user.is_active_user():
+                current_app.logger.warning(f"Login attempt failed - account not active: user_id={user.id}, status={getattr(user.status, 'value', user.status)}")
+                status_value = getattr(user.status, 'value', str(user.status)) if hasattr(user, 'status') and user.status else 'unknown'
+                if status_value == 'suspended':
+                    return jsonify({'error': 'Account is suspended'}), 401
+                elif status_value == 'inactive':
+                    return jsonify({'error': 'Account is deactivated'}), 401
+                elif status_value == 'pending_verification':
+                    return jsonify({'error': 'Email verification required'}), 401
+                else:
+                    return jsonify({'error': 'Account is not active'}), 401
         except Exception as attr_error:
-            current_app.logger.error(f"Error accessing user.is_active: {str(attr_error)}", exc_info=True)
+            current_app.logger.error(f"Error checking user status: {str(attr_error)}", exc_info=True)
             if current_app.config.get('DEBUG', False):
                 return jsonify({'error': 'Error checking user status', 'details': str(attr_error)}), 500
             return jsonify({'error': 'Login failed'}), 500
@@ -977,7 +982,7 @@ def refresh():
         # Convert string back to integer for database lookup
         user = User.query.get(int(current_user_id))
         
-        if not user or not user.is_active:
+        if not user or not user.is_active_user():
             return jsonify({'error': 'User not found or inactive'}), 401
         
         # Create new access token

@@ -322,23 +322,35 @@ def upload_document():
         if document_type_str not in valid_types:
             document_type_str = 'other'
         
-        # Generate unique filename
-        filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4().hex}_{filename}"
+        # Generate clean filename (use original filename, ensure uniqueness on disk)
+        original_filename = secure_filename(file.filename)
         
         # Ensure upload directory exists
         upload_dir = os.path.join(current_app.instance_path, current_app.config.get('UPLOAD_FOLDER', 'uploads'))
         os.makedirs(upload_dir, exist_ok=True)
         
-        # Save file
-        file_path = os.path.join(upload_dir, unique_filename)
+        # Generate unique file path on disk (using UUID only for file system)
+        # But store original filename in database
+        file_extension = os.path.splitext(original_filename)[1] if '.' in original_filename else ''
+        file_base_name = os.path.splitext(original_filename)[0] if '.' in original_filename else original_filename
+        
+        # Check if file already exists, if so append a number
+        disk_filename = original_filename
+        counter = 1
+        while os.path.exists(os.path.join(upload_dir, disk_filename)):
+            disk_filename = f"{file_base_name}_{counter}{file_extension}"
+            counter += 1
+        
+        # Save file with clean name (or numbered if duplicate)
+        file_path = os.path.join(upload_dir, disk_filename)
         file.save(file_path)
         
         # Create document record (simplified schema: name, filename, file_path, document_type, uploaded_by, property_id, visibility)
         # property_id can be None for property managers uploading general documents
+        # Store original filename in database (clean name without UUID)
         document = Document(
             name=name,
-            filename=unique_filename,
+            filename=original_filename,  # Store original filename, not the disk filename
             file_path=file_path,
             document_type=document_type_str,  # Store as string
             uploaded_by=current_user.id,
@@ -365,50 +377,64 @@ def upload_document():
 def download_document(document_id):
     """Download a document file (JWT optional for main domain access)."""
     try:
+        # Check for API key from main domain (for cross-domain access)
+        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        expected_api_key = os.environ.get('CROSS_DOMAIN_API_KEY')
+        is_main_domain_request = False
+        
+        if expected_api_key and api_key == expected_api_key:
+            # This is a request from main domain - allow access
+            is_main_domain_request = True
+        elif not expected_api_key:
+            # If no API key is configured, allow access (for development)
+            is_main_domain_request = True
+        
         document = Document.query.get(document_id)
         if not document:
             return jsonify({'error': 'Document not found'}), 404
         
         # Check if JWT token is provided (for authenticated users)
-        try:
-            from flask_jwt_extended import get_jwt_identity
-            current_user_id = get_jwt_identity()
-            if current_user_id:
-                current_user = get_current_user()
-                if current_user:
-                    # Apply permission checks for authenticated users
-                    user_role_str = str(current_user.role).upper() if current_user.role else ''
-                    if isinstance(current_user.role, UserRole):
-                        user_role_str = current_user.role.value.upper()
-                    elif isinstance(current_user.role, str):
-                        user_role_str = current_user.role.upper()
-                    
-                    if user_role_str == 'TENANT':
-                        tenant_profile = None
-                        try:
-                            from models.tenant import Tenant
-                            tenant_profile = Tenant.query.filter_by(user_id=current_user.id).first()
-                        except Exception:
-                            pass
+        # Skip permission checks if this is a main domain request
+        if not is_main_domain_request:
+            try:
+                from flask_jwt_extended import get_jwt_identity
+                current_user_id = get_jwt_identity()
+                if current_user_id:
+                    current_user = get_current_user()
+                    if current_user:
+                        # Apply permission checks for authenticated users
+                        user_role_str = str(current_user.role).upper() if current_user.role else ''
+                        if isinstance(current_user.role, UserRole):
+                            user_role_str = current_user.role.value.upper()
+                        elif isinstance(current_user.role, str):
+                            user_role_str = current_user.role.upper()
                         
-                        has_access = False
-                        if document.uploaded_by == current_user.id:
-                            has_access = True
-                        elif document.visibility in ['public', 'tenants_only']:
-                            if tenant_profile and tenant_profile.property_id == document.property_id:
+                        if user_role_str == 'TENANT':
+                            tenant_profile = None
+                            try:
+                                from models.tenant import Tenant
+                                tenant_profile = Tenant.query.filter_by(user_id=current_user.id).first()
+                            except Exception:
+                                pass
+                            
+                            has_access = False
+                            if document.uploaded_by == current_user.id:
                                 has_access = True
-                            elif document.visibility == 'public':
-                                has_access = True
-                        
-                        if not has_access:
-                            return jsonify({'error': 'Access denied'}), 403
-                    elif user_role_str == 'STAFF':
-                        if document.visibility == 'private' and document.uploaded_by != current_user.id:
-                            return jsonify({'error': 'Access denied'}), 403
-        except Exception:
-            # If no JWT token, allow access (for main domain downloads)
-            # This allows main domain to download documents via API
-            pass
+                            elif document.visibility in ['public', 'tenants_only']:
+                                if tenant_profile and tenant_profile.property_id == document.property_id:
+                                    has_access = True
+                                elif document.visibility == 'public':
+                                    has_access = True
+                            
+                            if not has_access:
+                                return jsonify({'error': 'Access denied'}), 403
+                        elif user_role_str == 'STAFF':
+                            if document.visibility == 'private' and document.uploaded_by != current_user.id:
+                                return jsonify({'error': 'Access denied'}), 403
+            except Exception:
+                # If no JWT token and not main domain request, deny access
+                if not is_main_domain_request:
+                    return jsonify({'error': 'Authentication required'}), 401
         
         # Check if file exists
         if not os.path.exists(document.file_path):

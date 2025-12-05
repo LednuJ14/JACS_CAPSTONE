@@ -64,7 +64,7 @@ class UsersService:
         user = User.query.get_or_404(user_id)
         changes_made = False
         # basic fields
-        updatable_fields = ['first_name', 'last_name', 'phone_number', 'address_line1', 'address_line2', 'city', 'province', 'postal_code', 'country']
+        updatable_fields = ['first_name', 'last_name', 'phone_number', 'address', 'city', 'province', 'postal_code', 'country']
         for field in updatable_fields:
             if field in payload:
                 new_value = sanitize_input(str(payload[field])) if payload[field] else None

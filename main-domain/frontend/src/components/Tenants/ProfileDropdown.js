@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import ApiService from '../../services/api';
+import defaultProfile from '../../assets/images/default_profile.png';
 import Inquiries from './Inquiries';
 import Profile from './Profile';
 import Settings from './Settings';
@@ -8,6 +10,77 @@ const ProfileDropdown = ({ onPageChange }) => {
   const [showInquiries, setShowInquiries] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [profileData, setProfileData] = useState({
+    firstName: '',
+    lastName: '',
+    profileImageUrl: defaultProfile
+  });
+  const dropdownRef = useRef(null);
+
+  // Fetch profile data
+  const fetchProfile = async () => {
+    try {
+      const data = await ApiService.getTenantProfile();
+      const p = data?.profile || {};
+      if (p && (p.first_name || p.email)) {
+        setProfileData({
+          firstName: p.first_name || '',
+          lastName: p.last_name || '',
+          profileImageUrl: p.profile_image_url || defaultProfile
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Profile fetch error:', error);
+    }
+
+    // Fallback: use /auth/me for basic user info
+    try {
+      const me = await ApiService.me();
+      const u = me?.user || {};
+      setProfileData({
+        firstName: u.first_name || '',
+        lastName: u.last_name || '',
+        profileImageUrl: u.profile_image_url || defaultProfile
+      });
+    } catch (e) {
+      console.error('Fallback profile fetch error:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfile();
+
+    // Listen for profile update events
+    const handleProfileUpdate = () => {
+      fetchProfile();
+    };
+
+    window.addEventListener('profile-updated', handleProfileUpdate);
+    window.addEventListener('notification-refresh', handleProfileUpdate); // Also listen to existing event
+
+    return () => {
+      window.removeEventListener('profile-updated', handleProfileUpdate);
+      window.removeEventListener('notification-refresh', handleProfileUpdate);
+    };
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
 
   const toggleDropdown = () => {
     setIsOpen(!isOpen);
@@ -28,14 +101,17 @@ const ProfileDropdown = ({ onPageChange }) => {
 
   return (
     <>
-      <div className="relative">
+      <div className="relative" ref={dropdownRef}>
         <button
           onClick={toggleDropdown}
-          className="w-10 h-10 bg-gray-400 rounded-full flex items-center justify-center hover:bg-gray-500 transition-colors"
+          className="w-10 h-10 rounded-full overflow-hidden border-2 border-white hover:border-gray-300 transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black"
         >
-          <svg className="w-6 h-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-          </svg>
+          <img
+            src={profileData.profileImageUrl || defaultProfile}
+            alt={`${profileData.firstName} ${profileData.lastName}`.trim() || 'Profile'}
+            className="w-full h-full object-cover"
+            onError={(e) => { e.target.src = defaultProfile; }}
+          />
         </button>
 
         {isOpen && (

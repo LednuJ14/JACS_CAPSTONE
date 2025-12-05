@@ -10,7 +10,7 @@ const ManagerDashboard = ({ onPageChange = () => {} }) => {
 
   // Button click handlers
   const handleAddProperty = () => {
-    onPageChange('rent-space');
+    onPageChange('manageProperty');
   };
 
 

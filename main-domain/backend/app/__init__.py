@@ -13,6 +13,7 @@ from flask_bcrypt import Bcrypt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_mail import Mail
+from flasgger import Swagger
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -25,6 +26,7 @@ limiter = Limiter(
     default_limits=["100 per hour"]
 )
 mail = Mail()
+swagger = Swagger()
 
 def create_app(config_name=None):
     """
@@ -138,6 +140,40 @@ def create_app(config_name=None):
     
     # Register JWT handlers
     register_jwt_handlers(app)
+
+    # Configure Swagger / OpenAPI documentation
+    # This is scoped to /api routes only and should not affect existing behavior.
+    swagger_template = {
+        "swagger": "2.0",
+        "info": {
+            "title": "JACS Property Platform API",
+            "description": "Interactive API documentation for the main-domain backend.\n\n"
+                           "Note: This documentation is generated automatically from the existing Flask routes "
+                           "and may not include every detail of request/response payloads.",
+            "version": "1.0.0",
+        },
+        "basePath": "/",
+        "schemes": ["http", "https"],
+    }
+
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": "apispec_main",
+                "route": "/api/swagger.json",
+                # Limit to API routes only so other Flask endpoints are untouched
+                "rule_filter": lambda rule: rule.rule.startswith("/api/"),
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        # Swagger UI will be served at /api/docs/
+        "specs_route": "/api/docs/",
+    }
+
+    Swagger(app, template=swagger_template, config=swagger_config)
     
     # Create upload directory if it doesn't exist
     upload_dir = os.path.join(app.instance_path, app.config['UPLOAD_FOLDER'])
@@ -173,7 +209,6 @@ def register_blueprints(app):
     from app.routes.tenant_notifications import tenant_notifications_bp
     from app.routes.manager_notifications import manager_notifications_bp
     from app.routes.admin_notifications import admin_notifications_bp
-    from app.routes.password_reset import password_reset_bp
     from app.routes.public_units import public_units_bp
     from app.routes.inquiry_attachments import inquiry_attachments_bp
     
@@ -197,7 +232,7 @@ def register_blueprints(app):
     # Inquiry attachments
     from app.routes.inquiry_attachments import inquiry_attachments_bp
     app.register_blueprint(inquiry_attachments_bp, url_prefix='/api/inquiries')
-    app.register_blueprint(password_reset_bp, url_prefix='/api/auth')
+    # Note: password_reset_bp removed - all routes now handled by auth_controller_v2.py
     app.register_blueprint(public_units_bp, url_prefix='/api/units')
 
     # Relax rate limits for high-churn dev endpoints to avoid 429s in UI

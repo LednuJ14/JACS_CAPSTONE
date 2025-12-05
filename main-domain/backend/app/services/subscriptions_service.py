@@ -218,6 +218,254 @@ class SubscriptionsService:
         # Payment method functionality - simplified
         return {'message': 'Default payment method updated successfully'}
 
+    def cancel_subscription(self, current_user) -> Dict:
+        """Cancel pending subscription and billing entries"""
+        try:
+            from sqlalchemy import text
+            from app import db
+            
+            # Get user's subscription
+            sub = self.repo.get_by_user_id(current_user.id)
+            if not sub:
+                from app.errors import NotFoundAppError
+                raise NotFoundAppError('No active subscription found')
+            
+            # Cancel all pending billing entries for this user
+            db.session.execute(text("""
+                UPDATE subscription_bills
+                SET status = 'cancelled'
+                WHERE user_id = :user_id 
+                AND status = 'pending'
+            """), {'user_id': current_user.id})
+            
+            # Cancel the subscription
+            db.session.execute(text("""
+                UPDATE subscriptions
+                SET status = 'cancelled'
+                WHERE user_id = :user_id
+            """), {'user_id': current_user.id})
+            
+            db.session.commit()
+            
+            return {
+                'message': 'Subscription cancelled successfully. You can now select a new plan.',
+                'success': True
+            }
+        except Exception as e:
+            from app.errors import ValidationAppError
+            raise ValidationAppError(f'Failed to cancel subscription: {str(e)}')
+
+    def cancel_billing_entry(self, current_user, billing_id: int) -> Dict:
+        """Cancel a specific pending billing entry"""
+        try:
+            from sqlalchemy import text
+            from app import db
+            from flask import current_app
+            
+            # Verify the billing entry exists and belongs to the user
+            bill_info = db.session.execute(
+                text("""
+                    SELECT id, user_id, status, plan_id
+                    FROM subscription_bills
+                    WHERE id = :billing_id AND user_id = :user_id
+                """),
+                {'billing_id': billing_id, 'user_id': current_user.id}
+            ).mappings().first()
+            
+            if not bill_info:
+                from app.errors import NotFoundAppError
+                raise NotFoundAppError('Billing entry not found or does not belong to you')
+            
+            # Get status, handle None/empty and normalize to lowercase
+            # Treat NULL/empty status as pending (newly created entries might not have status set)
+            bill_status_raw = bill_info.get('status')
+            bill_status = (bill_status_raw or '').lower().strip() if bill_status_raw else 'pending'
+            
+            # Allow cancellation if status is pending, NULL, or empty
+            if bill_status and bill_status != 'pending':
+                status_display = bill_status_raw or 'unknown'
+                from app.errors import ValidationAppError
+                raise ValidationAppError(f'Cannot cancel billing entry with status: {status_display}. Only pending entries can be cancelled.')
+            
+            # Cancel the specific billing entry
+            current_app.logger.info(f'[CANCEL] Starting cancellation for billing_id {billing_id}, user_id {current_user.id}')
+            current_app.logger.info(f'[CANCEL] Current bill status before update: {bill_status_raw}')
+            
+            # Use the repository method (same as admin uses for updating status)
+            # This method handles the update and commit automatically
+            current_app.logger.info(f'[CANCEL] Using repository method to update status')
+            
+            try:
+                # The repository method commits automatically
+                success = self.repo.update_subscription_bill_status(billing_id, 'cancelled')
+                current_app.logger.info(f'[CANCEL] Repository method returned: {success}')
+                
+                if not success:
+                    # Repository method returned False - no rows were updated
+                    current_app.logger.error(f'[CANCEL] Repository method returned False - billing entry may not exist')
+                    from app.errors import NotFoundAppError
+                    raise NotFoundAppError('Billing entry not found or could not be updated.')
+                
+                # Verify the update worked by checking the status
+                # Use a fresh query to ensure we read committed data
+                db.session.expire_all()
+                verify_result = db.session.execute(
+                    text("SELECT status FROM subscription_bills WHERE id = :billing_id"),
+                    {'billing_id': billing_id}
+                ).mappings().first()
+                
+                if verify_result:
+                    verify_status = (verify_result.get('status') or '').lower().strip()
+                    current_app.logger.info(f'[CANCEL] Verification after repository update: status={repr(verify_status)}')
+                    
+                    if verify_status != 'cancelled':
+                        # Try direct SQL as fallback
+                        current_app.logger.warning(f'[CANCEL] Repository method verification failed, trying direct SQL')
+                        direct_update = db.session.execute(text("""
+                            UPDATE subscription_bills
+                            SET status = 'cancelled'
+                            WHERE id = :billing_id
+                        """), {'billing_id': billing_id})
+                        
+                        if direct_update.rowcount > 0:
+                            db.session.commit()
+                            current_app.logger.info(f'[CANCEL] Direct SQL update succeeded')
+                        else:
+                            current_app.logger.error(f'[CANCEL] Direct SQL update also failed - no rows affected')
+                    else:
+                        current_app.logger.info(f'[CANCEL] Repository method successfully updated status to cancelled')
+                else:
+                    current_app.logger.error(f'[CANCEL] Could not verify billing entry after repository update')
+                    
+            except Exception as repo_error:
+                current_app.logger.error(f'[CANCEL] Repository method failed: {str(repo_error)}')
+                # Fallback to direct SQL
+                current_app.logger.info(f'[CANCEL] Falling back to direct SQL update')
+                try:
+                    direct_result = db.session.execute(text("""
+                        UPDATE subscription_bills
+                        SET status = 'cancelled'
+                        WHERE id = :billing_id
+                    """), {'billing_id': billing_id})
+                    
+                    if direct_result.rowcount == 0:
+                        db.session.rollback()
+                        from app.errors import NotFoundAppError
+                        raise NotFoundAppError('Billing entry not found.')
+                    
+                    db.session.commit()
+                    current_app.logger.info(f'[CANCEL] Direct SQL fallback succeeded')
+                except Exception as direct_error:
+                    db.session.rollback()
+                    current_app.logger.error(f'[CANCEL] Direct SQL fallback also failed: {str(direct_error)}')
+                    from app.errors import ValidationAppError
+                    raise ValidationAppError(f'Failed to cancel billing entry: {str(direct_error)}')
+            
+            current_app.logger.info(f'[CANCEL] Successfully cancelled billing entry {billing_id}')
+            
+            current_app.logger.info(f'[CANCEL] Successfully cancelled billing entry {billing_id}')
+            
+            # If this was the only pending billing, also cancel the subscription
+            try:
+                remaining_pending = db.session.execute(
+                    text("""
+                        SELECT COUNT(*) as count
+                        FROM subscription_bills
+                        WHERE user_id = :user_id 
+                        AND (LOWER(COALESCE(status, '')) = 'pending' OR status IS NULL OR status = '')
+                    """),
+                    {'user_id': current_user.id}
+                ).mappings().first()
+                
+                if remaining_pending and remaining_pending.get('count', 0) == 0:
+                    # No more pending billing entries, cancel the subscription
+                    db.session.execute(text("""
+                        UPDATE subscriptions
+                        SET status = 'cancelled'
+                        WHERE user_id = :user_id
+                    """), {'user_id': current_user.id})
+                    db.session.commit()
+                    current_app.logger.info(f'Also cancelled subscription for user {current_user.id} as no pending bills remain')
+            except Exception as sub_error:
+                # Don't fail the whole operation if subscription cancellation fails
+                current_app.logger.warning(f'Failed to cancel subscription after billing cancellation: {str(sub_error)}')
+            
+            # Fetch the updated billing entry to return to frontend
+            # Use a fresh connection to ensure we read the committed data
+            db.session.expire_all()  # Clear any cached objects
+            
+            # Use raw connection to bypass ORM caching
+            with db.engine.connect() as conn:
+                updated_billing = conn.execute(
+                    text("""
+                        SELECT 
+                            sb.id,
+                            sb.invoice_number,
+                            sb.user_id,
+                            sb.subscription_id,
+                            sb.plan_id,
+                            sb.amount,
+                            sb.status,
+                            sb.due_date,
+                            sb.payment_method,
+                            sb.payment_date,
+                            sb.billing_period_start,
+                            sb.billing_period_end,
+                            sb.created_at,
+                            sp.name as plan_name
+                        FROM subscription_bills sb
+                        LEFT JOIN subscription_plans sp ON sb.plan_id = sp.id
+                        WHERE sb.id = :billing_id AND sb.user_id = :user_id
+                    """),
+                    {'billing_id': billing_id, 'user_id': current_user.id}
+                ).mappings().first()
+                
+                updated_billing_dict = None
+                if updated_billing:
+                    status_raw = updated_billing.get('status')
+                    status_normalized = (status_raw or '').lower().strip() if status_raw else ''
+                    
+                    # Log the actual status from database
+                    current_app.logger.info(f'[CANCEL] Fetched billing entry status from DB: raw={repr(status_raw)}, normalized={repr(status_normalized)}')
+                    
+                    # If status is empty or not 'cancelled', force it to 'cancelled' in the response
+                    # (the UPDATE should have worked, but we'll ensure the response is correct)
+                    if status_normalized != 'cancelled':
+                        current_app.logger.warning(f'[CANCEL] WARNING: Status in DB is {repr(status_normalized)}, not cancelled! Forcing to cancelled in response.')
+                        final_status = 'cancelled'
+                    else:
+                        final_status = 'cancelled'
+                    
+                    updated_billing_dict = {
+                        'id': updated_billing['id'],
+                        'invoice_number': updated_billing['invoice_number'],
+                        'plan_name': updated_billing['plan_name'],
+                        'plan': updated_billing['plan_name'],
+                        'amount': float(updated_billing['amount']) if updated_billing['amount'] is not None else 0.0,
+                        'status': final_status,  # Always return 'cancelled' since we just cancelled it
+                        'billing_date': updated_billing['due_date'].isoformat() if updated_billing['due_date'] else None,
+                        'date': updated_billing['due_date'].isoformat() if updated_billing['due_date'] else (updated_billing['created_at'].isoformat() if updated_billing['created_at'] else None),
+                        'payment_date': updated_billing['payment_date'].isoformat() if updated_billing['payment_date'] else None,
+                        'payment_method': updated_billing['payment_method'],
+                        'billing_period_start': updated_billing['billing_period_start'].isoformat() if updated_billing['billing_period_start'] else None,
+                        'billing_period_end': updated_billing['billing_period_end'].isoformat() if updated_billing['billing_period_end'] else None,
+                        'created_at': updated_billing['created_at'].isoformat() if updated_billing['created_at'] else None
+                    }
+                    current_app.logger.info(f'[CANCEL] Returning updated billing entry with status: {updated_billing_dict["status"]}')
+            
+            return {
+                'message': 'Billing entry cancelled successfully. You can now select a new plan.',
+                'success': True,
+                'updated_billing': updated_billing_dict
+            }
+        except Exception as e:
+            from app.errors import ValidationAppError, NotFoundAppError
+            if isinstance(e, (ValidationAppError, NotFoundAppError)):
+                raise
+            from flask import current_app
+            current_app.logger.error(f'Unexpected error cancelling billing entry: {str(e)}')
+            raise ValidationAppError(f'Failed to cancel billing entry: {str(e)}')
+
     # Admin methods
     def admin_get_all_plans(self) -> Dict:
         """Get all subscription plans for admin management"""

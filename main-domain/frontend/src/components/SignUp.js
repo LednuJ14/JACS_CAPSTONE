@@ -142,7 +142,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
           return false;
         }
         if (!passwordStrength.isValid) {
-          setErrorMessage('Password does not meet strength requirements. Please create a stronger password.');
+          setErrorMessage('Password must be at least 8 characters, include a number, a capital letter, and a special character.');
           return false;
         }
         break;
@@ -197,6 +197,11 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
       // Registration successful
       console.log('Registration successful:', data);
       
+      // Store verification session in localStorage to track the signup browser
+      const verificationSessionId = `verification_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('pending_verification_session', verificationSessionId);
+      localStorage.setItem('pending_verification_email', formData.email);
+      
       // Call the success callback
       if (typeof onSignUpSuccess === 'function') {
         onSignUpSuccess({ 
@@ -218,7 +223,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
         if (error.message.includes('Email already exists')) {
           errorMsg = 'An account with this email already exists. Please use a different email or try logging in.';
         } else if (error.message.includes('Weak password')) {
-          errorMsg = `Password is too weak. Please use a stronger password with letters, numbers, and special characters.`;
+          errorMsg = `Password must be at least 8 characters, include a number, a capital letter, and a special character.`;
         } else if (error.message.includes('Missing required fields')) {
           errorMsg = 'Please fill in all required fields.';
         } else {

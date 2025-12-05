@@ -26,6 +26,9 @@ def get_active_units():
         # property active - we'll try with status filter and retry without it if it fails
         # Store the status filter separately so we can remove it if needed
         status_filter = "(p.status = 'active' OR p.status = 'approved')"
+        # Also filter out draft units - only show published units (vacant, occupied, etc. but not draft)
+        # Handle NULL status as draft (unpublished units)
+        unit_status_filter = "(u.status IS NOT NULL AND LOWER(u.status) != 'draft')"
 
         # Distance-based location filter (if coordinates provided) - takes priority over text search
         lat = params.get('latitude', type=float)
@@ -113,6 +116,7 @@ def get_active_units():
 
         # Try with status filter first
         filters.append(status_filter)
+        filters.append(unit_status_filter)
         where_sql = " AND ".join(filters) if filters else "1=1"
         
         try:
@@ -176,8 +180,16 @@ def get_active_units():
             # If error is about missing status column, retry without status filter
             if 'status' in error_str and ('unknown column' in error_str or 'doesn\'t exist' in error_str):
                 current_app.logger.warning(f"Status column error, retrying without status filter: {str(query_error)}")
-                # Remove status filter and retry
-                filters_without_status = [f for f in filters if f != status_filter]
+                # Remove status filters and retry (but keep unit status filter if possible)
+                filters_without_status = [f for f in filters if f != status_filter and f != unit_status_filter]
+                # Try to keep unit status filter if units table has status column
+                try:
+                    # Test if units.status exists by checking if the error mentions properties table specifically
+                    if 'properties' in error_str.lower() or 'p.status' in error_str.lower():
+                        # Only property status is missing, keep unit status filter
+                        filters_without_status.append(unit_status_filter)
+                except:
+                    pass
                 where_sql = " AND ".join(filters_without_status) if filters_without_status else "1=1"
                 
                 total_sql = text(f"""

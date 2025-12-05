@@ -69,7 +69,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
           ...p,
           vacantUnits: vacant,
           occupiedUnits: occupied,
-          totalUnits: Math.max(p.totalUnits || 0, propertyUnits.length) // Ensure total is at least the count of units
+          totalUnits: propertyUnits.length // Total units = actual count of units added to this property
         };
       }
       return p;
@@ -104,21 +104,24 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
           }
         }
         
-        // Normalize status - status is now automatically computed by backend based on tenant assignment
-        // Backend returns 'vacant' if unit has no active tenant assignment, 'occupied' if it does
-        let normalizedStatus = u.status || 'vacant';
+        // Normalize status - status can be 'draft', 'vacant', 'occupied', etc.
+        // Backend may return 'vacant' if unit has no active tenant assignment, 'occupied' if it does
+        // But we also support 'draft' status for unpublished units
+        let normalizedStatus = u.status || 'draft';
         if (normalizedStatus) {
-          const statusUpper = normalizedStatus.toUpperCase();
-          // Backend now returns 'vacant' or 'occupied' based on tenant_units table
+          const statusUpper = String(normalizedStatus).toUpperCase();
+          // Normalize status values
           if (statusUpper === 'VACANT' || statusUpper === 'AVAILABLE') {
             normalizedStatus = 'Vacant';
           } else if (statusUpper === 'OCCUPIED' || statusUpper === 'RENTED') {
             normalizedStatus = 'Occupied';
           } else if (statusUpper === 'DRAFT' || statusUpper === 'PENDING') {
             normalizedStatus = 'Draft';
+          } else if (statusUpper === 'MAINTENANCE') {
+            normalizedStatus = 'Maintenance';
           } else {
             // Capitalize first letter
-            normalizedStatus = normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1).toLowerCase();
+            normalizedStatus = String(normalizedStatus).charAt(0).toUpperCase() + String(normalizedStatus).slice(1).toLowerCase();
           }
         }
         
@@ -196,7 +199,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                 ...p,
                 vacantUnits: vacant,
                 occupiedUnits: occupied,
-                totalUnits: Math.max(p.totalUnits || 0, propertyUnits.length) // Ensure total is at least the count of units
+                totalUnits: propertyUnits.length // Total units = actual count of units added to this property
               };
             }
             return p;
@@ -215,7 +218,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
     sizeSqm: '',
     price: '',
     securityDeposit: '',
-    status: 'vacant',
+    status: 'draft', // New units default to Draft status
     description: '',
     floorNumber: '',
     parkingSpaces: 0,
@@ -311,11 +314,6 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             addressStr = parts.length > 0 ? parts.join(', ') : '—';
           }
           
-          // Use real unit counts from backend if available
-          const occupiedUnits = it.occupied_units || it.unit_counts?.occupied_units || 0;
-          const vacantUnits = it.vacant_units || it.unit_counts?.vacant_units || 0;
-          const totalUnits = it.total_units || it.unit_counts?.total_units || 0;
-          
           // Calculate average rent from monthly_rent or pricing object
           let averageRent = 0;
           if (it.pricing && it.pricing.monthly_rent) {
@@ -328,9 +326,9 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             id: it.id,
             name: it.building_name || it.title || `Property ${it.id}`,
             address: addressStr,
-            totalUnits: totalUnits,
-            occupiedUnits: occupiedUnits,
-            vacantUnits: vacantUnits,
+            totalUnits: 0, // Will be calculated from actual units
+            occupiedUnits: 0, // Will be calculated from actual units
+            vacantUnits: 0, // Will be calculated from actual units
             monthlyRevenue: 0, // Can be calculated from units if needed
             averageRent: averageRent,
             image: normalizeImageUrl(primaryImage),
@@ -338,14 +336,47 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             propertyManager: it.contact_person || it.manager_name || it.owner_name || ''
           };
         });
+        
+        // Fetch units for each property and calculate actual counts
+        const propertiesWithUnits = await Promise.all(
+          mapped.map(async (property) => {
+            try {
+              const unitsRes = await api.listUnits(property.id);
+              const units = Array.isArray(unitsRes?.units) ? unitsRes.units : [];
+              
+              // Calculate counts from actual units
+              const totalUnits = units.length;
+              const vacant = units.filter(u => {
+                const status = (u.status || '').toLowerCase();
+                return status === 'vacant' || status === 'available';
+              }).length;
+              const occupied = units.filter(u => {
+                const status = (u.status || '').toLowerCase();
+                return status === 'occupied' || status === 'rented';
+              }).length;
+              
+              return {
+                ...property,
+                totalUnits: totalUnits, // Use actual count of units
+                vacantUnits: vacant,
+                occupiedUnits: occupied
+              };
+            } catch (error) {
+              console.warn(`Failed to fetch units for property ${property.id}:`, error);
+              // Return property with zero counts if units fetch fails
+              return property;
+            }
+          })
+        );
+        
         if (isMounted) {
-          setProperties(mapped);
+          setProperties(propertiesWithUnits);
 
           // Auto-restore last selected property if exists
           const lastIdRaw = localStorage.getItem('pm_last_property_id');
           const lastId = lastIdRaw ? parseInt(lastIdRaw, 10) : null;
           if (lastId) {
-            const found = mapped.find(p => p.id === lastId);
+            const found = propertiesWithUnits.find(p => p.id === lastId);
             if (found) {
               setSelectedProperty(found);
               // Show cached immediately, then refresh
@@ -360,16 +391,16 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             }
           }
           // If nothing selected and exactly one property, auto-select
-          if (!lastId && mapped.length === 1) {
-            setSelectedProperty(mapped[0]);
-            const cached = loadCachedUnits(mapped[0].id);
+          if (!lastId && propertiesWithUnits.length === 1) {
+            setSelectedProperty(propertiesWithUnits[0]);
+            const cached = loadCachedUnits(propertiesWithUnits[0].id);
             if (cached.length > 0) {
               setListings(prev => {
-                const others = prev.filter(l => l.propertyId !== mapped[0].id);
+                const others = prev.filter(l => l.propertyId !== propertiesWithUnits[0].id);
                 return [...others, ...cached];
               });
             }
-            fetchUnitsForProperty(mapped[0]);
+            fetchUnitsForProperty(propertiesWithUnits[0]);
           }
         }
       } catch (e) {
@@ -498,8 +529,19 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
           continue;
         }
 
-        // Map actions to DB statuses; public endpoint shows only 'vacant' or 'available'
-        const status = action === 'publish' ? 'vacant' : 'maintenance';
+        // Map actions to DB statuses
+        // Publish: Change from Draft to Vacant (make it available for rent)
+        // Unpublish: Change to Draft (hide from public listings)
+        let status;
+        if (action === 'publish') {
+          // Publish: Change Draft to Vacant
+          status = 'vacant';
+        } else if (action === 'unpublish') {
+          // Unpublish: Change to Draft
+          status = 'draft';
+        } else {
+          status = 'maintenance';
+        }
 
         // Backend expects full payload for update; hydrate from current listing
         const listing = listings.find(l => l.id === id);
@@ -535,7 +577,15 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
         const r = results.find(x => x.id === listing.id);
         if (!r) return listing;
         if (r.type === 'deleted') return null;
-        if (r.type === 'updated') return { ...listing, status: r.status };
+        if (r.type === 'updated') {
+          // Normalize the status for display
+          let normalizedStatus = r.status;
+          if (r.status === 'vacant') normalizedStatus = 'Vacant';
+          else if (r.status === 'draft') normalizedStatus = 'Draft';
+          else if (r.status === 'occupied') normalizedStatus = 'Occupied';
+          else if (r.status === 'maintenance') normalizedStatus = 'Maintenance';
+          return { ...listing, status: normalizedStatus };
+        }
         return listing;
       })
       .filter(Boolean)
@@ -634,6 +684,17 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
       return;
     }
 
+    // Normalize status for display (capitalize first letter)
+    const normalizeStatusForDisplay = (status) => {
+      if (!status) return 'Draft';
+      const statusLower = String(status).toLowerCase();
+      if (statusLower === 'draft') return 'Draft';
+      if (statusLower === 'vacant') return 'Vacant';
+      if (statusLower === 'occupied') return 'Occupied';
+      if (statusLower === 'maintenance') return 'Maintenance';
+      return String(status).charAt(0).toUpperCase() + String(status).slice(1).toLowerCase();
+    };
+
     const newListing = {
       id: `L-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       propertyId: selectedProperty.id,
@@ -644,28 +705,43 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
       sizeSqm: Number(newSpace.sizeSqm) || 0,
       price: Number(newSpace.price) || 0,
       securityDeposit: Number(newSpace.securityDeposit) || 0,
-      status: newSpace.status,
+      status: normalizeStatusForDisplay(newSpace.status), // Normalize for display (Draft, Vacant, etc.)
       inquiriesCount: 0,
       updatedAt: Date.now(),
       propertyManager: selectedProperty.propertyManager || '',
       description: newSpace.description,
       floorNumber: newSpace.floorNumber,
       parkingSpaces: Number(newSpace.parkingSpaces) || 0,
-      balcony: newSpace.amenities.balcony,
-      furnished: newSpace.amenities.furnished,
-      airConditioning: newSpace.amenities.airConditioning,
-      wifi: newSpace.amenities.wifi,
-      security: newSpace.amenities.security,
+      amenities: {
+        balcony: newSpace.amenities.balcony,
+        furnished: newSpace.amenities.furnished,
+        airConditioning: newSpace.amenities.airConditioning,
+        wifi: newSpace.amenities.wifi,
+        security: newSpace.amenities.security
+      },
       images: newSpace.images
     };
 
+    // Add to state immediately for instant UI update
     setListings(prev => [...prev, newListing]);
     // Jump to first page so the newly added unit is visible immediately
     setPage(1);
-    // Persist to backend
+    
+    // Close modal immediately for better UX
+    setShowAddSpaceModal(false);
+    
+    // Reset form (status will be reset to 'draft' by default in useState)
+    // Note: Form reset happens above, this is just for clarity
+    
+    // Persist to backend and refresh
     (async () => {
       try {
         setSavingUnit(true);
+        
+        // Use the original status from newSpace (before normalization) to ensure 'draft' is preserved
+        // newSpace.status is 'draft' (lowercase), which is what we want to send to backend
+        const statusForBackend = String(newSpace.status || 'draft').toLowerCase();
+        
         const payload = {
           unitName: newListing.unitName,
           bedrooms: newListing.bedrooms,
@@ -673,85 +749,32 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
           sizeSqm: newListing.sizeSqm,
           monthlyRent: newListing.price,  // Backend expects monthlyRent, not price
           securityDeposit: newListing.securityDeposit,
-          status: newListing.status,
+          status: statusForBackend, // Backend expects lowercase: 'draft', 'vacant', etc.
           description: newListing.description,
           floorNumber: newListing.floorNumber,
           parkingSpaces: newListing.parkingSpaces,
-          balcony: newListing.balcony,
-          furnished: newListing.furnished,
-          airConditioning: newListing.airConditioning,
-          wifi: newListing.wifi,
-          security: newListing.security,
-          images: newListing.images
+          balcony: newListing.amenities?.balcony || false,
+          furnished: newListing.amenities?.furnished || false,
+          airConditioning: newListing.amenities?.airConditioning || false,
+          wifi: newListing.amenities?.wifi || false,
+          security: newListing.amenities?.security || false,
+          images: newListing.images || []
         };
-        const res = await api.createUnit(selectedProperty.id, payload);
-        if (res && res.item && res.item.id) {
-          // replace temp id with db id and update timestamps
-          setListings(prev => prev.map(l => l.id === newListing.id ? { ...l, id: `L-${res.item.id}`, updatedAt: res.item.updatedAt || Date.now() } : l));
-          // Hard refresh from server to ensure consistency
-          try {
-            const refresh = await api.listUnits(selectedProperty.id);
-            const refreshed = Array.isArray(refresh?.items) ? refresh.items : [];
-            const mappedFresh = refreshed.map((u) => ({
-              id: `L-${u.id}`,
-              propertyId: selectedProperty.id,
-              propertyName: selectedProperty.name,
-            propertyManager: selectedProperty.propertyManager || '',
-              unitName: u.unitName,
-              bedrooms: u.bedrooms,
-              bathrooms: u.bathrooms,
-              sizeSqm: u.sizeSqm,
-              price: u.price,
-              status: u.status,
-              inquiriesCount: u.inquiriesCount || 0,
-              updatedAt: u.updatedAt || Date.now(),
-              image: normalizeImageUrl(u.image || (u.images && u.images[0]))
-            }));
-            setListings(prev => {
-              const others = prev.filter(l => l.propertyId !== selectedProperty.id);
-              const merged = [...others, ...mappedFresh];
-              cacheUnits(selectedProperty.id, mappedFresh);
-              return merged;
-            });
-          } catch (e) {
-            console.warn('Refresh units failed', e);
-          }
-        }
+        
+        await api.createUnit(selectedProperty.id, payload);
+        
+        // Refresh from server to get complete data with proper mapping
+        // This will replace the temp listing with the real one from server
+        await fetchUnitsForProperty(selectedProperty);
+        
       } catch (e) {
-        console.warn('Failed to persist unit; keeping local only', e);
+        console.error('Failed to persist unit:', e);
+        alert('Unit was added locally but failed to save to server. Please refresh the page.');
+        // Keep the local listing even if save failed
       } finally {
         setSavingUnit(false);
       }
     })();
-    
-    // Update property counts after unit is added (will be recalculated after fetchUnitsForProperty refreshes)
-    // Note: We don't increment totalUnits here as it should match the property's registered total_units
-    setTimeout(() => {
-      updatePropertyCounts(selectedProperty.id);
-    }, 500);
-
-    // Reset form and close modal
-    setNewSpace({
-      unitName: '',
-      bedrooms: 1,
-      bathrooms: 1,
-      sizeSqm: '',
-      price: '',
-      status: 'Draft',
-      propertyManager: '',
-      description: '',
-      floorNumber: '',
-      parkingSpaces: 0,
-      amenities: {
-        balcony: false,
-        furnished: false,
-        airConditioning: false,
-        wifi: false,
-        security: false
-      },
-      images: []
-    });
-    setShowAddSpaceModal(false);
   };
 
   const handleInputChange = (field, value) => {
@@ -1340,7 +1363,24 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">No spaces available</h3>
               <p className="text-gray-600 mb-4">Get started by adding spaces to this property</p>
-              <button className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-colors">
+              <button 
+                onClick={() => {
+                  if (!selectedProperty || !selectedProperty.id) {
+                    alert('Please select a property first');
+                    return;
+                  }
+                  const currentUnitsForProperty = listings.filter(l => l.propertyId === selectedProperty.id);
+                  const currentUnitCount = currentUnitsForProperty.length;
+                  const maxUnits = selectedProperty.totalUnits || 0;
+                  
+                  if (maxUnits > 0 && currentUnitCount >= maxUnits) {
+                    alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);
+                    return;
+                  }
+                  setShowAddSpaceModal(true);
+                }}
+                className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-colors"
+              >
                 Add New Space
               </button>
             </div>
@@ -1600,10 +1640,12 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                           onChange={(e) => handleInputChange('status', e.target.value)}
                           className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200"
                         >
-                          <option value="vacant">Vacant</option>
+                          <option value="draft">Draft (Not Published)</option>
+                          <option value="vacant">Vacant (Published)</option>
                           <option value="occupied">Occupied</option>
                           <option value="maintenance">Maintenance</option>
                         </select>
+                        <p className="text-xs text-gray-500 mt-1">New units default to Draft. Use "Publish" bulk action to make them available for rent.</p>
                       </div>
                     </div>
 

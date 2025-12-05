@@ -4,6 +4,7 @@ from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
 from flask_mail import Mail
+from flasgger import Swagger
 from config.config import config
 import os
 
@@ -12,6 +13,7 @@ db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
 mail = Mail()
+swagger = Swagger()
 
 def create_app(config_name=None):
     """Application factory pattern."""
@@ -186,7 +188,41 @@ def create_app(config_name=None):
     app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
     app.register_blueprint(notification_bp, url_prefix='/api/notifications')
     app.register_blueprint(chat_bp, url_prefix='/api/chats')
-    
+
+    # Configure Swagger / OpenAPI documentation
+    # This is scoped to /api routes only and should not affect existing behavior.
+    swagger_template = {
+        "swagger": "2.0",
+        "info": {
+            "title": "JACS Property Management Sub-domain API",
+            "description": "Interactive API documentation for the sub-domain backend.\n\n"
+                           "Note: This documentation is generated automatically from the existing Flask routes "
+                           "and may not include every detail of request/response payloads.",
+            "version": "1.0.0",
+        },
+        "basePath": "/",
+        "schemes": ["http", "https"],
+    }
+
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": "apispec_subdomain",
+                "route": "/api/swagger.json",
+                # Limit to API routes only so other Flask endpoints are untouched
+                "rule_filter": lambda rule: rule.rule.startswith("/api/"),
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        # Swagger UI will be served at /api/docs/
+        "specs_route": "/api/docs/",
+    }
+
+    Swagger(app, template=swagger_template, config=swagger_config)
+
     # Create upload directories
     upload_dir = os.path.join(app.instance_path, app.config['UPLOAD_FOLDER'])
     os.makedirs(upload_dir, exist_ok=True)

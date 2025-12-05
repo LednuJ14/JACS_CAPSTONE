@@ -290,6 +290,41 @@ def approve_property(current_user, property_id):
         if property_result.status not in ['pending', 'pending_approval']:
             return handle_api_error(400, "Property is not pending approval")
         
+        # Check if all legal documents are approved
+        property_full_sql = text("""
+            SELECT legal_documents 
+            FROM properties 
+            WHERE id = :property_id
+        """)
+        
+        property_full = db.session.execute(property_full_sql, {'property_id': property_id}).fetchone()
+        
+        if property_full and property_full.legal_documents:
+            import json
+            try:
+                legal_docs = json.loads(property_full.legal_documents) if isinstance(property_full.legal_documents, str) else property_full.legal_documents
+                if isinstance(legal_docs, list) and len(legal_docs) > 0:
+                    # Check if all documents are approved
+                    pending_docs = []
+                    for doc in legal_docs:
+                        if isinstance(doc, dict):
+                            doc_status = doc.get('status', 'pending')
+                            if doc_status not in ['approved']:
+                                doc_type = doc.get('type', 'unknown')
+                                doc_name = doc.get('filename', doc.get('name', 'Unknown'))
+                                pending_docs.append({
+                                    'type': doc_type,
+                                    'name': doc_name,
+                                    'status': doc_status
+                                })
+                    
+                    if pending_docs:
+                        pending_list = '\n'.join([f"- {doc['name']} ({doc['type']}) - Status: {doc['status']}" for doc in pending_docs])
+                        return handle_api_error(400, f"Cannot approve property. The following legal documents must be approved first:\n\n{pending_list}\n\nPlease review and approve all documents in Document Management before approving the property.")
+            except Exception as doc_check_error:
+                current_app.logger.warning(f"Error checking document status: {str(doc_check_error)}")
+                # Continue with approval if document check fails (don't block approval due to parsing errors)
+        
         # Generate subdomain if not provided
         if not custom_subdomain:
             # Create subdomain from property title

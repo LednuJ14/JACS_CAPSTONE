@@ -108,47 +108,8 @@ def send_reset_email(user, reset_token):
         current_app.logger.error(f'Failed to send reset email: {e}')
         return False
 
-@password_reset_bp.route('/forgot-password', methods=['POST'])
-@limiter.limit("15 per minute")  # Limit to 15 requests per minute per IP
-def forgot_password():
-    """Request password reset."""
-    try:
-        data = request.get_json()
-        if not data or not data.get('email'):
-            return handle_api_error(400, "Email is required")
-        
-        email = data['email'].lower().strip()
-        
-        # Find user by email
-        user = User.query.filter_by(email=email).first()
-        
-        # Always return success to prevent email enumeration attacks
-        # But only send email if user exists
-        if user:
-            # Generate reset token
-            reset_token = generate_reset_token()
-            
-            # Set token and expiration (1 hour from now)
-            user.password_reset_token = reset_token
-            user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
-            
-            db.session.commit()
-            
-            # Send reset email
-            email_sent = send_reset_email(user, reset_token)
-            
-            if not email_sent:
-                current_app.logger.error(f'Failed to send reset email to {email}')
-                # Don't reveal the failure to the user for security
-        
-        return jsonify({
-            'message': 'If an account with that email exists, we have sent a password reset link.',
-            'success': True
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f'Forgot password error: {e}')
-        return handle_api_error(500, "Failed to process password reset request")
+# Note: /forgot-password route is now handled by auth_controller_v2.py
+# This route has been removed to avoid conflicts with the newer service-based implementation
 
 @password_reset_bp.route('/reset-password', methods=['POST'])
 @limiter.limit("10 per minute")  # Limit to 10 attempts per minute per IP

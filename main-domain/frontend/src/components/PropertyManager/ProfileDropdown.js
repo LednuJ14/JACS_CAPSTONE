@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import ApiService from '../../services/api';
+import defaultProfile from '../../assets/images/default_profile.png';
 import Inquiries from './Inquiries';
 import Settings from './Settings';
 import Profile from './Profile';
@@ -8,10 +10,100 @@ const ProfileDropdown = ({ onPageChange }) => {
   const [showInquiriesModal, setShowInquiriesModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const dropdownRef = useRef(null);
+  const [profileData, setProfileData] = useState({
+    firstName: '',
+    lastName: '',
+    profileImageUrl: defaultProfile
+  });
+
+  // Fetch profile data
+  const fetchProfile = async () => {
+    try {
+      const data = await ApiService.getManagerProfile();
+      const p = data?.profile?.personalInfo || data?.personalInfo || {};
+      if (p && (p.name || p.email)) {
+        // Parse name into first and last name
+        const fullName = p.name || '';
+        const nameParts = fullName.split(' ', 2);
+        setProfileData({
+          firstName: nameParts[0] || '',
+          lastName: nameParts[1] || '',
+          profileImageUrl: p.avatar || p.profile_image_url || defaultProfile
+        });
+        
+        // If no avatar in profile, try to get from /auth/me
+        if (!p.avatar && !p.profile_image_url) {
+          try {
+            const meData = await ApiService.me();
+            const profileImageUrl = meData?.user?.profile_image_url || defaultProfile;
+            setProfileData(prev => ({
+              ...prev,
+              profileImageUrl
+            }));
+          } catch (e) {
+            console.error('Failed to fetch profile image from /auth/me:', e);
+          }
+        }
+        return;
+      }
+    } catch (error) {
+      console.error('Profile fetch error:', error);
+    }
+
+    // Fallback: use /auth/me for basic user info
+    try {
+      const me = await ApiService.me();
+      const u = me?.user || {};
+      const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim();
+      const nameParts = fullName.split(' ', 2);
+      setProfileData({
+        firstName: nameParts[0] || '',
+        lastName: nameParts[1] || '',
+        profileImageUrl: u.profile_image_url || defaultProfile
+      });
+    } catch (e) {
+      console.error('Fallback profile fetch error:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfile();
+
+    // Listen for profile update events
+    const handleProfileUpdate = () => {
+      fetchProfile();
+    };
+
+    window.addEventListener('profile-updated', handleProfileUpdate);
+    window.addEventListener('notification-refresh', handleProfileUpdate);
+
+    return () => {
+      window.removeEventListener('profile-updated', handleProfileUpdate);
+      window.removeEventListener('notification-refresh', handleProfileUpdate);
+    };
+  }, []);
 
   const toggleDropdown = () => {
     setIsOpen(!isOpen);
   };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
 
   const handleOptionClick = (option) => {
     if (option === 'inquiries') {
@@ -27,14 +119,17 @@ const ProfileDropdown = ({ onPageChange }) => {
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={dropdownRef}>
       <button
         onClick={toggleDropdown}
-        className="w-10 h-10 bg-gray-400 rounded-full flex items-center justify-center hover:bg-gray-500 transition-colors"
+        className="w-10 h-10 rounded-full overflow-hidden border-2 border-white hover:border-gray-300 transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black"
       >
-        <svg className="w-6 h-6 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-        </svg>
+        <img
+          src={profileData.profileImageUrl || defaultProfile}
+          alt={`${profileData.firstName} ${profileData.lastName}`.trim() || 'Profile'}
+          className="w-full h-full object-cover"
+          onError={(e) => { e.target.src = defaultProfile; }}
+        />
       </button>
 
       {isOpen && (

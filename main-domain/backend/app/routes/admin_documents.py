@@ -162,12 +162,30 @@ def update_document_status(current_user, document_id):
             return handle_api_error(400, 'Invalid status')
         
         # Parse document_id to get property_id and document_type
-        parts = document_id.split('_', 1)
-        if len(parts) != 2:
-            return handle_api_error(400, 'Invalid document ID')
+        # Format: main_{property_id}_{document_type}
+        # Example: main_11_legal_document
+        if not document_id.startswith('main_'):
+            return handle_api_error(400, 'Invalid document ID format. Expected format: main_{property_id}_{document_type}')
         
-        property_id = parts[0]
-        doc_type = parts[1]
+        # Remove 'main_' prefix
+        doc_id_without_prefix = document_id.replace('main_', '', 1)
+        
+        # Split by underscore - first part is property_id, rest is document_type
+        parts = doc_id_without_prefix.split('_')
+        if len(parts) < 2:
+            current_app.logger.error(f"Invalid document ID format: {document_id}, parts after removing prefix: {parts}")
+            return handle_api_error(400, 'Invalid document ID format')
+        
+        try:
+            property_id = int(parts[0])  # Convert to int for database query
+        except ValueError:
+            current_app.logger.error(f"Invalid property_id in document ID: {document_id}, property_id: {parts[0]}")
+            return handle_api_error(400, 'Invalid property ID in document ID')
+        
+        # Join the rest as document_type (may contain underscores)
+        doc_type = '_'.join(parts[1:])
+        
+        current_app.logger.info(f"Parsed document ID: {document_id} -> property_id: {property_id}, doc_type: {doc_type}")
         
         # Get current property data
         query_sql = text("""
@@ -179,6 +197,7 @@ def update_document_status(current_user, document_id):
         result = db.session.execute(query_sql, {'property_id': property_id}).fetchone()
         
         if not result:
+            current_app.logger.error(f"Property not found: {property_id}")
             return handle_api_error(404, 'Property not found')
         
         # Update document status in legal_documents JSON
@@ -282,24 +301,43 @@ def download_document(current_user, document_id):
             # Extract subdomain document ID
             subdomain_doc_id = document_id.replace('subdomain_', '')
             
+            # Validate document ID is numeric
+            try:
+                int(subdomain_doc_id)
+            except ValueError:
+                current_app.logger.error(f'Invalid subdomain document ID format: {subdomain_doc_id}')
+                return handle_api_error(400, 'Invalid subdomain document ID format')
+            
             # Fetch document from subdomain
             try:
                 subdomain_api_url = os.environ.get('SUBDOMAIN_API_URL', 'http://localhost:5001/api')
                 subdomain_download_url = f"{subdomain_api_url}/documents/{subdomain_doc_id}/download"
+                
+                current_app.logger.info(f'Attempting to download subdomain document from: {subdomain_download_url}')
                 
                 # Optional: Add API key if configured
                 headers = {}
                 api_key = os.environ.get('CROSS_DOMAIN_API_KEY')
                 if api_key:
                     headers['X-API-Key'] = api_key
+                    current_app.logger.info('Using API key for subdomain access')
                 
                 # Download from subdomain (endpoint allows access without JWT for main domain)
-                response = requests.get(subdomain_download_url, headers=headers, timeout=30, stream=True, allow_redirects=True)
+                response = requests.get(
+                    subdomain_download_url, 
+                    headers=headers, 
+                    timeout=30, 
+                    stream=True, 
+                    allow_redirects=True
+                )
+                
+                current_app.logger.info(f'Subdomain download response status: {response.status_code}')
                 
                 if response.status_code == 200:
                     # Stream the file back to the client
                     from flask import Response
                     filename = response.headers.get('Content-Disposition', '').split('filename=')[-1].strip('"') or 'document'
+                    current_app.logger.info(f'Successfully downloading subdomain document: {filename}')
                     return Response(
                         response.iter_content(chunk_size=8192),
                         mimetype=response.headers.get('Content-Type', 'application/octet-stream'),
@@ -308,13 +346,28 @@ def download_document(current_user, document_id):
                         }
                     )
                 else:
-                    current_app.logger.error(f'Subdomain download failed: {response.status_code}')
-                    return handle_api_error(response.status_code, 'Failed to download document from subdomain')
+                    error_text = response.text[:500] if hasattr(response, 'text') else 'No error details'
+                    current_app.logger.error(f'Subdomain download failed: {response.status_code}, Error: {error_text}')
+                    
+                    # Try to parse error message
+                    try:
+                        error_data = response.json()
+                        error_message = error_data.get('error', 'Failed to download document from subdomain')
+                    except:
+                        error_message = f'Failed to download document from subdomain (Status: {response.status_code})'
+                    
+                    return handle_api_error(response.status_code, error_message)
+            except requests.exceptions.ConnectionError as conn_error:
+                current_app.logger.error(f'Connection error to subdomain server: {conn_error}')
+                return handle_api_error(503, 'Subdomain server is not available. Please ensure the subdomain server is running.')
+            except requests.exceptions.Timeout as timeout_error:
+                current_app.logger.error(f'Timeout error connecting to subdomain server: {timeout_error}')
+                return handle_api_error(504, 'Subdomain server request timed out. Please try again later.')
             except Exception as subdomain_error:
                 current_app.logger.error(f'Error downloading from subdomain: {subdomain_error}')
                 import traceback
                 current_app.logger.error(traceback.format_exc())
-                return handle_api_error(500, 'Failed to download document from subdomain')
+                return handle_api_error(500, f'Failed to download document from subdomain: {str(subdomain_error)}')
         
         # Main domain document download (existing logic)
         # Parse document_id to get property_id and document_type

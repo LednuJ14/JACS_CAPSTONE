@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ApiService from '../../services/api';
 
 const AdminPropertyReview = () => {
-  const [activeTab, setActiveTab] = useState('pending'); // Default to pending tab
+  const [activeTab, setActiveTab] = useState('all'); // Default to all properties tab
   const [selectedProperty, setSelectedProperty] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [approving, setApproving] = useState({});
   // const [refreshKey] = useState(0); // Removed unused variable
+  const [propertyDocumentsStatus, setPropertyDocumentsStatus] = useState({}); // Track document statuses per property
 
   const [properties, setProperties] = useState([]);
 
@@ -129,6 +130,40 @@ const AdminPropertyReview = () => {
     
     try {
       if (newStatus === 'approved') {
+        // Check if all legal documents are approved before allowing property approval
+        const property = properties.find(p => p.id === propertyId);
+        if (property && property.documents && property.documents.length > 0) {
+          // Check document statuses - need to fetch from Document Management API
+          try {
+            const documentsResponse = await ApiService.adminDocuments();
+            const allDocuments = documentsResponse.documents || [];
+            
+            // Filter documents for this property
+            const propertyDocuments = allDocuments.filter(doc => 
+              doc.property_id === propertyId && doc.source !== 'subdomain'
+            );
+            
+            // Check if any document is not approved
+            const pendingDocuments = propertyDocuments.filter(doc => 
+              doc.status !== 'approved' && doc.status !== 'rejected'
+            );
+            
+            if (pendingDocuments.length > 0) {
+              const pendingList = pendingDocuments.map(doc => 
+                `- ${doc.file_name || doc.fileName || 'Unknown'} (${doc.document_type || 'Document'})`
+              ).join('\n');
+              
+              alert(`❌ Cannot approve property!\n\nPlease approve all legal documents first:\n\n${pendingList}\n\nGo to Document Management to review and approve documents.`);
+              setApproving(prev => ({ ...prev, [propertyId]: false }));
+              return;
+            }
+          } catch (docError) {
+            console.error('Error checking document status:', docError);
+            // Continue with approval attempt if document check fails
+            // Backend will also validate this
+          }
+        }
+        
         const data = await ApiService.approveProperty(propertyId, {
           notes: adminNotes || 'Approved and portal enabled'
         });
@@ -152,7 +187,15 @@ const AdminPropertyReview = () => {
       }
     } catch (error) {
       console.error('Status change error:', error);
-      alert('❌ Network error during status change');
+      
+      // Check if error is about pending documents
+      if (error.message && error.message.includes('legal documents must be approved')) {
+        alert(`❌ ${error.message}`);
+      } else if (error.message && error.message.includes('Cannot approve property')) {
+        alert(`❌ ${error.message}`);
+      } else {
+        alert(`❌ ${error.message || 'Network error during status change'}`);
+      }
     } finally {
       setApproving(prev => ({ ...prev, [propertyId]: false }));
     }
@@ -309,6 +352,24 @@ const AdminPropertyReview = () => {
           <div className="bg-black px-6 py-2">
             <nav className="flex space-x-8">
               <button
+                onClick={() => setActiveTab('all')}
+                className={`py-4 px-1 border-b-2 font-semibold text-sm transition-all duration-200 ${
+                  activeTab === 'all'
+                    ? 'border-white text-white'
+                    : 'border-transparent text-gray-400 hover:text-white hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full ${activeTab === 'all' ? 'bg-white' : 'bg-gray-400'}`}></div>
+                  <span>All Properties</span>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    activeTab === 'all' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
+                  }`}>
+                    {properties.length}
+                  </span>
+                </div>
+              </button>
+              <button
                 onClick={() => setActiveTab('pending')}
                 className={`py-4 px-1 border-b-2 font-semibold text-sm transition-all duration-200 ${
                   activeTab === 'pending'
@@ -359,24 +420,6 @@ const AdminPropertyReview = () => {
                     activeTab === 'rejected' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
                   }`}>
                     {properties.filter(p => p.status === 'rejected').length}
-                  </span>
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('all')}
-                className={`py-4 px-1 border-b-2 font-semibold text-sm transition-all duration-200 ${
-                  activeTab === 'all'
-                    ? 'border-white text-white'
-                    : 'border-transparent text-gray-400 hover:text-white hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <div className={`w-2 h-2 rounded-full ${activeTab === 'all' ? 'bg-white' : 'bg-gray-400'}`}></div>
-                  <span>All Properties</span>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    activeTab === 'all' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
-                  }`}>
-                    {properties.length}
                   </span>
                 </div>
               </button>
@@ -476,8 +519,8 @@ const AdminPropertyReview = () => {
                 </div>
 
                 {/* Action Buttons */}
-                {(property.status === 'pending' || property.status === 'pending_approval') && (
-                  <div className="mt-6">
+                <div className="mt-6">
+                  {(property.status === 'pending' || property.status === 'pending_approval') ? (
                     <button
                       onClick={() => {
                         console.log('Opening modal for property:', property.id, property.name);
@@ -501,16 +544,34 @@ const AdminPropertyReview = () => {
                         </div>
                       )}
                     </button>
-                  </div>
-                )}
-
-                {property.status !== 'pending' && property.status !== 'pending_approval' && (
-                  <div className="mt-6 p-4 bg-black rounded-xl border border-gray-200">
-                    <p className="text-sm text-white">
-                      <span className="font-medium">Admin Notes:</span> {property.notes}
-                    </p>
-                  </div>
-                )}
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          console.log('Opening modal for property:', property.id, property.name);
+                          setSelectedProperty(property);
+                          setShowModal(true);
+                        }}
+                        className="w-full bg-gray-700 text-white px-4 py-3 rounded-xl hover:bg-gray-600 transition-all duration-200 font-medium shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                      >
+                        <div className="flex items-center justify-center">
+                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          View Details
+                        </div>
+                      </button>
+                      {property.notes && (
+                        <div className="mt-3 p-3 bg-gray-100 rounded-xl border border-gray-200">
+                          <p className="text-sm text-gray-700">
+                            <span className="font-medium">Admin Notes:</span> {property.notes}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -716,20 +777,95 @@ const AdminPropertyReview = () => {
               {/* Legal Documents */}
               <div className="mb-8">
                 <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
-                    <svg className="w-5 h-5 mr-2 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Legal Documents
-                  </h3>
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <svg className="w-5 h-5 mr-2 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Legal Documents
+                    </h3>
+                    {(() => {
+                      const propertyDocs = propertyDocumentsStatus[selectedProperty.id] || [];
+                      const pendingDocs = propertyDocs.filter(doc => doc.status !== 'approved' && doc.status !== 'rejected');
+                      if (pendingDocs.length > 0 && (selectedProperty.status === 'pending' || selectedProperty.status === 'pending_approval')) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2">
+                            <p className="text-sm font-medium text-yellow-800">
+                              ⚠️ {pendingDocs.length} document{pendingDocs.length > 1 ? 's' : ''} pending approval
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {selectedProperty.documents && selectedProperty.documents.length > 0 ? (
-                      selectedProperty.documents.map((doc, index) => {
-                        // Handle both string and object document formats
+                    {(() => {
+                      const propertyDocs = propertyDocumentsStatus[selectedProperty.id] || [];
+                      const hasDocuments = propertyDocs.length > 0 || (selectedProperty.documents && selectedProperty.documents.length > 0);
+                      
+                      if (!hasDocuments) {
+                        return (
+                          <div className="col-span-full text-center py-8">
+                            <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <p className="text-sm text-gray-500">No legal documents uploaded</p>
+                          </div>
+                        );
+                      }
+                      
+                      // Use fetched document statuses if available, otherwise fall back to property documents
+                      if (propertyDocs.length > 0) {
+                        return propertyDocs.map((doc, index) => {
+                          const docName = doc.file_name || doc.fileName || `Document ${index + 1}`;
+                          const docType = doc.document_type || doc.documentType || 'Document';
+                          const docStatus = doc.status || 'pending';
+                          const isPending = docStatus !== 'approved' && docStatus !== 'rejected';
+                          
+                          return (
+                            <div key={index} className={`flex items-center p-4 border rounded-lg transition-colors ${
+                              isPending ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200 hover:bg-gray-50'
+                            }`}>
+                              <div className="flex-shrink-0">
+                                <svg className={`w-8 h-8 ${isPending ? 'text-yellow-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              </div>
+                              <div className="ml-3 flex-1">
+                                <p className="text-sm font-medium text-gray-900">{docName}</p>
+                                <p className="text-xs text-gray-500">{docType}</p>
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
+                                  docStatus === 'approved' ? 'bg-green-100 text-green-800' :
+                                  docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
+                                  'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {docStatus === 'approved' ? '✓ Approved' :
+                                   docStatus === 'rejected' ? '✗ Rejected' :
+                                   '⏳ Pending Review'}
+                                </span>
+                              </div>
+                              <div className="flex-shrink-0">
+                                {docStatus === 'approved' ? (
+                                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                ) : (
+                                  <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        });
+                      }
+                      
+                      // Fallback to property documents if document statuses not loaded
+                      return selectedProperty.documents.map((doc, index) => {
                         const docName = typeof doc === 'string' ? doc : (doc.filename || doc.name || `Document ${index + 1}`);
                         const docType = typeof doc === 'object' ? (doc.type || 'Document') : 'Document';
-                        const docSize = typeof doc === 'object' ? (doc.size ? `${Math.round(doc.size / 1024)}KB` : '') : '';
-                        const docStatus = typeof doc === 'object' ? (doc.status || 'Uploaded') : 'Uploaded';
+                        const docStatus = typeof doc === 'object' ? (doc.status || 'pending') : 'pending';
                         
                         return (
                           <div key={index} className="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
@@ -740,33 +876,21 @@ const AdminPropertyReview = () => {
                             </div>
                             <div className="ml-3 flex-1">
                               <p className="text-sm font-medium text-gray-900">{docName}</p>
-                              <p className="text-xs text-gray-500">{docType} {docSize && `• ${docSize}`}</p>
-                              {docStatus && (
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  docStatus === 'Uploaded' ? 'bg-green-100 text-green-800' :
-                                  docStatus === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {docStatus}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex-shrink-0">
-                              <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
+                              <p className="text-xs text-gray-500">{docType}</p>
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
+                                docStatus === 'approved' ? 'bg-green-100 text-green-800' :
+                                docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
+                                'bg-yellow-100 text-yellow-800'
+                              }`}>
+                                {docStatus === 'approved' ? '✓ Approved' :
+                                 docStatus === 'rejected' ? '✗ Rejected' :
+                                 '⏳ Pending Review'}
+                              </span>
                             </div>
                           </div>
                         );
-                      })
-                    ) : (
-                      <div className="col-span-full text-center py-8">
-                        <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <p className="text-sm text-gray-500">No legal documents uploaded</p>
-                      </div>
-                    )}
+                      });
+                    })()}
                   </div>
                 </div>
               </div>
@@ -793,69 +917,177 @@ const AdminPropertyReview = () => {
                     <svg className="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                     </svg>
-                    Admin Decision
+                    {(selectedProperty.status === 'pending' || selectedProperty.status === 'pending_approval') ? 'Admin Decision' : 'Admin Notes'}
                   </h3>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Review Notes</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {(selectedProperty.status === 'pending' || selectedProperty.status === 'pending_approval') ? 'Review Notes' : 'Admin Notes'}
+                      </label>
                       <textarea
+                        id="admin-notes-textarea"
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                         rows="4"
-                        placeholder="Add your review notes, feedback, or requirements here..."
+                        placeholder={selectedProperty.notes || "Add your review notes, feedback, or requirements here..."}
+                        defaultValue={selectedProperty.notes || ''}
                       ></textarea>
                     </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <h4 className="font-semibold text-blue-800 mb-2">What happens when you approve:</h4>
-                      <ul className="text-sm text-blue-700 space-y-1">
-                        <li>• Property status changes to ACTIVE</li>
-                        <li>• Property manager can set their subdomain</li>
-                        <li>• Property manager can customize the portal</li>
-                        <li>• Tenants can access property-specific portal</li>
-                        <li>• Default features enabled: login, inquiries, gallery</li>
-                      </ul>
-                    </div>
+                    {(selectedProperty.status === 'pending' || selectedProperty.status === 'pending_approval') && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <h4 className="font-semibold text-blue-800 mb-2">What happens when you approve:</h4>
+                        <ul className="text-sm text-blue-700 space-y-1">
+                          <li>• Property status changes to ACTIVE</li>
+                          <li>• Property manager can set their subdomain</li>
+                          <li>• Property manager can customize the portal</li>
+                          <li>• Tenants can access property-specific portal</li>
+                          <li>• Default features enabled: login, inquiries, gallery</li>
+                        </ul>
+                      </div>
+                    )}
+                    {(selectedProperty.status === 'approved' || selectedProperty.status === 'active') && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <h4 className="font-semibold text-green-800 mb-2">Property Status: Approved</h4>
+                        <ul className="text-sm text-green-700 space-y-1">
+                          <li>• Property is currently active and visible to tenants</li>
+                          <li>• Property manager has access to portal management</li>
+                          <li>• You can change status to rejected if needed</li>
+                        </ul>
+                      </div>
+                    )}
+                    {selectedProperty.status === 'rejected' && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <h4 className="font-semibold text-red-800 mb-2">Property Status: Rejected</h4>
+                        <ul className="text-sm text-red-700 space-y-1">
+                          <li>• Property is currently rejected and not visible to tenants</li>
+                          <li>• Property manager can resubmit after making changes</li>
+                          <li>• You can change status to approved if needed</li>
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => {
-                    const adminNotes = document.querySelector('textarea').value || 'Rejected after review';
-                    handleStatusChange(selectedProperty.id, 'rejected', adminNotes);
-                  }}
-                  className="flex-1 bg-red-600 text-white px-6 py-4 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center"
-                  disabled={approving[selectedProperty.id]}
-                >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                  Reject Property
-                </button>
-                <button
-                  onClick={() => {
-                    const adminNotes = document.querySelector('textarea').value || 'Approved and portal enabled';
-                    handleStatusChange(selectedProperty.id, 'approved', adminNotes);
-                  }}
-                  className="flex-1 bg-green-600 text-white px-6 py-4 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center"
-                  disabled={approving[selectedProperty.id]}
-                >
-                  {approving[selectedProperty.id] ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Approve Property
-                    </>
-                  )}
-                </button>
-              </div>
+              {(selectedProperty.status === 'pending' || selectedProperty.status === 'pending_approval') ? (
+                <div className="flex space-x-4">
+                  <button
+                    onClick={() => {
+                      const adminNotes = document.querySelector('#admin-notes-textarea')?.value || 'Rejected after review';
+                      handleStatusChange(selectedProperty.id, 'rejected', adminNotes);
+                    }}
+                    className="flex-1 bg-red-600 text-white px-6 py-4 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center"
+                    disabled={approving[selectedProperty.id]}
+                  >
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Reject Property
+                  </button>
+                  {(() => {
+                    const propertyDocs = propertyDocumentsStatus[selectedProperty.id] || [];
+                    const pendingDocs = propertyDocs.filter(doc => doc.status !== 'approved' && doc.status !== 'rejected');
+                    const hasPendingDocs = pendingDocs.length > 0;
+                    
+                    return (
+                      <button
+                        onClick={() => {
+                          const adminNotes = document.querySelector('#admin-notes-textarea')?.value || 'Approved and portal enabled';
+                          handleStatusChange(selectedProperty.id, 'approved', adminNotes);
+                        }}
+                        className={`flex-1 px-6 py-4 rounded-lg transition-colors font-medium flex items-center justify-center ${
+                          hasPendingDocs
+                            ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                            : 'bg-green-600 text-white hover:bg-green-700'
+                        }`}
+                        disabled={approving[selectedProperty.id] || hasPendingDocs}
+                        title={hasPendingDocs ? 'Please approve all legal documents first' : 'Approve property'}
+                      >
+                        {approving[selectedProperty.id] ? (
+                          <>
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                            Processing...
+                          </>
+                        ) : hasPendingDocs ? (
+                          <>
+                            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                            </svg>
+                            Approve Property (Documents Pending)
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Approve Property
+                          </>
+                        )}
+                      </button>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="flex space-x-4">
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="flex-1 bg-gray-600 text-white px-6 py-4 rounded-lg hover:bg-gray-700 transition-colors font-medium flex items-center justify-center"
+                  >
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Close
+                  </button>
+                  {/* Allow status change for approved/rejected properties */}
+                  {selectedProperty.status === 'approved' || selectedProperty.status === 'active' ? (
+                    <button
+                      onClick={() => {
+                        const adminNotes = document.querySelector('#admin-notes-textarea')?.value || 'Status changed to rejected';
+                        handleStatusChange(selectedProperty.id, 'rejected', adminNotes);
+                      }}
+                      className="flex-1 bg-red-600 text-white px-6 py-4 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center"
+                      disabled={approving[selectedProperty.id]}
+                    >
+                      {approving[selectedProperty.id] ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          Change to Rejected
+                        </>
+                      )}
+                    </button>
+                  ) : selectedProperty.status === 'rejected' ? (
+                    <button
+                      onClick={() => {
+                        const adminNotes = document.querySelector('#admin-notes-textarea')?.value || 'Status changed to approved';
+                        handleStatusChange(selectedProperty.id, 'approved', adminNotes);
+                      }}
+                      className="flex-1 bg-green-600 text-white px-6 py-4 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center"
+                      disabled={approving[selectedProperty.id]}
+                    >
+                      {approving[selectedProperty.id] ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Change to Approved
+                        </>
+                      )}
+                    </button>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
         </div>

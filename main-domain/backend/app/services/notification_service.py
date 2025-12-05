@@ -371,20 +371,23 @@ class NotificationService:
         )
     
     @staticmethod
-    def notify_payment_verified(manager_id, transaction_id, status, amount=None):
+    def notify_payment_verified(manager_id, transaction_id, status, amount=None, plan_name=None):
         """Notify property manager when admin verifies their payment transaction."""
         amount_text = f" (₱{amount:,.2f})" if amount else ""
+        plan_text = f" for {plan_name} plan" if plan_name else ""
         status_messages = {
-            "Verified": f"Your payment{amount_text} has been verified and your subscription has been activated.",
-            "Rejected": f"Your payment{amount_text} has been rejected. Please contact support.",
-            "Pending": f"Your payment{amount_text} is still pending verification."
+            "Verified": f"Your payment{amount_text}{plan_text} has been verified and your subscription is now active. You can now enjoy all the features of your selected plan!",
+            "Rejected": f"Your payment{amount_text}{plan_text} has been rejected. Please contact support or upload a new proof of payment.",
+            "Pending": f"Your payment{amount_text}{plan_text} is still pending verification."
         }
-        message = status_messages.get(status, f"Your payment{amount_text} status has been updated to {status}.")
+        message = status_messages.get(status, f"Your payment{amount_text}{plan_text} status has been updated to {status}.")
+        
+        title = "Payment Verified - Subscription Activated" if status == "Verified" else "Payment Verification Update"
         
         return NotificationService.create_notification(
             user_id=manager_id,
             notification_type=NotificationType.PAYMENT_VERIFIED,
-            title="Payment Verification Update",
+            title=title,
             message=message,
             related_id=transaction_id,
             related_type="payment_transaction"

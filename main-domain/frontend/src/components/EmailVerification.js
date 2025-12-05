@@ -6,6 +6,8 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
   const [isResending, setIsResending] = useState(false);
   const [email, setEmail] = useState('');
   const [token, setToken] = useState('');
+  const [isOriginalBrowser, setIsOriginalBrowser] = useState(false);
+  const [broadcastChannel, setBroadcastChannel] = useState(null);
 
   useEffect(() => {
     // Get email and token from URL parameters
@@ -16,12 +18,56 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
     if (emailParam && tokenParam) {
       setEmail(emailParam);
       setToken(tokenParam);
-      verifyEmail(emailParam, tokenParam);
+      
+      // Check if this is the original browser where signup happened
+      const pendingSession = localStorage.getItem('pending_verification_session');
+      const pendingEmail = localStorage.getItem('pending_verification_email');
+      
+      if (pendingSession && pendingEmail === emailParam) {
+        // This is the original browser - proceed with verification
+        setIsOriginalBrowser(true);
+        verifyEmail(emailParam, tokenParam);
+      } else {
+        // This is a different browser - verify here and also notify original browser
+        setIsOriginalBrowser(false);
+        setVerificationStatus('loading');
+        attemptCrossBrowserVerification(emailParam, tokenParam);
+      }
     } else {
       setVerificationStatus('error');
       setMessage('Invalid verification link. Please check your email for the correct link.');
     }
+
+    // Cleanup broadcast channel on unmount
+    return () => {
+      if (broadcastChannel) {
+        broadcastChannel.close();
+      }
+    };
   }, []);
+
+  const attemptCrossBrowserVerification = async (emailAddress, verificationToken) => {
+    // Create a BroadcastChannel to communicate with the original browser
+    const channel = new BroadcastChannel('jacs_verification');
+    setBroadcastChannel(channel);
+    
+    // Send verification data to original browser (if it's open in same browser)
+    channel.postMessage({
+      type: 'VERIFY_EMAIL',
+      email: emailAddress,
+      token: verificationToken
+    });
+
+    // Verify the email in this browser (Browser B)
+    await verifyEmail(emailAddress, verificationToken);
+    
+    // Close channel after sending
+    setTimeout(() => {
+      if (channel) {
+        channel.close();
+      }
+    }, 2000);
+  };
 
   const verifyEmail = async (emailAddress, verificationToken) => {
     try {
@@ -42,12 +88,42 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
         setVerificationStatus('success');
         setMessage(data.message || 'Email verified successfully!');
         
-        // Call the completion callback after a short delay
-        setTimeout(() => {
-          if (onVerificationComplete) {
-            onVerificationComplete(data.user);
-          }
-        }, 2000);
+        // Clear verification session
+        localStorage.removeItem('pending_verification_session');
+        localStorage.removeItem('pending_verification_email');
+        
+        // Clear any existing session data to prevent logging in to wrong account
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('token'); // Legacy token key
+        localStorage.removeItem('user_role');
+        localStorage.removeItem('user_id');
+        
+        // Store user data for auto-login (only the verified user)
+        if (data.user) {
+          localStorage.setItem('user_role', data.user.role || 'tenant');
+          localStorage.setItem('user_id', data.user.id.toString());
+        }
+        
+        // Only auto-redirect if this is the original browser
+        if (isOriginalBrowser) {
+          // Call the completion callback after a short delay to auto-redirect
+          setTimeout(() => {
+            // Clear URL parameters for a clean redirect
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+            
+            if (onVerificationComplete) {
+              onVerificationComplete(data.user);
+            } else {
+              // If no callback, redirect to dashboard
+              window.location.href = '/';
+            }
+          }, 2000);
+        }
+        // If it's a different browser, just show the success message
+        // The original browser will detect verification via polling
       } else {
         setVerificationStatus('error');
         setMessage(data.error || 'Email verification failed. Please try again.');
@@ -111,7 +187,24 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
             </div>
             <h2 className="text-2xl font-bold text-black mb-2">Email Verified!</h2>
             <p className="text-gray-600 mb-4">{message}</p>
-            <p className="text-sm text-gray-500">You will be redirected to the dashboard shortly...</p>
+            {isOriginalBrowser ? (
+              <p className="text-sm text-gray-500">You will be redirected to the dashboard shortly...</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-800 font-medium mb-2">
+                    ✅ Verification Complete!
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    Please return to the browser where you signed up. 
+                    The page will automatically refresh and redirect you to the dashboard.
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500">
+                  You can close this tab and go back to your original browser.
+                </p>
+              </div>
+            )}
           </div>
         );
 

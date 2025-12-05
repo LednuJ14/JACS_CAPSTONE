@@ -518,11 +518,21 @@ def verify_payment_transaction(current_user, pt_id):
         try:
             from app.services.notification_service import NotificationService
             if user_id:
+                # Get plan name for notification
+                plan_name = None
+                if status == 'Verified':
+                    plan_row = db.session.execute(
+                        text("SELECT name FROM subscription_plans WHERE id = (SELECT plan_id FROM payment_transactions WHERE id = :pt_id)"),
+                        {'pt_id': pt_id}
+                    ).fetchone()
+                    plan_name = plan_row[0] if plan_row else None
+                
                 NotificationService.notify_payment_verified(
                     manager_id=user_id,
                     transaction_id=pt_id,
                     status=status,
-                    amount=amount
+                    amount=amount,
+                    plan_name=plan_name
                 )
         except Exception as notif_error:
             current_app.logger.error(f"Failed to send payment verification notification: {str(notif_error)}")

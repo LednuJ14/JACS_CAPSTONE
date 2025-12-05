@@ -79,6 +79,11 @@ class AuthServiceV2:
                 raise AuthValidationError('Invalid date format', {'message': 'Date of birth must be in YYYY-MM-DD format'})
 
         user.status = UserStatus.PENDING_VERIFICATION
+        
+        # Generate verification token BEFORE creating user (for tenants and managers)
+        if role in [UserRole.TENANT, UserRole.MANAGER]:
+            user.generate_email_verification_token()
+        
         self.users.create(user)
         self.users.flush()  # obtain user.id
 
@@ -103,6 +108,7 @@ class AuthServiceV2:
         # Send verification email for tenants and managers
         if role in [UserRole.TENANT, UserRole.MANAGER]:
             try:
+                # Token is already generated, just send the email
                 self.send_verification_email(user)
             except Exception as e:
                 current_app.logger.error(f"Failed to send verification email to {user.email if user else 'unknown'}: {e}")
@@ -282,9 +288,12 @@ class AuthServiceV2:
         if user.email_verified:
             raise AuthValidationError('Email already verified')
         
-        # Generate verification token
-        token = user.generate_email_verification_token()
-        db.session.commit()
+        # Generate verification token if it doesn't exist
+        if not user.email_verification_token:
+            token = user.generate_email_verification_token()
+            db.session.commit()
+        else:
+            token = user.email_verification_token
         
         # Create verification URL
         frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
@@ -340,15 +349,34 @@ class AuthServiceV2:
         if not ok:
             raise AuthValidationError('Missing required fields', {'missing_fields': missing})
         
-        user = self.users.get_by_email(payload['email'])
+        valid_email, normalized_email, email_error = validate_email(payload['email'])
+        if not valid_email:
+            raise AuthValidationError('Invalid email', {'message': email_error})
+        
+        user = self.users.get_by_email(normalized_email)
         if not user:
             raise AuthValidationError('User not found')
         
         if user.email_verified:
-            raise AuthValidationError('Email already verified')
+            # If already verified, return success instead of error
+            return {
+                'message': 'Email already verified',
+                'user': user.to_dict()
+            }
         
-        if not user.is_email_verification_token_valid(payload['token']):
-            raise AuthValidationError('Invalid or expired verification token')
+        # Check if token exists
+        if not user.email_verification_token:
+            current_app.logger.warning(f"No verification token found for user {user.email}")
+            raise AuthValidationError('Invalid or expired verification token', {
+                'message': 'No verification token found. Please request a new verification email.'
+            })
+        
+        # Check if token matches (use direct comparison for better debugging)
+        if user.email_verification_token != payload['token']:
+            current_app.logger.warning(f"Token mismatch for user {user.email}. Stored token exists: {bool(user.email_verification_token)}")
+            raise AuthValidationError('Invalid or expired verification token', {
+                'message': 'The verification token is invalid. Please request a new verification email.'
+            })
         
         # Verify email and activate account
         user.verify_email()
@@ -357,6 +385,29 @@ class AuthServiceV2:
         return {
             'message': 'Email verified successfully',
             'user': user.to_dict()
+        }
+
+    def check_verification_status(self, payload: Dict) -> Dict:
+        """Check if an email has been verified."""
+        ok, missing = validate_required_fields(payload, ['email'])
+        if not ok:
+            raise AuthValidationError('Missing required fields', {'missing_fields': missing})
+        
+        valid_email, normalized_email, email_error = validate_email(payload['email'])
+        if not valid_email:
+            raise AuthValidationError('Invalid email', {'message': email_error})
+        
+        user = self.users.get_by_email(normalized_email)
+        if not user:
+            return {
+                'verified': False,
+                'message': 'User not found'
+            }
+        
+        return {
+            'verified': user.email_verified,
+            'user': user.to_dict() if user.email_verified else None,
+            'message': 'Email is verified' if user.email_verified else 'Email not yet verified'
         }
 
     def resend_verification_email(self, payload: Dict) -> Dict:

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const LandingDashboard = () => {
+const LandingDashboard = ({ onPageChange }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [visibleSections, setVisibleSections] = useState(new Set());
 
@@ -30,22 +30,7 @@ const LandingDashboard = () => {
     return () => observer.disconnect();
   }, []);
 
-  // Helpers
-  const getInitials = (name) => {
-    const parts = name.split(' ');
-    const first = parts[0]?.[0] || '';
-    const last = parts[parts.length - 1]?.[0] || '';
-    return (first + last).toUpperCase();
-  };
-
   // Data (monochrome, professional style)
-  const businessStats = [
-    { label: 'Years of Experience', value: '15+', description: 'Industry expertise', icon: 'star' },
-    { label: 'Properties Managed', value: '500+', description: 'Across Cebu City', icon: 'building' },
-    { label: 'Happy Tenants', value: '2000+', description: 'Satisfied customers', icon: 'users' },
-    { label: 'Cities Covered', value: '8', description: 'Major locations', icon: 'city' }
-  ];
-
   const services = [
     {
       title: 'Property Management',
@@ -77,38 +62,7 @@ const LandingDashboard = () => {
     }
   ];
 
-  const testimonials = [
-    {
-      name: 'Maria Santos',
-      role: 'Property Owner',
-      text:
-        'They manage my rentals professionally and consistently. Payouts are on time and communication is excellent.',
-      rating: 5
-    },
-    {
-      name: 'Juan Dela Cruz',
-      role: 'Tenant',
-      text:
-        'Quick maintenance responses and well-kept spaces. Moving in and living here has been seamless and secure.',
-      rating: 5
-    },
-    {
-      name: 'Ana Rodriguez',
-      role: 'Investor',
-      text:
-        'Efficient operations and clear reporting. A trustworthy partner for growing a real estate portfolio.',
-      rating: 5
-    }
-  ];
 
-  const partners = [
-    { name: 'Ayala Land', category: 'Real Estate' },
-    { name: 'SM Development Corporation', category: 'Development' },
-    { name: 'Megaworld Corporation', category: 'Real Estate' },
-    { name: 'Robinsons Land Corporation', category: 'Real Estate' },
-    { name: 'Filinvest Land', category: 'Development' },
-    { name: 'DMCI Homes', category: 'Real Estate' }
-  ];
 
   // Icons (monochrome SVG)
   const Icon = ({ name, className = 'w-6 h-6' }) => {
@@ -221,53 +175,19 @@ const LandingDashboard = () => {
               isLoaded ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
             }`}
           >
-            <button className="px-6 md:px-8 lg:px-10 py-3 md:py-4 rounded-xl bg-white text-black font-bold text-sm md:text-base hover:bg-gray-200 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 hover:-translate-y-1 active:scale-95">
+            <button 
+              onClick={() => onPageChange && onPageChange('rent-space')}
+              className="px-6 md:px-8 lg:px-10 py-3 md:py-4 rounded-xl bg-white text-black font-bold text-sm md:text-base hover:bg-gray-200 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 hover:-translate-y-1 active:scale-95"
+            >
               Explore Rent Spaces
             </button>
-            <button className="px-6 md:px-8 lg:px-10 py-3 md:py-4 rounded-xl border border-white text-white font-bold text-sm md:text-base hover:bg-white hover:text-black transition-all duration-300 transform hover:scale-105 hover:-translate-y-1">
+            <button 
+              onClick={() => onPageChange && onPageChange('about-contact')}
+              className="px-6 md:px-8 lg:px-10 py-3 md:py-4 rounded-xl border border-white text-white font-bold text-sm md:text-base hover:bg-white hover:text-black transition-all duration-300 transform hover:scale-105 hover:-translate-y-1"
+            >
               Learn More
             </button>
           </div>
-        </div>
-      </section>
-
-      {/* Business Statistics */}
-      <section 
-        id="stats" 
-        data-animate-section
-        className="px-4 md:px-6 lg:px-8"
-      >
-        <div 
-          className={`text-center mb-12 md:mb-16 lg:mb-20 transform transition-all duration-800 ease-out ${
-            visibleSections.has('stats') ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
-          }`}
-        >
-          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-black bg-gradient-to-r from-black via-gray-800 to-black bg-clip-text text-transparent">
-            Why Choose Us
-          </h2>
-          <p className="mt-3 md:mt-4 text-gray-600 text-sm md:text-lg lg:text-xl max-w-3xl mx-auto">
-            Over a decade of trusted service with measurable results
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
-          {businessStats.map((stat, index) => (
-            <div 
-              key={stat.label} 
-              className={`group bg-white border border-gray-200 rounded-3xl p-6 md:p-8 hover:shadow-xl transition-all duration-500 hover:-translate-y-2 hover:scale-105 cursor-pointer transform ${
-                visibleSections.has('stats') ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
-              }`}
-              style={{ transitionDelay: `${index * 150}ms` }}
-            >
-              <div className="flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-2xl bg-gray-100 mx-auto mb-4 md:mb-6 transform transition-all duration-300 group-hover:bg-black group-hover:scale-110 group-hover:rotate-12">
-                <Icon name={stat.icon} className="w-6 h-6 md:w-7 md:h-7 text-gray-800 group-hover:text-white transition-colors duration-300" />
-              </div>
-              <p className="text-3xl md:text-4xl font-black text-black text-center group-hover:scale-110 transition-transform duration-300">
-                {stat.value}
-              </p>
-              <p className="mt-1 md:mt-2 font-semibold text-gray-800 text-center text-sm md:text-base">{stat.label}</p>
-              <p className="mt-1 text-xs md:text-sm text-gray-500 text-center">{stat.description}</p>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -350,7 +270,7 @@ const LandingDashboard = () => {
               About Joint Association & Community System
             </h2>
             <p className="mt-3 md:mt-4 text-gray-600 text-sm md:text-lg lg:text-xl max-w-4xl mx-auto">
-              Building communities and managing properties with excellence since 2009
+              Building communities and managing properties with excellence since 2025
             </p>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 lg:gap-16 items-start">
@@ -400,111 +320,6 @@ const LandingDashboard = () => {
         </div>
       </section>
 
-      {/* Partners */}
-      <section 
-        id="partners" 
-        data-animate-section
-        className="px-4 md:px-6 lg:px-8"
-      >
-        <div 
-          className={`text-center mb-12 md:mb-16 lg:mb-20 transform transition-all duration-800 ease-out ${
-            visibleSections.has('partners') ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
-          }`}
-        >
-          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-black bg-gradient-to-r from-black via-gray-800 to-black bg-clip-text text-transparent">
-            Our Trusted Partners
-          </h2>
-          <p className="mt-3 md:mt-4 text-gray-600 text-sm md:text-lg lg:text-xl max-w-3xl mx-auto">
-            Working with leading developers and real estate groups
-          </p>
-        </div>
-        <div 
-          className={`bg-white border border-gray-200 rounded-3xl p-8 md:p-12 lg:p-16 shadow-2xl transform transition-all duration-1000 ease-out ${
-            visibleSections.has('partners') ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-8 opacity-0 scale-95'
-          }`}
-        >
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 md:gap-8 lg:gap-10 items-center">
-            {partners.map((p, index) => (
-              <div 
-                key={p.name} 
-                className={`text-center group transform transition-all duration-500 hover:scale-110 hover:-translate-y-2 ${
-                  visibleSections.has('partners') ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-                }`}
-                style={{ transitionDelay: `${index * 100}ms` }}
-              >
-                <div className="w-full mx-auto">
-                  <div className="inline-flex items-center justify-center px-3 md:px-4 py-2 md:py-3 rounded-xl bg-gray-100 text-gray-900 font-semibold text-xs md:text-sm lg:text-base hover:bg-gray-900 hover:text-white transition-all duration-300 transform group-hover:scale-105 group-hover:rotate-3">
-                    {p.name}
-                  </div>
-                </div>
-                <p className="mt-2 text-xs text-gray-500 group-hover:text-gray-700 transition-colors duration-300">
-                  {p.category}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Testimonials */}
-      <section 
-        id="testimonials" 
-        data-animate-section
-        className="px-4 md:px-6 lg:px-8"
-      >
-        <div 
-          className={`text-center mb-12 md:mb-16 lg:mb-20 transform transition-all duration-800 ease-out ${
-            visibleSections.has('testimonials') ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
-          }`}
-        >
-          <h2 className="text-2xl md:text-4xl lg:text-5xl font-black text-black bg-gradient-to-r from-black via-gray-800 to-black bg-clip-text text-transparent">
-            What Our Clients Say
-          </h2>
-          <p className="mt-3 md:mt-4 text-gray-600 text-sm md:text-lg lg:text-xl max-w-3xl mx-auto">
-            Real feedback from owners, tenants, and investors
-          </p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 lg:gap-10">
-          {testimonials.map((t, index) => (
-            <article 
-              key={t.name} 
-              className={`bg-white border border-gray-200 rounded-3xl p-6 md:p-8 hover:shadow-xl transition-all duration-500 hover:-translate-y-2 hover:scale-105 cursor-pointer group transform ${
-                visibleSections.has('testimonials') ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0'
-              }`}
-              style={{ transitionDelay: `${index * 200}ms` }}
-            >
-              <div className="flex items-center mb-4 md:mb-6">
-                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-900 text-white flex items-center justify-center font-bold mr-3 md:mr-4 text-sm md:text-base transform transition-all duration-300 group-hover:scale-110 group-hover:rotate-6">
-                  {getInitials(t.name)}
-                </div>
-                <div>
-                  <p className="font-black text-black text-sm md:text-base group-hover:text-gray-800 transition-colors duration-300">
-                    {t.name}
-                  </p>
-                  <p className="text-gray-500 text-xs md:text-sm group-hover:text-gray-600 transition-colors duration-300">
-                    {t.role}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center mb-3 md:mb-4 text-black">
-                {Array.from({ length: t.rating }).map((_, i) => (
-                  <Icon 
-                    key={i} 
-                    name="star-solid" 
-                    className={`w-3 h-3 md:w-4 md:h-4 mr-1 transform transition-all duration-300 group-hover:scale-125 ${
-                      visibleSections.has('testimonials') ? 'rotate-0 opacity-100' : 'rotate-180 opacity-0'
-                    }`}
-                    style={{ transitionDelay: `${(index * 200) + (i * 100)}ms` }}
-                  />
-                ))}
-              </div>
-              <p className="text-gray-700 italic text-sm md:text-base leading-relaxed group-hover:text-gray-900 transition-colors duration-300">
-                "{t.text}"
-              </p>
-            </article>
-          ))}
-        </div>
-      </section>
 
       {/* Call to Action */}
       <section 
@@ -538,11 +353,11 @@ const LandingDashboard = () => {
                 visibleSections.has('cta') ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
               }`}
             >
-              <button className="px-8 md:px-10 lg:px-12 py-3 md:py-4 rounded-xl bg-white text-black font-black text-sm md:text-base hover:bg-gray-200 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 hover:-translate-y-1 active:scale-95">
+              <button 
+                onClick={() => onPageChange && onPageChange('about-contact')}
+                className="px-8 md:px-10 lg:px-12 py-3 md:py-4 rounded-xl bg-white text-black font-black text-sm md:text-base hover:bg-gray-200 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 hover:-translate-y-1 active:scale-95"
+              >
                 Contact Us
-              </button>
-              <button className="px-8 md:px-10 lg:px-12 py-3 md:py-4 rounded-xl border border-white text-white font-black text-sm md:text-base hover:bg-white hover:text-black transition-all duration-300 transform hover:scale-105 hover:-translate-y-1">
-                Schedule a Consultation
               </button>
             </div>
           </div>

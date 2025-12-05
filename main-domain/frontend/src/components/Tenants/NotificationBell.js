@@ -1,31 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import apiService from '../../services/api';
 import TenantNotifications from './Notifications';
+import { notificationRequestLock } from './notificationRequestLock';
 
 const NotificationBell = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  
+  // Refs for component-specific state
+  const retryTimeoutRef = useRef(null);
+  const backoffAttemptsRef = useRef(0);
+  const pollingInterval = 60000; // Poll every 60 seconds instead of 30
 
-  // Fetch unread count
-  useEffect(() => {
-    fetchUnreadCount();
-    // Poll for new notifications every 30 seconds
-    const interval = setInterval(fetchUnreadCount, 30000);
+  // Fetch unread count with rate limiting protection
+  const fetchUnreadCount = useCallback(async (force = false) => {
+    const now = Date.now();
+    const timeSinceLastFetch = now - notificationRequestLock.lastFetchTime;
     
-    // Also listen for custom events to refresh immediately (e.g., after profile update)
-    const handleRefresh = () => {
-      fetchUnreadCount();
-    };
-    window.addEventListener('notification-refresh', handleRefresh);
+    // Prevent concurrent requests (shared lock across all notification components)
+    if (notificationRequestLock.isFetching) {
+      return;
+    }
     
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('notification-refresh', handleRefresh);
-    };
-  }, []);
-
-  const fetchUnreadCount = async () => {
+    // Throttle requests - don't fetch if less than minTimeBetweenRequests has passed
+    if (!force && timeSinceLastFetch < notificationRequestLock.minTimeBetweenRequests) {
+      return;
+    }
+    
+    notificationRequestLock.isFetching = true;
+    notificationRequestLock.lastFetchTime = now;
+    
     try {
       const data = await apiService.getTenantNotifications();
       if (data && data.notifications) {
@@ -34,17 +39,65 @@ const NotificationBell = () => {
       } else {
         setUnreadCount(0);
       }
+      // Clear any retry timeout on success and reset backoff
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+      backoffAttemptsRef.current = 0;
     } catch (err) {
-      console.error('Failed to fetch notification count:', err);
-      setUnreadCount(0);
+      // Handle rate limit errors gracefully
+      if (err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+        console.warn('Rate limit hit, backing off...');
+        // Exponential backoff: wait 5 seconds, then 10, then 20, etc.
+        backoffAttemptsRef.current += 1;
+        const backoffTime = Math.min(30000, 5000 * Math.pow(2, backoffAttemptsRef.current - 1));
+        retryTimeoutRef.current = setTimeout(() => {
+          fetchUnreadCount(true);
+        }, backoffTime);
+      } else {
+        console.error('Failed to fetch notification count:', err);
+      }
+      // Don't reset unreadCount to 0 on error - keep the last known value
     } finally {
+      notificationRequestLock.isFetching = false;
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Debounced refresh handler
+  const handleRefresh = useCallback(() => {
+    // Only refresh if enough time has passed since last fetch
+    const now = Date.now();
+    if (now - notificationRequestLock.lastFetchTime >= notificationRequestLock.minTimeBetweenRequests) {
+      fetchUnreadCount(true);
+    }
+  }, [fetchUnreadCount]);
+
+  // Fetch unread count on mount and set up polling
+  useEffect(() => {
+    fetchUnreadCount(true);
+    
+    // Poll for new notifications every 60 seconds (increased from 30)
+    const interval = setInterval(() => {
+      fetchUnreadCount(false);
+    }, pollingInterval);
+    
+    // Listen for custom events to refresh (with debouncing)
+    window.addEventListener('notification-refresh', handleRefresh);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('notification-refresh', handleRefresh);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+    };
+  }, [fetchUnreadCount, handleRefresh]);
 
   const handleNotificationUpdate = () => {
-    // Refresh count when notifications are updated
-    fetchUnreadCount();
+    // Refresh count when notifications are updated (with throttling)
+    handleRefresh();
   };
 
   return (

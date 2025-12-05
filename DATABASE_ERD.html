@@ -127,6 +127,7 @@ erDiagram
     users ||--o{ tasks : "assigned_to"
     users ||--o{ payments : "processes"
     users ||--o{ payments : "verifies"
+    users ||--o{ payments : "created_by"
     users ||--o{ documents : "uploads"
     users ||--o{ messages : "sends"
     users ||--o{ announcements : "publishes"
@@ -173,6 +174,7 @@ erDiagram
     %% Inquiry System
     inquiries ||--o{ inquiry_messages : "has"
     inquiries ||--o{ inquiry_attachments : "has"
+    units ||--o{ inquiries : "has"
     
     %% Entity Definitions
     users {
@@ -188,13 +190,12 @@ erDiagram
         date_of_birth date
         profile_image_url string
         avatar_url string
-        address_line1 string
-        address_line2 string
         address text
         city string
         province string
         postal_code string
         country string
+        bio text
         email_verified boolean
         email_verification_token string
         is_active boolean
@@ -210,7 +211,6 @@ erDiagram
         emergency_contact_phone string
         created_at datetime
         updated_at datetime
-        FK1_properties int
     }
     
     properties {
@@ -244,7 +244,7 @@ erDiagram
         display_settings text
         created_at datetime
         updated_at datetime
-        FK1_properties int
+        FK1_owner_id int
     }
     
     subscription_plans {
@@ -283,10 +283,10 @@ erDiagram
     
     inquiries {
         PK_inquiries int
-        FK1_inquiries int
-        FK2_inquiries int
-        FK3_inquiries int
-        FK4_inquiries int
+        FK1_property_id int
+        FK2_unit_id int
+        FK3_tenant_id int
+        FK4_property_manager_id int
         inquiry_type enum
         status enum
         message text
@@ -323,8 +323,8 @@ erDiagram
     
     notifications {
         PK_notifications int
-        FK1_notifications int
-        FK2_notifications int
+        FK1_user_id int
+        FK2_tenant_id int
         type enum
         notification_type string
         recipient_type string
@@ -461,7 +461,7 @@ erDiagram
     
     payments {
         PK_payments int
-        FK1_payments int
+        FK1_bill_id int
         amount numeric
         payment_method string
         status string
@@ -471,8 +471,8 @@ erDiagram
         confirmation_number string
         proof_of_payment text
         remarks text
-        FK2_payments int
-        FK3_payments int
+        FK2_processed_by int
+        FK3_verified_by int
         verified_at datetime
         notes text
         receipt_url string
@@ -546,8 +546,8 @@ erDiagram
         content text
         announcement_type string
         priority string
-        FK1_announcements int
-        FK2_announcements int
+        FK1_property_id int
+        FK2_published_by int
         is_published boolean
         created_at datetime
     }
@@ -558,8 +558,8 @@ erDiagram
         message text
         feedback_type string
         rating int
-        FK1_feedback int
-        FK2_feedback int
+        FK1_submitted_by int
+        FK2_property_id int
         status string
         created_at datetime
     }

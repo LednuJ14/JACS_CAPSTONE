@@ -42,12 +42,12 @@ def get_tenant_profile(current_user):
             'profile_image_url': current_user.profile_image_url,
             'two_factor_enabled': bool(getattr(current_user, 'two_factor_enabled', False)),
             # Flattened address fields expected by frontend
-            'address_line1': current_user.address_line1,
-            'address_line2': current_user.address_line2,
+            'address': current_user.address,
             'city': current_user.city,
             'province': current_user.province,
             'postal_code': current_user.postal_code,
             'country': current_user.country,
+            'bio': current_user.bio,
             'created_at': safe_iso(current_user.created_at),
             'updated_at': safe_iso(current_user.updated_at),
             'last_login': safe_iso(current_user.last_login)
@@ -111,11 +111,18 @@ def update_tenant_profile(current_user):
                 current_user.date_of_birth = None
         
         # Update address fields
-        address_fields = ['address_line1', 'address_line2', 'city', 'province', 'postal_code', 'country']
+        if 'address' in data:
+            current_user.address = sanitize_input(data['address']) if data['address'] else None
+        
+        address_fields = ['city', 'province', 'postal_code', 'country']
         for field in address_fields:
             if field in data:
                 value = sanitize_input(data[field]) if data[field] else None
                 setattr(current_user, field, value)
+        
+        # Update bio field
+        if 'bio' in data:
+            current_user.bio = sanitize_input(data['bio']) if data['bio'] else None
         
         db.session.commit()
         

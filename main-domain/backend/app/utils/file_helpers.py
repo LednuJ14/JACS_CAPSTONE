@@ -30,21 +30,21 @@ def allowed_file(filename, allowed_extensions=None):
 
 def secure_filename(filename):
     """
-    Generate secure filename with UUID prefix.
+    Generate secure filename (clean, without UUID prefix).
+    Handles duplicates by appending numbers.
     
     Args:
         filename (str): Original filename
         
     Returns:
-        str: Secure filename with UUID
+        str: Secure filename (clean, with number suffix if duplicate)
     """
     # Get secure filename from werkzeug
     secure_name = werkzeug_secure_filename(filename)
     
-    # Add UUID prefix to avoid conflicts
-    unique_id = str(uuid.uuid4())[:8]
-    
-    return f"{unique_id}_{secure_name}"
+    # Return clean filename (no UUID prefix)
+    # Duplicates will be handled by the save_uploaded_file function
+    return secure_name
 
 def save_uploaded_file(file, upload_folder, allowed_extensions=None, max_size=None):
     """
@@ -78,11 +78,22 @@ def save_uploaded_file(file, upload_folder, allowed_extensions=None, max_size=No
             if size > max_size:
                 return False, None, f"File too large. Maximum size: {max_size / 1024 / 1024:.1f}MB"
         
-        # Generate secure filename
-        filename = secure_filename(file.filename)
+        # Generate secure filename (clean, no UUID)
+        original_filename = secure_filename(file.filename)
         
         # Create upload directory if it doesn't exist
         os.makedirs(upload_folder, exist_ok=True)
+        
+        # Handle duplicate filenames by appending numbers
+        file_extension = os.path.splitext(original_filename)[1] if '.' in original_filename else ''
+        file_base_name = os.path.splitext(original_filename)[0] if '.' in original_filename else original_filename
+        
+        # Check if file already exists, if so append a number
+        filename = original_filename
+        counter = 1
+        while os.path.exists(os.path.join(upload_folder, filename)):
+            filename = f"{file_base_name}_{counter}{file_extension}"
+            counter += 1
         
         # Save file
         file_path = os.path.join(upload_folder, filename)

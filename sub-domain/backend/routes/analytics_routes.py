@@ -1,9 +1,11 @@
-from flask import Blueprint, jsonify, current_app, request
+from flask import Blueprint, jsonify, current_app, request, send_file, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from sqlalchemy import func, extract, or_, text
 from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
 import re
+import csv
+import io
 
 from app import db
 from models.user import User, UserRole
@@ -14,6 +16,30 @@ from models.bill import Bill, BillStatus, Payment, PaymentStatus
 from models.request import MaintenanceRequest, RequestStatus
 from models.announcement import Announcement
 from models.task import Task, TaskStatus
+
+# Try to import reportlab for PDF generation
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    import logging
+    logging.warning("reportlab not available. PDF reports will not work.")
+
+# Try to import openpyxl for Excel generation
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+    import logging
+    logging.warning("openpyxl not available. Excel reports will not work.")
 
 # Try to import TenantUnit, but handle if it doesn't exist
 try:
@@ -1182,3 +1208,467 @@ def get_occupancy_report():
             error_response['traceback'] = error_trace.split('\n')[-5:]  # Last 5 lines
         
         return jsonify(error_response), 500
+
+
+def _get_analytics_data_for_report(property_id):
+    """Helper function to get analytics data for reports."""
+    try:
+        # Get dashboard data
+        dashboard_data = get_manager_dashboard(property_id)
+        dashboard_json = dashboard_data.get_json() if hasattr(dashboard_data, 'get_json') else {}
+        
+        # Get financial summary
+        try:
+            financial_data = get_financial_summary()
+            financial_json = financial_data.get_json() if hasattr(financial_data, 'get_json') else {}
+        except:
+            financial_json = {}
+        
+        # Get occupancy report
+        try:
+            occupancy_data = get_occupancy_report()
+            occupancy_json = occupancy_data.get_json() if hasattr(occupancy_data, 'get_json') else {}
+        except:
+            occupancy_json = {}
+        
+        # Extract metrics
+        metrics = dashboard_json.get('metrics', {})
+        properties = dashboard_json.get('properties', {})
+        financial_totals = financial_json.get('totals', {})
+        overall_occupancy = occupancy_json.get('overall_occupancy', {})
+        
+        # Build report data
+        return {
+            'property_id': property_id,
+            'property_name': dashboard_json.get('property_name', 'Property Analytics'),
+            'total_revenue': float(metrics.get('total_income', 0) or financial_totals.get('total_revenue', 0)),
+            'outstanding_balance': float(metrics.get('outstanding_balance', 0) or financial_totals.get('outstanding_balance', 0)),
+            'overdue_bills': int(financial_totals.get('overdue_bills_count', 0)),
+            'occupancy_rate': float(overall_occupancy.get('occupancy_rate', 0) or properties.get('occupancy_rate', 0)),
+            'total_units': int(overall_occupancy.get('total_units', 0) or properties.get('total_units', 0)),
+            'occupied_units': int(overall_occupancy.get('occupied_units', 0) or properties.get('occupied_units', 0)),
+            'available_units': int(overall_occupancy.get('available_units', 0) or properties.get('available_units', 0)),
+            'active_tenants': int(metrics.get('active_tenants', 0)),
+            'open_requests': len(dashboard_json.get('maintenance_requests', [])),
+            'pending_tasks': len(dashboard_json.get('pending_tasks', [])),
+            'inquiries_this_month': int(metrics.get('inquiries_this_month', 0)),
+            'avg_monthly_rent': float(metrics.get('avg_monthly_rent', 0)),
+            'monthly_revenue': financial_json.get('monthly_revenue', []),
+            'unit_type_breakdown': occupancy_json.get('unit_type_breakdown', []),
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    except Exception as e:
+        current_app.logger.error(f'Error getting analytics data for report: {e}', exc_info=True)
+        return {
+            'property_id': property_id,
+            'property_name': 'Property Analytics',
+            'total_revenue': 0.0,
+            'outstanding_balance': 0.0,
+            'overdue_bills': 0,
+            'occupancy_rate': 0.0,
+            'total_units': 0,
+            'occupied_units': 0,
+            'available_units': 0,
+            'active_tenants': 0,
+            'open_requests': 0,
+            'pending_tasks': 0,
+            'inquiries_this_month': 0,
+            'avg_monthly_rent': 0.0,
+            'monthly_revenue': [],
+            'unit_type_breakdown': [],
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+
+@analytics_bp.route('/download/pdf', methods=['GET'])
+@jwt_required()
+def download_pdf_report():
+    """Download analytics report as PDF."""
+    if not REPORTLAB_AVAILABLE:
+        return jsonify({'error': 'PDF generation not available. Please install reportlab.'}), 503
+    
+    try:
+        property_id = get_property_id_from_request()
+        if not property_id:
+            return jsonify({'error': 'Property ID is required'}), 400
+        
+        data = _get_analytics_data_for_report(property_id)
+        
+        # Create PDF in memory
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        story = []
+        styles = getSampleStyleSheet()
+        
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#1a1a1a'),
+            spaceAfter=30,
+            alignment=1
+        )
+        story.append(Paragraph("Property Analytics Report", title_style))
+        
+        # Report info
+        info_style = ParagraphStyle(
+            'InfoStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.HexColor('#666666'),
+            alignment=1
+        )
+        story.append(Paragraph(f"Property: {data['property_name']}", info_style))
+        story.append(Paragraph(f"Generated: {data['generated_at']}", info_style))
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Key Metrics Table
+        metrics_data = [
+            ['Metric', 'Value'],
+            ['Total Revenue (MTD)', f"₱{data['total_revenue']:,.2f}"],
+            ['Outstanding Balance', f"₱{data['outstanding_balance']:,.2f}"],
+            ['Overdue Bills', str(data['overdue_bills'])],
+            ['Occupancy Rate', f"{data['occupancy_rate']:.2f}%"],
+            ['Total Units', str(data['total_units'])],
+            ['Occupied Units', str(data['occupied_units'])],
+            ['Available Units', str(data['available_units'])],
+            ['Active Tenants', str(data['active_tenants'])],
+            ['Open Requests', str(data['open_requests'])],
+            ['Pending Tasks', str(data['pending_tasks'])],
+            ['Inquiries This Month', str(data['inquiries_this_month'])],
+            ['Avg Monthly Rent', f"₱{data['avg_monthly_rent']:,.2f}"]
+        ]
+        
+        metrics_table = Table(metrics_data, colWidths=[3*inch, 2*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a1a')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ]))
+        story.append(Paragraph("Key Metrics", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        story.append(metrics_table)
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Monthly Revenue
+        if data['monthly_revenue']:
+            story.append(Paragraph("Monthly Revenue", styles['Heading2']))
+            story.append(Spacer(1, 0.1*inch))
+            monthly_data_table = [['Month', 'Revenue']]
+            for month in data['monthly_revenue']:
+                monthly_data_table.append([
+                    month.get('month', ''),
+                    f"₱{float(month.get('revenue', 0)):,.2f}"
+                ])
+            
+            monthly_table = Table(monthly_data_table, colWidths=[3*inch, 2*inch])
+            monthly_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a1a')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ]))
+            story.append(monthly_table)
+            story.append(Spacer(1, 0.3*inch))
+        
+        # Occupancy by Unit Type
+        if data['unit_type_breakdown']:
+            story.append(Paragraph("Occupancy by Unit Type", styles['Heading2']))
+            story.append(Spacer(1, 0.1*inch))
+            occupancy_data_table = [['Unit Type', 'Occupancy %', 'Total', 'Occupied', 'Available']]
+            for item in data['unit_type_breakdown']:
+                occupancy_data_table.append([
+                    item.get('type', 'All Units'),
+                    f"{float(item.get('occupancy_rate', 0)):.2f}%",
+                    str(item.get('total', 0)),
+                    str(item.get('occupied', 0)),
+                    str(item.get('available', 0))
+                ])
+            
+            occupancy_table = Table(occupancy_data_table, colWidths=[2*inch, 1*inch, 0.8*inch, 0.8*inch, 0.8*inch])
+            occupancy_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a1a')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ]))
+            story.append(occupancy_table)
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        
+        # Generate filename
+        filename = f"analytics_report_{datetime.now().strftime('%Y%m%d')}.pdf"
+        
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f'PDF report generation error: {e}', exc_info=True)
+        return jsonify({'error': 'Failed to generate PDF report'}), 500
+
+
+@analytics_bp.route('/download/excel', methods=['GET'])
+@jwt_required()
+def download_excel_report():
+    """Download analytics report as Excel."""
+    if not OPENPYXL_AVAILABLE:
+        return jsonify({'error': 'Excel generation not available. Please install openpyxl.'}), 503
+    
+    try:
+        property_id = get_property_id_from_request()
+        if not property_id:
+            return jsonify({'error': 'Property ID is required'}), 400
+        
+        data = _get_analytics_data_for_report(property_id)
+        
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Analytics Report"
+        
+        # Styles
+        header_fill = PatternFill(start_color="1a1a1a", end_color="1a1a1a", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        title_font = Font(bold=True, size=16)
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        center_align = Alignment(horizontal='center', vertical='center')
+        
+        # Title
+        ws.merge_cells('A1:B1')
+        ws['A1'] = "Property Analytics Report"
+        ws['A1'].font = title_font
+        ws['A1'].alignment = center_align
+        
+        # Report info
+        ws['A2'] = f"Property: {data['property_name']}"
+        ws['A3'] = f"Generated: {data['generated_at']}"
+        
+        row = 5
+        
+        # Key Metrics
+        ws[f'A{row}'] = "Key Metrics"
+        ws[f'A{row}'].font = Font(bold=True, size=14)
+        row += 1
+        
+        metrics_headers = ['Metric', 'Value']
+        for col, header in enumerate(metrics_headers, 1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = center_align
+        
+        row += 1
+        metrics_data = [
+            ['Total Revenue (MTD)', f"₱{data['total_revenue']:,.2f}"],
+            ['Outstanding Balance', f"₱{data['outstanding_balance']:,.2f}"],
+            ['Overdue Bills', str(data['overdue_bills'])],
+            ['Occupancy Rate', f"{data['occupancy_rate']:.2f}%"],
+            ['Total Units', str(data['total_units'])],
+            ['Occupied Units', str(data['occupied_units'])],
+            ['Available Units', str(data['available_units'])],
+            ['Active Tenants', str(data['active_tenants'])],
+            ['Open Requests', str(data['open_requests'])],
+            ['Pending Tasks', str(data['pending_tasks'])],
+            ['Inquiries This Month', str(data['inquiries_this_month'])],
+            ['Avg Monthly Rent', f"₱{data['avg_monthly_rent']:,.2f}"]
+        ]
+        
+        for metric_row in metrics_data:
+            for col, value in enumerate(metric_row, 1):
+                cell = ws.cell(row=row, column=col)
+                cell.value = value
+                cell.border = border
+            row += 1
+        
+        row += 2
+        
+        # Monthly Revenue
+        if data['monthly_revenue']:
+            ws[f'A{row}'] = "Monthly Revenue"
+            ws[f'A{row}'].font = Font(bold=True, size=14)
+            row += 1
+            
+            monthly_headers = ['Month', 'Revenue']
+            for col, header in enumerate(monthly_headers, 1):
+                cell = ws.cell(row=row, column=col)
+                cell.value = header
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = border
+                cell.alignment = center_align
+            
+            row += 1
+            for month in data['monthly_revenue']:
+                ws.cell(row=row, column=1).value = month.get('month', '')
+                ws.cell(row=row, column=2).value = f"₱{float(month.get('revenue', 0)):,.2f}"
+                for col in range(1, 3):
+                    ws.cell(row=row, column=col).border = border
+                row += 1
+            
+            row += 2
+        
+        # Occupancy by Unit Type
+        if data['unit_type_breakdown']:
+            ws[f'A{row}'] = "Occupancy by Unit Type"
+            ws[f'A{row}'].font = Font(bold=True, size=14)
+            row += 1
+            
+            occupancy_headers = ['Unit Type', 'Occupancy %', 'Total', 'Occupied', 'Available']
+            for col, header in enumerate(occupancy_headers, 1):
+                cell = ws.cell(row=row, column=col)
+                cell.value = header
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = border
+                cell.alignment = center_align
+            
+            row += 1
+            for item in data['unit_type_breakdown']:
+                ws.cell(row=row, column=1).value = item.get('type', 'All Units')
+                ws.cell(row=row, column=2).value = f"{float(item.get('occupancy_rate', 0)):.2f}%"
+                ws.cell(row=row, column=3).value = item.get('total', 0)
+                ws.cell(row=row, column=4).value = item.get('occupied', 0)
+                ws.cell(row=row, column=5).value = item.get('available', 0)
+                for col in range(1, 6):
+                    ws.cell(row=row, column=col).border = border
+                row += 1
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save to buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        
+        # Generate filename
+        filename = f"analytics_report_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        
+        response = make_response(buffer.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        return response
+        
+    except Exception as e:
+        current_app.logger.error(f'Excel report generation error: {e}', exc_info=True)
+        return jsonify({'error': 'Failed to generate Excel report'}), 500
+
+
+@analytics_bp.route('/download/csv', methods=['GET'])
+@jwt_required()
+def download_csv_report():
+    """Download analytics report as CSV."""
+    try:
+        property_id = get_property_id_from_request()
+        if not property_id:
+            return jsonify({'error': 'Property ID is required'}), 400
+        
+        data = _get_analytics_data_for_report(property_id)
+        
+        # Create CSV in memory
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        
+        # Header
+        writer.writerow(["Property Analytics Report"])
+        writer.writerow([f"Property: {data['property_name']}"])
+        writer.writerow([f"Generated: {data['generated_at']}"])
+        writer.writerow([])
+        
+        # Key Metrics
+        writer.writerow(["Key Metrics"])
+        writer.writerow(["Metric", "Value"])
+        writer.writerow(["Total Revenue (MTD)", f"₱{data['total_revenue']:,.2f}"])
+        writer.writerow(["Outstanding Balance", f"₱{data['outstanding_balance']:,.2f}"])
+        writer.writerow(["Overdue Bills", str(data['overdue_bills'])])
+        writer.writerow(["Occupancy Rate", f"{data['occupancy_rate']:.2f}%"])
+        writer.writerow(["Total Units", str(data['total_units'])])
+        writer.writerow(["Occupied Units", str(data['occupied_units'])])
+        writer.writerow(["Available Units", str(data['available_units'])])
+        writer.writerow(["Active Tenants", str(data['active_tenants'])])
+        writer.writerow(["Open Requests", str(data['open_requests'])])
+        writer.writerow(["Pending Tasks", str(data['pending_tasks'])])
+        writer.writerow(["Inquiries This Month", str(data['inquiries_this_month'])])
+        writer.writerow(["Avg Monthly Rent", f"₱{data['avg_monthly_rent']:,.2f}"])
+        writer.writerow([])
+        
+        # Monthly Revenue
+        if data['monthly_revenue']:
+            writer.writerow(["Monthly Revenue"])
+            writer.writerow(["Month", "Revenue"])
+            for month in data['monthly_revenue']:
+                writer.writerow([
+                    month.get('month', ''),
+                    f"₱{float(month.get('revenue', 0)):,.2f}"
+                ])
+            writer.writerow([])
+        
+        # Occupancy by Unit Type
+        if data['unit_type_breakdown']:
+            writer.writerow(["Occupancy by Unit Type"])
+            writer.writerow(["Unit Type", "Occupancy %", "Total", "Occupied", "Available"])
+            for item in data['unit_type_breakdown']:
+                writer.writerow([
+                    item.get('type', 'All Units'),
+                    f"{float(item.get('occupancy_rate', 0)):.2f}%",
+                    str(item.get('total', 0)),
+                    str(item.get('occupied', 0)),
+                    str(item.get('available', 0))
+                ])
+        
+        # Convert to bytes
+        csv_bytes = buffer.getvalue().encode('utf-8-sig')
+        buffer.close()
+        
+        # Create response
+        response = make_response(csv_bytes)
+        filename = f"analytics_report_{datetime.now().strftime('%Y%m%d')}.csv"
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8-sig'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        return response
+        
+    except Exception as e:
+        current_app.logger.error(f'CSV report generation error: {e}', exc_info=True)
+        return jsonify({'error': 'Failed to generate CSV report'}), 500

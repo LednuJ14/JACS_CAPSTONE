@@ -18,6 +18,7 @@ erDiagram
     subscription_plans ||--o{ subscriptions : "has"
     
     properties ||--o{ inquiries : "has"
+    units ||--o{ inquiries : "has"
     
     inquiries ||--o{ inquiry_messages : "has"
     inquiries ||--o{ inquiry_attachments : "has"
@@ -33,12 +34,12 @@ erDiagram
         phone_number string
         date_of_birth date
         profile_image_url string
-        address_line1 string
-        address_line2 string
+        address text
         city string
         province string
         postal_code string
         country string
+        bio text
         email_verified boolean
         email_verification_token string
         last_login datetime
@@ -51,7 +52,6 @@ erDiagram
         two_factor_email_expires datetime
         created_at datetime
         updated_at datetime
-        FK1_properties int
     }
     
     properties {
@@ -85,7 +85,7 @@ erDiagram
         display_settings text
         created_at datetime
         updated_at datetime
-        FK1_properties int
+        FK1_owner_id int
     }
     
     subscription_plans {
@@ -124,10 +124,10 @@ erDiagram
     
     inquiries {
         PK_inquiries int
-        FK1_inquiries int
-        FK2_inquiries int
-        FK3_inquiries int
-        FK4_inquiries int
+        FK1_property_id int
+        FK2_unit_id int
+        FK3_tenant_id int
+        FK4_property_manager_id int
         inquiry_type enum
         status enum
         message text
@@ -164,7 +164,7 @@ erDiagram
     
     notifications {
         PK_notifications int
-        FK1_notifications int
+        FK1_user_id int
         type enum
         title string
         message text
@@ -284,7 +284,7 @@ erDiagram
         display_settings text
         created_at datetime
         updated_at datetime
-        FK1_properties int
+        FK1_owner_id int
     }
     
     units {
@@ -397,7 +397,7 @@ erDiagram
     
     payments {
         PK_payments int
-        FK1_payments int
+        FK1_bill_id int
         amount numeric
         payment_method string
         status string
@@ -407,8 +407,8 @@ erDiagram
         confirmation_number string
         proof_of_payment text
         remarks text
-        FK2_payments int
-        FK3_payments int
+        FK2_processed_by int
+        FK3_verified_by int
         verified_at datetime
         notes text
         receipt_url string
@@ -500,8 +500,8 @@ erDiagram
         content text
         announcement_type string
         priority string
-        FK1_announcements int
-        FK2_announcements int
+        FK1_property_id int
+        FK2_published_by int
         is_published boolean
         created_at datetime
     }
@@ -512,8 +512,8 @@ erDiagram
         message text
         feedback_type string
         rating int
-        FK1_feedback int
-        FK2_feedback int
+        FK1_submitted_by int
+        FK2_property_id int
         status string
         created_at datetime
     }
@@ -527,6 +527,7 @@ erDiagram
 3. **Subscription Plan → Subscriptions**: One-to-Many (plan has many subscriptions)
 4. **User → Inquiries**: One-to-Many (user sends/receives inquiries)
 5. **Property → Inquiries**: One-to-Many (property has many inquiries)
+6. **Unit → Inquiries**: One-to-Many (unit has many inquiries)
 6. **Inquiry → Inquiry Messages**: One-to-Many (inquiry has many messages)
 7. **Inquiry → Inquiry Attachments**: One-to-Many (inquiry has many attachments)
 8. **User → Notifications**: One-to-Many (user receives many notifications)

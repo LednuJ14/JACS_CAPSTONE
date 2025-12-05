@@ -33,15 +33,37 @@ const ForgotPassword = ({ onBackToLogin }) => {
 
     try {
       const data = await ApiService.forgotPassword({ email: email.toLowerCase().trim() });
+      
+      // Check if response has error field
+      if (data.error) {
+        setError(data.error || data.message || 'Failed to send reset email. Please try again.');
+        return;
+      }
+      
+      // Success case
       setMessage(data.message || 'If an account with that email exists, we have sent a password reset link.');
       setEmail(''); // Clear the form
     } catch (error) {
       console.error('Forgot password error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.status,
+        isNetworkError: error.isNetworkError,
+        data: error.data
+      });
       
       if (error.isNetworkError) {
         setError('Unable to connect to server. Please check your internet connection and try again.');
+      } else if (error.status === 400) {
+        setError(error.message || 'Invalid email address. Please check and try again.');
+      } else if (error.status === 429) {
+        setError('Too many requests. Please wait a moment and try again.');
+      } else if (error.status === 500) {
+        setError('Server error. Please try again later.');
       } else if (error.message) {
         setError(error.message);
+      } else if (error.data?.error || error.data?.message) {
+        setError(error.data.error || error.data.message);
       } else {
         setError('Failed to send reset email. Please try again.');
       }

@@ -1248,6 +1248,56 @@ def disable_manager_2fa_email(current_user):
         current_app.logger.error(f'Disable manager 2FA error: {e}')
         return handle_api_error(500, "Failed to disable 2FA")
 
+@manager_properties_bp.route('/profile/upload-image', methods=['POST'])
+@manager_required
+def upload_manager_profile_image(current_user):
+    """Upload and set the manager's profile image."""
+    try:
+        if 'image' not in request.files:
+            return handle_api_error(400, "No image file provided")
+
+        file = request.files['image']
+        if not file or file.filename == '':
+            return handle_api_error(400, "No image selected")
+
+        from app.utils.file_helpers import save_uploaded_file, IMAGE_EXTENSIONS
+        import os
+        
+        # Build user-specific upload directory under instance/uploads/users/<id>
+        upload_folder = os.path.join(
+            current_app.instance_path,
+            current_app.config.get('UPLOAD_FOLDER', 'uploads'),
+            'users',
+            str(current_user.id)
+        )
+
+        success, filename, error = save_uploaded_file(
+            file,
+            upload_folder,
+            allowed_extensions=IMAGE_EXTENSIONS,
+            max_size=5 * 1024 * 1024  # 5MB
+        )
+
+        if not success:
+            return handle_api_error(400, error or "Failed to save image")
+
+        # Public URL served by /uploads route
+        public_url = f"/uploads/users/{current_user.id}/{filename}"
+
+        # Persist on user
+        current_user.profile_image_url = public_url
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Profile image updated successfully',
+            'profile_image_url': public_url
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Upload manager profile image error: {e}')
+        return handle_api_error(500, "Failed to upload profile image")
+
 @manager_properties_bp.route('/upload-image', methods=['POST'])
 @manager_required
 def upload_property_image(current_user):
@@ -1279,6 +1329,58 @@ def upload_property_image(current_user):
     except Exception as e:
         current_app.logger.error(f'Upload property image error: {e}')
         return handle_api_error(500, "Failed to upload image")
+
+@manager_properties_bp.route('/upload-legal-document', methods=['POST'])
+@manager_required
+def upload_legal_document(current_user):
+    """Endpoint for property managers to upload a legal document and get back the file path."""
+    try:
+        if 'document' not in request.files:
+            return handle_api_error(400, "No document file provided")
+        file = request.files['document']
+        if not file or file.filename == '':
+            return handle_api_error(400, "No document selected")
+        
+        from app.utils.file_helpers import save_uploaded_file
+        import os
+        
+        # Allowed extensions for legal documents
+        DOCUMENT_EXTENSIONS = {'pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'}
+        
+        # Save file to instance/uploads/legal-documents directory
+        upload_folder = os.path.join(
+            current_app.instance_path,
+            current_app.config.get('UPLOAD_FOLDER', 'uploads'),
+            'legal-documents'
+        )
+        max_size = 50 * 1024 * 1024  # 50MB for documents
+        
+        success, filename, error = save_uploaded_file(
+            file, 
+            upload_folder, 
+            allowed_extensions=DOCUMENT_EXTENSIONS, 
+            max_size=max_size
+        )
+        
+        if not success:
+            return handle_api_error(400, error or "Failed to save document")
+        
+        # Return the server file path (relative to instance/uploads)
+        # This will be used to construct the full path when needed
+        file_path = os.path.join('legal-documents', filename)
+        
+        return jsonify({
+            'message': 'Document uploaded successfully',
+            'path': file_path,
+            'filename': filename,
+            'size': file.content_length if hasattr(file, 'content_length') else None
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f'Upload legal document error: {e}')
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        return handle_api_error(500, "Failed to upload document")
 
 @manager_properties_bp.route('/upload-unit-image', methods=['POST'])
 @manager_required

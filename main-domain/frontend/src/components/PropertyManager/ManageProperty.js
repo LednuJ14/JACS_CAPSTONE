@@ -348,7 +348,40 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
         const mapped = properties
           .map(mapPropertyFromApi)
           .filter(Boolean);
-        setBuildings(mapped);
+        
+        // Fetch units for each property and update counts based on actual units
+        const propertiesWithUnits = await Promise.all(
+          mapped.map(async (property) => {
+            try {
+              const unitsRes = await api.listUnits(property.id);
+              const units = Array.isArray(unitsRes?.units) ? unitsRes.units : [];
+              
+              // Calculate counts from actual units
+              const totalUnits = units.length;
+              const vacant = units.filter(u => {
+                const status = (u.status || '').toLowerCase();
+                return status === 'vacant' || status === 'available';
+              }).length;
+              const occupied = units.filter(u => {
+                const status = (u.status || '').toLowerCase();
+                return status === 'occupied' || status === 'rented';
+              }).length;
+              
+              return {
+                ...property,
+                totalUnits: totalUnits, // Use actual count of units
+                vacantUnits: vacant,
+                occupiedUnits: occupied
+              };
+            } catch (error) {
+              console.warn(`Failed to fetch units for property ${property.id}:`, error);
+              // Return property with original counts if units fetch fails
+              return property;
+            }
+          })
+        );
+        
+        setBuildings(propertiesWithUnits);
         return;
       } else {
         console.log('No properties found in API response');
@@ -687,7 +720,11 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
         furnishing: editingBuilding.furnishing,
         status: editingBuilding.status,
         images: JSON.stringify(editingBuilding.images || []),
-        legal_documents: JSON.stringify(editingBuilding.legalDocs || []),
+        // Filter out any legal documents with blob URLs (only keep server paths)
+        legal_documents: JSON.stringify((editingBuilding.legalDocs || []).filter(doc => {
+          const path = doc.path || '';
+          return path && !path.startsWith('blob:') && !path.startsWith('http://localhost:') && !path.startsWith('https://localhost:');
+        })),
         amenities: JSON.stringify(editingBuilding.amenities || [])
       };
       
@@ -959,27 +996,51 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
   };
 
 
-  const handleLegalUpload = (event) => {
+  const handleLegalUpload = async (event) => {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
     
-    const newDocs = files.map(file => ({
-      type: 'legal_document',
-      filename: file.name,
-      size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-      path: URL.createObjectURL(file), // This will be a blob URL for now
-      status: 'pending',
-      uploaded_at: new Date().toISOString(),
-      fileType: file.type,
-      file: file // Store the actual file object for later upload
-    }));
-    setNewProperty(prev => ({
-      ...prev,
-      legalDocs: [...prev.legalDocs, ...newDocs]
-    }));
-    
-    // Clear the input so the same file can be selected again
-    event.target.value = '';
+    try {
+      // Upload each file to the server immediately
+      const uploadedDocs = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          // Call backend API to upload the document
+          const res = await api.uploadLegalDocument(file);
+          if (res?.path) {
+            uploadedDocs.push({
+              type: 'legal_document',
+              filename: res.filename || file.name,
+              size: res.size ? `${(res.size / 1024 / 1024).toFixed(2)} MB` : `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+              path: res.path, // Server file path, not blob URL
+              status: 'pending',
+              uploaded_at: new Date().toISOString(),
+              fileType: file.type
+            });
+          } else {
+            alert(`Failed to upload ${file.name}: No path returned from server`);
+          }
+        } catch (error) {
+          console.error(`Error uploading ${file.name}:`, error);
+          alert(`Failed to upload ${file.name}: ${error.message || 'Unknown error'}`);
+        }
+      }
+      
+      // Add successfully uploaded documents to the property
+      if (uploadedDocs.length > 0) {
+        setNewProperty(prev => ({
+          ...prev,
+          legalDocs: [...prev.legalDocs, ...uploadedDocs]
+        }));
+      }
+    } catch (error) {
+      console.error('Error uploading legal documents:', error);
+      alert('Failed to upload legal documents: ' + (error.message || 'Unknown error'));
+    } finally {
+      // Clear the input so the same file can be selected again
+      event.target.value = '';
+    }
   };
 
   const removeLegalDoc = (index) => {
@@ -1064,27 +1125,51 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
     }));
   };
 
-  const handleEditLegalUpload = (event) => {
+  const handleEditLegalUpload = async (event) => {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
     
-    const newDocs = files.map(file => ({
-      type: 'legal_document',
-      filename: file.name,
-      size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-      path: URL.createObjectURL(file),
-      status: 'pending',
-      uploaded_at: new Date().toISOString(),
-      fileType: file.type,
-      file: file // Store the actual file object for later upload
-    }));
-    setEditingBuilding(prev => ({
-      ...prev,
-      legalDocs: [...(prev.legalDocs || []), ...newDocs]
-    }));
-    
-    // Clear the input so the same file can be selected again
-    event.target.value = '';
+    try {
+      // Upload each file to the server immediately
+      const uploadedDocs = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          // Call backend API to upload the document
+          const res = await api.uploadLegalDocument(file);
+          if (res?.path) {
+            uploadedDocs.push({
+              type: 'legal_document',
+              filename: res.filename || file.name,
+              size: res.size ? `${(res.size / 1024 / 1024).toFixed(2)} MB` : `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+              path: res.path, // Server file path, not blob URL
+              status: 'pending',
+              uploaded_at: new Date().toISOString(),
+              fileType: file.type
+            });
+          } else {
+            alert(`Failed to upload ${file.name}: No path returned from server`);
+          }
+        } catch (error) {
+          console.error(`Error uploading ${file.name}:`, error);
+          alert(`Failed to upload ${file.name}: ${error.message || 'Unknown error'}`);
+        }
+      }
+      
+      // Add successfully uploaded documents to the editing building
+      if (uploadedDocs.length > 0) {
+        setEditingBuilding(prev => ({
+          ...prev,
+          legalDocs: [...(prev.legalDocs || []), ...uploadedDocs]
+        }));
+      }
+    } catch (error) {
+      console.error('Error uploading legal documents:', error);
+      alert('Failed to upload legal documents: ' + (error.message || 'Unknown error'));
+    } finally {
+      // Clear the input so the same file can be selected again
+      event.target.value = '';
+    }
   };
 
   const removeEditLegalDoc = (index) => {
@@ -1132,6 +1217,19 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
       return;
     }
     
+    // Filter out any legal documents that still have blob URLs (shouldn't happen, but safety check)
+    const validLegalDocs = (newProperty.legalDocs || []).filter(doc => {
+      const path = doc.path || '';
+      // Only include documents with server paths, not blob URLs
+      return path && !path.startsWith('blob:') && !path.startsWith('http://localhost:') && !path.startsWith('https://localhost:');
+    });
+    
+    // Warn if any documents were filtered out
+    if (validLegalDocs.length < (newProperty.legalDocs || []).length) {
+      const filteredCount = (newProperty.legalDocs || []).length - validLegalDocs.length;
+      alert(`Warning: ${filteredCount} legal document(s) were not properly uploaded and will not be saved. Please re-upload them.`);
+    }
+    
     // Create new building entry with defaults
     const now = new Date();
     const averageRent = parseInt(newProperty.averageRent || '0', 10) || 0;
@@ -1161,7 +1259,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
       contactPhone: newProperty.contactPhone.trim(),
       furnishing: newProperty.furnishing || '',
       image: newProperty.images && newProperty.images.length > 0 ? newProperty.images[0] : defaultProperty,
-      legalDocs: newProperty.legalDocs || []
+      legalDocs: validLegalDocs // Use filtered valid documents only
     };
     // Don't add to local state - let API call refresh the data
     // Fire-and-forget API persist; on success, replace temp ID with DB ID
@@ -1189,7 +1287,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
           amenities: JSON.stringify(newProperty.amenities || []),
           images: JSON.stringify(newProperty.images || []),
           additional_notes: newProperty.additionalNotes || '',
-          legal_documents: JSON.stringify(newProperty.legalDocs || []),
+          legal_documents: JSON.stringify(validLegalDocs), // Use filtered valid documents
           owner_id: currentUserIdRawCreate ? parseInt(currentUserIdRawCreate, 10) : undefined
         };
         console.log('Sending payload:', payload);

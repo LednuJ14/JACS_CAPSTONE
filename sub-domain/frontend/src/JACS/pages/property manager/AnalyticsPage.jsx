@@ -27,6 +27,7 @@ const AnalyticsPage = () => {
   const [data, setData] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [rawApiData, setRawApiData] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (!apiService.isAuthenticated()) {
@@ -56,6 +57,58 @@ const AnalyticsPage = () => {
       return num.toLocaleString('en-US');
     } catch {
       return '0';
+    }
+  };
+
+  const handleDownloadReport = async (format) => {
+    try {
+      setDownloading(true);
+      const propertyBaseURL = apiService.propertyBaseURL || 'http://localhost:5001/api';
+      
+      const params = new URLSearchParams({
+        format: format
+      });
+      
+      const url = `${propertyBaseURL}/analytics/download/${format}?${params.toString()}`;
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData = null;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText };
+        }
+        throw new Error(errorData.error || errorData.message || `Failed to download ${format} report`);
+      }
+      
+      const blob = await response.blob();
+      
+      // Create download link
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      
+      // Generate filename
+      const formatExt = format === 'excel' ? 'xlsx' : format;
+      const dateStr = new Date().toISOString().split('T')[0];
+      link.download = `analytics_report_${dateStr}.${formatExt}`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      alert(`Failed to download ${format.toUpperCase()} report: ${error.message || 'Unknown error'}`);
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -375,14 +428,80 @@ const AnalyticsPage = () => {
                   </p>
                 )}
               </div>
-              <button
-                onClick={fetchAnalyticsData}
-                disabled={loading}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 self-start sm:self-auto disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                {loading ? 'Refreshing...' : 'Refresh Data'}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={fetchAnalyticsData}
+                  disabled={loading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 self-start sm:self-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  {loading ? 'Refreshing...' : 'Refresh Data'}
+                </button>
+                
+                {/* Download Buttons */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleDownloadReport('pdf')}
+                    disabled={downloading || !data}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
+                    title="Download PDF Report"
+                  >
+                    {downloading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span>PDF</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleDownloadReport('excel')}
+                    disabled={downloading || !data}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
+                    title="Download Excel Report"
+                  >
+                    {downloading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span>Excel</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleDownloadReport('csv')}
+                    disabled={downloading || !data}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg text-sm"
+                    title="Download CSV Report"
+                  >
+                    {downloading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span>CSV</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

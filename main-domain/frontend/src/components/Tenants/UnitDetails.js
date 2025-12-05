@@ -1,5 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import defaultUnit from '../../assets/images/default_unit.png';
+
+// Fix for default marker icon in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+});
+
+// Component to handle map zoom when coordinates change
+function MapZoom({ center, zoom }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, zoom);
+  }, [map, center, zoom]);
+  return null;
+}
 
 const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -7,6 +27,68 @@ const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
   const [newRating, setNewRating] = useState(0);
   const [newComment, setNewComment] = useState('');
   const [reviewerName, setReviewerName] = useState('');
+  const [geocodedCoords, setGeocodedCoords] = useState(null);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+
+  // Geocode address if coordinates are not available
+  useEffect(() => {
+    if (!property) return;
+    
+    const geocodeAddress = async () => {
+      // Check if we already have coordinates
+      const lat = property.latitude || property.lat;
+      const lon = property.longitude || property.lng || property.lon;
+      
+      if (lat && lon) {
+        // Already have coordinates, no need to geocode
+        return;
+      }
+
+      // Build address string for geocoding
+      const addressParts = [];
+      if (property.buildingName) addressParts.push(property.buildingName);
+      if (property.street) addressParts.push(property.street);
+      if (property.barangay) addressParts.push(property.barangay);
+      if (property.city) addressParts.push(property.city);
+      if (property.province) addressParts.push(property.province);
+      
+      const address = addressParts.length > 0 
+        ? addressParts.join(', ')
+        : property.address;
+
+      if (!address || address === 'Address not available') {
+        return;
+      }
+
+      try {
+        setIsGeocoding(true);
+        // Use Nominatim (OpenStreetMap's geocoding service)
+        const encodedAddress = encodeURIComponent(address);
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodedAddress}&limit=1`,
+          {
+            headers: {
+              'User-Agent': 'JACS Property Platform'
+            }
+          }
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.length > 0) {
+            const { lat, lon } = data[0];
+            setGeocodedCoords({ lat: parseFloat(lat), lon: parseFloat(lon) });
+          }
+        }
+      } catch (error) {
+        console.error('Geocoding error:', error);
+      } finally {
+        setIsGeocoding(false);
+      }
+    };
+
+    geocodeAddress();
+  }, [property]);
 
   if (!property) return null;
 
@@ -33,10 +115,6 @@ const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
 
   const handleInquiry = () => {
     onInquireNow(property);
-  };
-
-  const handleSave = () => {
-    alert('Property saved to your favorites!');
   };
 
   const handleSubmitRating = () => {
@@ -258,7 +336,7 @@ const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
 
                 {/* Financial Summary */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Financial Summary</h3>
+                  <h3 className="text-lg font-bold text-gray-900 mb-4">Rental Fees</h3>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-600">Monthly Rent</span>
@@ -322,62 +400,100 @@ const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
                 </div>
               )}
 
-              {/* Property Information */}
-              {(property.buildingName || property.street || property.barangay || property.city || property.address || property.propertyTitle) && (
+              {/* Address */}
+              {(property.buildingName || property.street || property.barangay || property.city || property.address) && (
                 <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
                   <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                     <span className="w-1 h-5 bg-black rounded-full mr-3"></span>
-                    Property Information
+                    Address
                   </h3>
-                  <div className="space-y-3">
-                    {property.buildingName && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Building:</span>
-                        <span className="text-sm text-gray-800">{property.buildingName}</span>
-                      </div>
-                    )}
-                    {property.street && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Street:</span>
-                        <span className="text-sm text-gray-800">{property.street}</span>
-                      </div>
-                    )}
-                    {property.barangay && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Barangay:</span>
-                        <span className="text-sm text-gray-800">{property.barangay}</span>
-                      </div>
-                    )}
-                    {(property.city || property.province) && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">City/Province:</span>
-                        <span className="text-sm text-gray-800">
-                          {property.city && property.province ? `${property.city}, ${property.province}` : property.city || property.province}
-                        </span>
-                      </div>
-                    )}
-                    {property.postalCode && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Postal Code:</span>
-                        <span className="text-sm text-gray-800">{property.postalCode}</span>
-                      </div>
-                    )}
-                    {/* Only show address fallback if we don't have any individual components and address is different from city/province */}
-                    {!property.street && !property.barangay && property.address && 
-                     property.address !== `${property.city || ''}, ${property.province || ''}`.trim().replace(/^,\s*|,\s*$/g, '') && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Address:</span>
-                        <span className="text-sm text-gray-800">{property.address}</span>
-                      </div>
-                    )}
-                    {property.propertyType && (
-                      <div className="flex items-start">
-                        <span className="text-sm font-medium text-gray-600 w-32 flex-shrink-0">Type:</span>
-                        <span className="text-sm text-gray-800">
-                          {property.propertyType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                        </span>
-                      </div>
-                    )}
+                  <div className="space-y-4">
+                    {/* Construct OSM-formatted address */}
+                    {(() => {
+                      const addressParts = [];
+                      if (property.buildingName) addressParts.push(property.buildingName);
+                      if (property.street) addressParts.push(property.street);
+                      if (property.barangay) addressParts.push(property.barangay);
+                      if (property.city) addressParts.push(property.city);
+                      if (property.province) addressParts.push(property.province);
+                      if (property.postalCode || property.postal_code) addressParts.push(property.postalCode || property.postal_code);
+                      
+                      const osmAddress = addressParts.length > 0 
+                        ? addressParts.join(', ')
+                        : property.address || 'Address not available';
+                      
+                      // Get coordinates for the map - prioritize property coordinates, then geocoded
+                      const lat = property.latitude || property.lat || (geocodedCoords?.lat);
+                      const lon = property.longitude || property.lng || property.lon || (geocodedCoords?.lon);
+                      
+                      // Default to Cebu City center if no coordinates available
+                      const defaultLat = 10.3157;
+                      const defaultLon = 123.8854;
+                      
+                      const mapLat = lat ? parseFloat(lat) : defaultLat;
+                      const mapLon = lon ? parseFloat(lon) : defaultLon;
+                      const hasCoordinates = lat && lon;
+                      const mapZoom = hasCoordinates ? 16 : 13; // Zoom in more when we have exact coordinates
+                      
+                      return (
+                        <>
+                          <div className="flex items-start">
+                            <div className="flex-1">
+                              <p className="text-sm text-gray-800 leading-relaxed font-medium">{osmAddress}</p>
+                              {isGeocoding && (
+                                <p className="text-xs text-gray-500 mt-1">Locating address...</p>
+                              )}
+                              {!hasCoordinates && !isGeocoding && (
+                                <p className="text-xs text-gray-500 mt-1">Map shows approximate location</p>
+                              )}
+                            </div>
+                          </div>
+                          {/* Leaflet OpenStreetMap with Marker */}
+                          <div className="w-full h-64 rounded-lg overflow-hidden border border-gray-200">
+                            <MapContainer
+                              key={`${mapLat}-${mapLon}`} // Force re-render when coordinates change
+                              center={[mapLat, mapLon]}
+                              zoom={mapZoom}
+                              style={{ height: '100%', width: '100%', zIndex: 0 }}
+                              scrollWheelZoom={true}
+                              whenReady={(map) => {
+                                // Ensure map is properly initialized
+                                map.target.invalidateSize();
+                              }}
+                            >
+                              <TileLayer
+                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                              />
+                              <MapZoom center={[mapLat, mapLon]} zoom={mapZoom} />
+                              {/* Always show marker if we have coordinates */}
+                              {hasCoordinates && (
+                                <Marker 
+                                  position={[mapLat, mapLon]}
+                                  icon={L.icon({
+                                    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+                                    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+                                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+                                    iconSize: [25, 41],
+                                    iconAnchor: [12, 41],
+                                    popupAnchor: [1, -34],
+                                    shadowSize: [41, 41]
+                                  })}
+                                >
+                                  <Popup>
+                                    <div className="text-sm">
+                                      <strong>Property Location</strong>
+                                      <br />
+                                      {osmAddress}
+                                    </div>
+                                  </Popup>
+                                </Marker>
+                              )}
+                            </MapContainer>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -438,12 +554,6 @@ const UnitDetails = ({ property, onClose, onInquireNow = () => {} }) => {
           {/* Sticky Footer Actions */}
           <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 shadow-lg">
             <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={handleSave}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 px-6 rounded-xl font-bold text-sm transition-all"
-              >
-                SAVE TO FAVORITES
-              </button>
               <button
                 onClick={handleInquiry}
                 className="flex-1 bg-black hover:bg-gray-800 text-white py-3 px-6 rounded-xl font-bold text-sm transition-all shadow-md"

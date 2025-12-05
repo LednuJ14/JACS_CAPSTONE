@@ -376,32 +376,66 @@ class SubscriptionRepository:
         from sqlalchemy import text
         from datetime import datetime
         
-        if payment_date:
-            query = text("""
-                UPDATE subscription_bills 
-                SET status = :status, payment_date = :payment_date, updated_at = :updated_at
-                WHERE id = :bill_id
-            """)
-            db.session.execute(query, {
-                'status': status,
-                'payment_date': payment_date,
-                'updated_at': datetime.now(),
-                'bill_id': bill_id
-            })
-        else:
-            query = text("""
-                UPDATE subscription_bills 
-                SET status = :status, updated_at = :updated_at
-                WHERE id = :bill_id
-            """)
-            db.session.execute(query, {
-                'status': status,
-                'updated_at': datetime.now(),
-                'bill_id': bill_id
-            })
+        result = None
+        rows_updated = 0
+        
+        # Try with updated_at first, fallback to without if column doesn't exist
+        try:
+            if payment_date:
+                query = text("""
+                    UPDATE subscription_bills 
+                    SET status = :status, payment_date = :payment_date, updated_at = :updated_at
+                    WHERE id = :bill_id
+                """)
+                result = db.session.execute(query, {
+                    'status': status,
+                    'payment_date': payment_date,
+                    'updated_at': datetime.now(),
+                    'bill_id': bill_id
+                })
+                rows_updated = result.rowcount
+            else:
+                query = text("""
+                    UPDATE subscription_bills 
+                    SET status = :status, updated_at = :updated_at
+                    WHERE id = :bill_id
+                """)
+                result = db.session.execute(query, {
+                    'status': status,
+                    'updated_at': datetime.now(),
+                    'bill_id': bill_id
+                })
+                rows_updated = result.rowcount
+        except Exception:
+            # Fallback: update without updated_at if column doesn't exist
+            if payment_date:
+                query = text("""
+                    UPDATE subscription_bills 
+                    SET status = :status, payment_date = :payment_date
+                    WHERE id = :bill_id
+                """)
+                result = db.session.execute(query, {
+                    'status': status,
+                    'payment_date': payment_date,
+                    'bill_id': bill_id
+                })
+                rows_updated = result.rowcount
+            else:
+                query = text("""
+                    UPDATE subscription_bills 
+                    SET status = :status
+                    WHERE id = :bill_id
+                """)
+                result = db.session.execute(query, {
+                    'status': status,
+                    'bill_id': bill_id
+                })
+                rows_updated = result.rowcount
         
         db.session.commit()
-        return True
+        
+        # Return True only if rows were actually updated
+        return rows_updated > 0
 
     def get_plan_by_id(self, plan_id: int):
         """Get subscription plan by ID (do not restrict by is_active).

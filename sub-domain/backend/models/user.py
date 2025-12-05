@@ -27,6 +27,13 @@ class UserRole(enum.Enum):
             return cls[value_upper]
         return cls.TENANT
 
+class UserStatus(enum.Enum):
+    """User status enumeration."""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    SUSPENDED = "suspended"
+    PENDING_VERIFICATION = "pending_verification"
+
 class User(db.Model):
     __tablename__ = 'users'
     
@@ -45,7 +52,7 @@ class User(db.Model):
     # Note: Database may still have ADMIN in enum, but subdomain doesn't use it
     # Database has: enum('ADMIN','MANAGER','TENANT','STAFF')
     role = db.Column(db.Enum('ADMIN', 'MANAGER', 'TENANT', 'STAFF', name='role', create_constraint=False), nullable=False, default='TENANT')
-    is_active = db.Column(db.Boolean, default=True, nullable=True)  # Database has nullable=YES
+    status = db.Column(db.Enum(UserStatus), nullable=False, default=UserStatus.PENDING_VERIFICATION)
     # Database has email_verified, not is_verified
     email_verified = db.Column(db.Boolean, default=False, nullable=True)
     
@@ -75,7 +82,7 @@ class User(db.Model):
         return getattr(self, 'password_reset_expires', None)
     
     # Profile Information
-    avatar_url = db.Column(db.String(255))
+    profile_image_url = db.Column(db.String(255))
     address = db.Column(db.Text)
     emergency_contact_name = db.Column(db.String(100))
     emergency_contact_phone = db.Column(db.String(20))
@@ -90,7 +97,7 @@ class User(db.Model):
     tenant_profile = db.relationship('Tenant', back_populates='user', uselist=False, cascade='all, delete-orphan')
     staff_profile = db.relationship('Staff', back_populates='user', uselist=False, cascade='all, delete-orphan')
     
-    def __init__(self, email, username=None, password=None, first_name=None, last_name=None, role='TENANT', **kwargs):
+    def __init__(self, email, username=None, password=None, first_name=None, last_name=None, role='TENANT', status=None, **kwargs):
         self.email = email.lower().strip() if email else ''
         self.username = username.lower().strip() if username else None
         self.first_name = first_name.strip() if first_name else ''
@@ -102,6 +109,18 @@ class User(db.Model):
             self.role = role.upper()
         else:
             self.role = 'TENANT'
+        # Handle status - use provided status or default to PENDING_VERIFICATION
+        if status is None:
+            self.status = UserStatus.PENDING_VERIFICATION
+        elif isinstance(status, UserStatus):
+            self.status = status
+        elif isinstance(status, str):
+            try:
+                self.status = UserStatus(status.lower())
+            except ValueError:
+                self.status = UserStatus.PENDING_VERIFICATION
+        else:
+            self.status = UserStatus.PENDING_VERIFICATION
         if password:
             self.set_password(password)
         
@@ -170,6 +189,14 @@ class User(db.Model):
         role_str = str(self.role).upper() if self.role else ''
         return role_str == 'TENANT' or (isinstance(self.role, UserRole) and self.role == UserRole.TENANT)
     
+    def is_active_user(self):
+        """Check if user account is active."""
+        # Handle both enum and string status values
+        if isinstance(self.status, UserStatus):
+            return self.status == UserStatus.ACTIVE
+        status_str = str(self.status).lower() if self.status else ''
+        return status_str == 'active'
+    
     def to_dict(self, include_sensitive=False):
         """Convert user to dictionary."""
         try:
@@ -202,12 +229,14 @@ class User(db.Model):
             'phone_number': getattr(self, 'phone_number', None),
             'date_of_birth': self.date_of_birth.isoformat() if hasattr(self, 'date_of_birth') and self.date_of_birth else None,
             'role': role_value,
-            'is_active': getattr(self, 'is_active', True) if getattr(self, 'is_active', True) is not None else True,
+            'status': getattr(self.status, 'value', str(self.status)) if hasattr(self, 'status') and self.status else 'pending_verification',
+            'is_active': self.is_active_user(),  # Computed from status for backward compatibility
             'is_verified': self.is_verified,  # Use property that maps email_verified
             'created_at': self.created_at.isoformat() if hasattr(self, 'created_at') and self.created_at else None,
             'updated_at': self.updated_at.isoformat() if hasattr(self, 'updated_at') and self.updated_at else None,
             'last_login': self.last_login.isoformat() if hasattr(self, 'last_login') and self.last_login else None,
-            'avatar_url': getattr(self, 'avatar_url', None),
+            'profile_image_url': getattr(self, 'profile_image_url', None),
+            'avatar_url': getattr(self, 'profile_image_url', None),  # Backward compatibility alias
             'address': getattr(self, 'address', None),
             'emergency_contact_name': getattr(self, 'emergency_contact_name', None),
             'emergency_contact_phone': getattr(self, 'emergency_contact_phone', None),

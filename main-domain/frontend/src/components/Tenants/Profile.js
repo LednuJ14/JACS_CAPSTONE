@@ -4,20 +4,20 @@ import defaultProfile from '../../assets/images/default_profile.png';
 
 const Profile = ({ onClose }) => {
   const [profileData, setProfileData] = useState({
-    firstName: 'JOHN',
-    lastName: 'SMITH',
-    email: 'johnsmith@gmail.com',
-    phone: '+63 912 345 6789',
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
     dateOfBirth: '',
-    addressLine1: '',
-    addressLine2: '',
+    address: '',
     city: '',
     province: '',
     postalCode: '',
     country: '',
-    position: 'Student',
-    bio: 'Student looking for affordable accommodation near the university. Prefer quiet environment for studying.'
+    bio: ''
   });
+  
+  const [originalProfileData, setOriginalProfileData] = useState(null);
 
   const [stats, setStats] = useState({
     totalInquiries: 0,
@@ -93,29 +93,29 @@ const Profile = ({ onClose }) => {
         last_name: profileData.lastName,
         phone_number: profileData.phone || null,
         date_of_birth: normalizeDateForInput(profileData.dateOfBirth) || null,
-        address_line1: profileData.addressLine1 || null,
-        address_line2: profileData.addressLine2 || null,
+        address: profileData.address || null,
         city: profileData.city || null,
         province: profileData.province || null,
         postal_code: profileData.postalCode || null,
         country: profileData.country || null,
+        bio: profileData.bio || null,
       };
       const res = await ApiService.updateTenantProfile(payload);
       const updated = res?.profile || {};
-      setProfileData(prev => ({
-        ...prev,
-        firstName: updated.first_name || prev.firstName,
-        lastName: updated.last_name || prev.lastName,
-        email: updated.email || prev.email,
-        phone: updated.phone_number || prev.phone,
-        dateOfBirth: normalizeDateForInput(updated.date_of_birth) || prev.dateOfBirth,
-        addressLine1: updated.address_line1 || prev.addressLine1,
-        addressLine2: updated.address_line2 || prev.addressLine2,
-        city: updated.city || prev.city,
-        province: updated.province || prev.province,
-        postalCode: updated.postal_code || prev.postalCode,
-        country: updated.country || prev.country,
-      }));
+      const updatedData = {
+        firstName: updated.first_name || profileData.firstName,
+        lastName: updated.last_name || profileData.lastName,
+        email: updated.email || profileData.email,
+        phone: updated.phone_number || profileData.phone,
+        dateOfBirth: normalizeDateForInput(updated.date_of_birth) || profileData.dateOfBirth,
+        address: updated.address || profileData.address,
+        city: updated.city || profileData.city,
+        province: updated.province || profileData.province,
+        postalCode: updated.postal_code || profileData.postalCode,
+        country: updated.country || profileData.country,
+        bio: updated.bio || profileData.bio,
+      };
+      setProfileData(updatedData);
       if (updated.statistics) {
         setStats({
           totalInquiries: updated.statistics.total_inquiries || 0,
@@ -127,20 +127,20 @@ const Profile = ({ onClose }) => {
       try {
         const fresh = await ApiService.getTenantProfile();
         const p = fresh?.profile || {};
-        setProfileData(prev => ({
-          ...prev,
-          firstName: p.first_name || prev.firstName,
-          lastName: p.last_name || prev.lastName,
-          email: p.email || prev.email,
-          phone: p.phone_number || prev.phone,
-          dateOfBirth: normalizeDateForInput(p.date_of_birth) || prev.dateOfBirth,
-          addressLine1: p.address_line1 || prev.addressLine1,
-          addressLine2: p.address_line2 || prev.addressLine2,
-          city: p.city || prev.city,
-          province: p.province || prev.province,
-          postalCode: p.postal_code || prev.postalCode,
-          country: p.country || prev.country,
-        }));
+        const freshData = {
+          firstName: p.first_name || profileData.firstName,
+          lastName: p.last_name || profileData.lastName,
+          email: p.email || profileData.email,
+          phone: p.phone_number || profileData.phone,
+          dateOfBirth: normalizeDateForInput(p.date_of_birth) || profileData.dateOfBirth,
+          address: p.address || profileData.address,
+          city: p.city || profileData.city,
+          province: p.province || profileData.province,
+          postalCode: p.postal_code || profileData.postalCode,
+          country: p.country || profileData.country,
+          bio: p.bio || profileData.bio,
+        };
+        setProfileData(freshData);
         if (p.statistics) {
           setStats({
             totalInquiries: p.statistics.total_inquiries || 0,
@@ -153,6 +153,8 @@ const Profile = ({ onClose }) => {
       setSelectedFile(null);
       alert('Profile updated successfully!');
       
+      // Trigger profile refresh in header
+      window.dispatchEvent(new Event('profile-updated'));
       // Trigger notification refresh
       window.dispatchEvent(new Event('notification-refresh'));
     } catch (error) {
@@ -164,23 +166,13 @@ const Profile = ({ onClose }) => {
   };
 
   const handleCancel = () => {
-    // Reset to original data
-    setProfileData({
-      firstName: 'JOHN',
-      lastName: 'SMITH',
-      email: 'johnsmith@gmail.com',
-      phone: '+63 912 345 6789',
-      dateOfBirth: '',
-      addressLine1: '',
-      addressLine2: '',
-      city: '',
-      province: '',
-      postalCode: '',
-      country: '',
-      position: 'Student',
-      bio: 'Student looking for affordable accommodation near the university. Prefer quiet environment for studying.'
-    });
+    // Reset to original fetched data
+    if (originalProfileData) {
+      setProfileData({ ...originalProfileData });
+    }
     setIsEditing(false);
+    setSelectedFile(null);
+    setPreviewUrl(originalProfileData?.profileImageUrl || defaultProfile);
   };
 
   useEffect(() => {
@@ -190,20 +182,22 @@ const Profile = ({ onClose }) => {
         const data = await ApiService.getTenantProfile();
         const p = data?.profile || {};
         if (p && (p.first_name || p.email)) {
-          setProfileData(prev => ({
-            ...prev,
-            firstName: p.first_name || prev.firstName,
-            lastName: p.last_name || prev.lastName,
-            email: p.email || prev.email,
-            phone: p.phone_number || prev.phone,
-            dateOfBirth: normalizeDateForInput(p.date_of_birth) || prev.dateOfBirth,
-            addressLine1: p.address_line1 || prev.addressLine1,
-            addressLine2: p.address_line2 || prev.addressLine2,
-            city: p.city || prev.city,
-            province: p.province || prev.province,
-            postalCode: p.postal_code || prev.postalCode,
-            country: p.country || prev.country,
-          }));
+          const fetchedData = {
+            firstName: p.first_name || '',
+            lastName: p.last_name || '',
+            email: p.email || '',
+            phone: p.phone_number || '',
+            dateOfBirth: normalizeDateForInput(p.date_of_birth) || '',
+            // Fetch address fields from registration/user record
+            address: p.address || '',
+            city: p.city || '',
+            province: p.province || '',
+            postalCode: p.postal_code || '',
+            country: p.country || 'Philippines', // Default to Philippines if not set
+            bio: p.bio || '',
+          };
+          setProfileData(fetchedData);
+          setOriginalProfileData({ ...fetchedData, profileImageUrl: p.profile_image_url || defaultProfile });
           if (p.profile_image_url) setPreviewUrl(p.profile_image_url);
           else setPreviewUrl(defaultProfile);
           if (p.statistics) {
@@ -213,6 +207,7 @@ const Profile = ({ onClose }) => {
               memberSince: p.statistics.member_since || ''
             });
           }
+          setLoading(false);
           return;
         }
       } catch (error) {
@@ -220,23 +215,26 @@ const Profile = ({ onClose }) => {
       }
 
       // Fallback: use /auth/me for basic user info if tenant route fails or user is not tenant
+      // This ensures we fetch address data from the User model (where registration data is stored)
       try {
         const me = await ApiService.me();
         const u = me?.user || {};
-        setProfileData(prev => ({
-          ...prev,
-          firstName: u.first_name || prev.firstName,
-          lastName: u.last_name || prev.lastName,
-          email: u.email || prev.email,
-          phone: u.phone_number || prev.phone,
-          dateOfBirth: normalizeDateForInput(u.date_of_birth) || prev.dateOfBirth,
-          addressLine1: u.address_line1 || prev.addressLine1,
-          addressLine2: u.address_line2 || prev.addressLine2,
-          city: u.city || prev.city,
-          province: u.province || prev.province,
-          postalCode: u.postal_code || prev.postalCode,
-          country: u.country || prev.country,
-        }));
+        const fallbackData = {
+          firstName: u.first_name || '',
+          lastName: u.last_name || '',
+          email: u.email || '',
+          phone: u.phone_number || '',
+          dateOfBirth: normalizeDateForInput(u.date_of_birth) || '',
+          // Fetch address fields from user record (includes registration address)
+          address: u.address || '',
+          city: u.city || '',
+          province: u.province || '',
+          postalCode: u.postal_code || '',
+          country: u.country || 'Philippines', // Default to Philippines if not set
+          bio: u.bio || '',
+        };
+        setProfileData(fallbackData);
+        setOriginalProfileData({ ...fallbackData, profileImageUrl: u.profile_image_url || defaultProfile });
         if (u.profile_image_url) setPreviewUrl(u.profile_image_url);
         else setPreviewUrl(defaultProfile);
       } catch (e) {
@@ -319,11 +317,11 @@ const Profile = ({ onClose }) => {
 
         {/* Content */}
         <div className="h-[calc(95vh-140px)] overflow-y-auto">
-          <div className="p-8">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="p-4 md:p-6 lg:p-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 lg:gap-8">
               {/* Left Column - Profile Photo */}
               <div className="lg:col-span-1">
-                <div className="bg-gradient-to-br from-white to-gray-50/50 rounded-3xl p-8 border border-gray-200/60 shadow-sm hover:shadow-md transition-all duration-300">
+                <div className="bg-gradient-to-br from-white to-gray-50/50 rounded-3xl p-4 md:p-6 lg:p-8 border border-gray-200/60 shadow-sm hover:shadow-md transition-all duration-300">
                   <div className="text-center">
                     <div className="relative inline-block">
                       <div className="w-40 h-40 rounded-full overflow-hidden border-4 border-white shadow-xl mx-auto bg-gradient-to-br from-gray-100 to-gray-200">
@@ -473,7 +471,6 @@ const Profile = ({ onClose }) => {
                       </div>
                     </div>
                   </div>
-                </div>
 
                   {/* Address Information */}
                   <div className="bg-gradient-to-br from-white to-gray-50/50 rounded-3xl p-8 border border-gray-200/60 shadow-sm hover:shadow-md transition-all duration-300">
@@ -490,31 +487,15 @@ const Profile = ({ onClose }) => {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2 md:col-span-2">
-                        <label className="block text-sm font-semibold text-black">Street Address</label>
-                        <input
-                          type="text"
-                          name="addressLine1"
-                          value={profileData.addressLine1}
+                        <label className="block text-sm font-semibold text-black">Address</label>
+                        <textarea
+                          name="address"
+                          value={profileData.address}
                           onChange={handleInputChange}
                           disabled={!isEditing}
-                          placeholder="Enter your street address"
-                          className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 ${
-                            isEditing 
-                              ? 'border-gray-200 bg-white hover:border-gray-300' 
-                              : 'border-gray-200 bg-gray-50'
-                          }`}
-                        />
-                      </div>
-                      <div className="space-y-2 md:col-span-2">
-                        <label className="block text-sm font-semibold text-black">Apartment, Suite, etc. (Optional)</label>
-                        <input
-                          type="text"
-                          name="addressLine2"
-                          value={profileData.addressLine2}
-                          onChange={handleInputChange}
-                          disabled={!isEditing}
-                          placeholder="Apartment, suite, unit, building, floor, etc."
-                          className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 ${
+                          placeholder="Enter your full address (street, apartment, suite, etc.)"
+                          rows={3}
+                          className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 resize-none ${
                             isEditing 
                               ? 'border-gray-200 bg-white hover:border-gray-300' 
                               : 'border-gray-200 bg-gray-50'
@@ -587,9 +568,8 @@ const Profile = ({ onClose }) => {
                       </div>
                     </div>
                   </div>
-                </div>
 
-                  {/* Bio */}
+                  {/* About Me */}
                   <div className="bg-gradient-to-br from-white to-gray-50/50 rounded-3xl p-8 border border-gray-200/60 shadow-sm hover:shadow-md transition-all duration-300">
                     <div className="flex items-center space-x-3 mb-6">
                       <div className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center">
@@ -599,23 +579,26 @@ const Profile = ({ onClose }) => {
                       </div>
                       <div>
                         <h3 className="text-lg font-bold text-black">About Me</h3>
-                        <p className="text-sm text-black">Tell others about yourself</p>
+                        <p className="text-sm text-gray-500">Tell others about yourself</p>
                       </div>
                     </div>
                     <div className="space-y-2">
                       <textarea
                         name="bio"
-                        value={profileData.bio}
+                        value={profileData.bio || ''}
                         onChange={handleInputChange}
                         disabled={!isEditing}
-                        rows={5}
+                        rows={6}
                         placeholder="Write a brief description about yourself, your interests, and what you're looking for in accommodation..."
-                        className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 resize-none ${
+                        className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 resize-none leading-relaxed ${
                           isEditing 
                             ? 'border-gray-200 bg-white hover:border-gray-300' 
                             : 'border-gray-200 bg-gray-50'
                         }`}
                       />
+                      {!isEditing && !profileData.bio && (
+                        <p className="text-sm text-gray-400 italic">No bio information provided yet.</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -623,6 +606,8 @@ const Profile = ({ onClose }) => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
   );
 };
 

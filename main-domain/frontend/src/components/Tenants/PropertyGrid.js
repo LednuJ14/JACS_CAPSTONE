@@ -163,6 +163,9 @@ const PropertyGrid = ({ filters = {} }) => {
               if (property.postal_code) parts.push(property.postal_code);
               return parts.length > 0 ? parts.join(', ') : (propertyInfo.address || property.address || '');
             })(),
+            // Location coordinates
+            latitude: propertyInfo.latitude || property.latitude || null,
+            longitude: propertyInfo.longitude || property.longitude || null,
             propertyTitle: propertyInfo.property_title || property.title,
             propertyDescription: propertyInfo.property_description || property.description,
             // Contact

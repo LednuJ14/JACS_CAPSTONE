@@ -45,7 +45,12 @@ def get_manager_inquiries(current_user):
         # Get all inquiries for manager's properties using raw SQL to avoid enum mismatches
         from sqlalchemy import text
         
+        # Ensure we have property_ids as a tuple for SQL IN clause (MySQL/MariaDB compatible)
+        property_ids_tuple = tuple(property_ids) if len(property_ids) > 1 else (property_ids[0],) if len(property_ids) == 1 else ()
+        
         # Query with unit_id column (now always available)
+        # Explicitly filter by property_ids and ensure property_manager_id matches current_user
+        # This ensures we only get inquiries for properties owned by this manager
         inquiries = db.session.execute(text(
             """
             SELECT i.id, i.property_id, i.tenant_id, i.property_manager_id,
@@ -60,21 +65,36 @@ def get_manager_inquiries(current_user):
             INNER JOIN (
               SELECT MAX(created_at) AS max_created_at, property_id
               FROM inquiries
-              WHERE property_id IN :pids AND (is_archived IS NULL OR is_archived = 0)
+              WHERE property_id IN :pids 
+                AND (is_archived IS NULL OR is_archived = 0)
               GROUP BY property_id
             ) latest
             ON i.property_id = latest.property_id
             AND i.created_at = latest.max_created_at
+            WHERE i.property_id IN :pids
+              AND (i.property_manager_id = :manager_id OR i.property_manager_id IS NULL)
+              AND (i.is_archived IS NULL OR i.is_archived = 0)
             ORDER BY i.created_at DESC
             """
-        ), { 'pids': tuple(property_ids) }).mappings().all()
+        ), { 
+            'pids': property_ids_tuple,
+            'manager_id': current_user.id
+        }).mappings().all()
         
         inquiry_data = []
         for inquiry in inquiries:
-            # Get property info
+            # Get property info and verify ownership (extra security check)
             prop_row = db.session.execute(text(
-                "SELECT id, title, building_name, address, city, province FROM properties WHERE id = :pid"
-            ), { 'pid': inquiry.get('property_id') }).mappings().first()
+                "SELECT id, title, building_name, address, city, province, owner_id FROM properties WHERE id = :pid AND owner_id = :manager_id"
+            ), { 
+                'pid': inquiry.get('property_id'),
+                'manager_id': current_user.id
+            }).mappings().first()
+            
+            # Skip if property doesn't belong to this manager (shouldn't happen due to WHERE clause, but extra safety)
+            if not prop_row:
+                current_app.logger.warning(f'Inquiry {inquiry.get("id")} references property {inquiry.get("property_id")} not owned by manager {current_user.id}')
+                continue
             property_data = {
                 'id': prop_row.get('id') if prop_row else None,
                 'title': prop_row.get('title') if prop_row else 'Unknown Property',
@@ -661,8 +681,8 @@ def list_units(current_user, property_id):
                            WHERE tu.unit_id = u.id 
                            AND (tu.move_out_date IS NULL OR tu.move_out_date > CURDATE())
                        ) THEN 'occupied'
-                       ELSE 'vacant'
-                   END AS computed_status,
+                       ELSE NULL
+                   END AS has_active_tenant,
                    COALESCE((
                        SELECT COUNT(*) 
                        FROM inquiries i 
@@ -687,14 +707,30 @@ def list_units(current_user, property_id):
 
         units = []
         for r in rows:
-            # Use computed_status (based on tenant assignment) instead of stored status
-            # If unit has an active tenant assignment, it's occupied; otherwise vacant
-            computed_status = r.get('computed_status', 'vacant')
+            # Determine status: preserve 'draft' status, but override to 'occupied' if there's an active tenant
+            # Otherwise use the stored status from database
+            # IMPORTANT: Don't default to 'vacant' - preserve NULL or empty as-is, only normalize case
+            raw_status = r.get('status')
+            if raw_status:
+                stored_status = str(raw_status).lower().strip()
+            else:
+                # If status is NULL or empty, default to 'draft' (not 'vacant') for new units
+                stored_status = 'draft'
+            
+            has_active_tenant = r.get('has_active_tenant') == 'occupied'
+            
+            # If unit has active tenant, it's always occupied (regardless of stored status)
+            # Otherwise, preserve the stored status (draft, vacant, maintenance, etc.)
+            if has_active_tenant:
+                final_status = 'occupied'
+            else:
+                final_status = stored_status  # Preserve draft, vacant, maintenance, etc.
+            
             units.append({
                 'id': r.get('id'),
                 'name': r.get('unit_name'),
                 'unit_name': r.get('unit_name'),
-                'status': computed_status,  # Use computed status based on tenant assignment
+                'status': final_status,  # Use stored status, but override to occupied if tenant exists
                 'price': float(r.get('monthly_rent') or 0),
                 'size_sqm': r.get('size_sqm'),
                 'bedrooms': r.get('bedrooms'),
@@ -746,7 +782,12 @@ def create_unit(current_user, property_id):
         security_deposit = data.get('securityDeposit', 0)
         floor_number = data.get('floorNumber', 1)
         parking_spaces = data.get('parkingSpaces', 0)
-        status = data.get('status', 'vacant')
+        # Get status from request, default to 'draft' for new units (not 'vacant')
+        # This ensures new units are created as drafts until published
+        status = data.get('status', 'draft')
+        
+        # Log the status being saved for debugging
+        current_app.logger.info(f"Creating unit with status: '{status}' (raw from request: {data.get('status')})")
         
         # Validate required fields
         if not unit_name:
@@ -875,6 +916,16 @@ def create_unit(current_user, property_id):
         # Get the created unit ID
         unit_id = result.lastrowid
         
+        # Verify what was actually saved to database
+        saved_unit = db.session.execute(text(
+            "SELECT id, status FROM units WHERE id = :uid"
+        ), {'uid': unit_id}).first()
+        if saved_unit:
+            current_app.logger.info(f"Unit {unit_id} saved with status: '{saved_unit.status}' (expected: '{status}')")
+            # If status doesn't match, it means the database rejected 'draft' value
+            if str(saved_unit.status).lower() != str(status).lower():
+                current_app.logger.warning(f"Status mismatch! Sent '{status}' but database saved '{saved_unit.status}'. Database may not accept 'draft' status.")
+        
         # Return the created unit
         return jsonify({
             'message': 'Unit created successfully',
@@ -938,7 +989,9 @@ def update_unit(current_user, unit_id):
         security_deposit = data.get('securityDeposit', 0)
         floor_number = data.get('floorNumber', 1)
         parking_spaces = data.get('parkingSpaces', 0)
-        status = data.get('status', 'vacant')
+        # For updates, preserve existing status if not provided, but allow status changes
+        # Default to 'draft' if status is not provided (same as create)
+        status = data.get('status', 'draft')
         
         # Validate required fields
         if not unit_name:

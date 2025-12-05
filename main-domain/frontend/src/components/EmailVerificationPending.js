@@ -1,9 +1,141 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-const EmailVerificationPending = ({ email, onResendEmail, onBackToLogin }) => {
+const EmailVerificationPending = ({ email, onResendEmail, onBackToLogin, onVerificationReceived }) => {
   const [isResending, setIsResending] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState(''); // 'success' or 'error'
+  const [broadcastChannel, setBroadcastChannel] = useState(null);
+
+  // Set up BroadcastChannel listener to receive verification from other browser tabs (same browser)
+  useEffect(() => {
+    const channel = new BroadcastChannel('jacs_verification');
+    setBroadcastChannel(channel);
+
+    channel.onmessage = async (event) => {
+      if (event.data.type === 'VERIFY_EMAIL' && event.data.email === email) {
+        // Verification received from another browser tab - verify in this browser
+        setMessage('Verification link received! Verifying your email...');
+        setMessageType('success');
+        
+        try {
+          const response = await fetch('/api/auth/verify-email', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: event.data.email,
+              token: event.data.token
+            })
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            setMessage('Email verified successfully! Redirecting...');
+            setMessageType('success');
+            
+            // Clear verification session
+            localStorage.removeItem('pending_verification_session');
+            localStorage.removeItem('pending_verification_email');
+            
+            // Call the verification complete callback
+            if (onVerificationReceived) {
+              setTimeout(() => {
+                onVerificationReceived(data.user);
+              }, 1500);
+            }
+          } else {
+            setMessage(data.error || 'Email verification failed. Please try again.');
+            setMessageType('error');
+          }
+        } catch (error) {
+          console.error('Email verification error:', error);
+          setMessage('An error occurred during email verification. Please try again.');
+          setMessageType('error');
+        }
+      }
+    };
+
+    // Cleanup on unmount
+    return () => {
+      if (channel) {
+        channel.close();
+      }
+    };
+  }, [email, onVerificationReceived]);
+
+  // Poll server to check if email has been verified (for cross-browser verification)
+  useEffect(() => {
+    if (!email) return;
+
+    let pollCount = 0;
+    const maxPolls = 100; // Poll for up to 5 minutes (100 * 3 seconds)
+
+    // Poll every 3 seconds to check if email is verified
+    const pollInterval = setInterval(async () => {
+      pollCount++;
+      
+      // Stop polling after max attempts
+      if (pollCount > maxPolls) {
+        clearInterval(pollInterval);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/auth/check-verification-status?email=${encodeURIComponent(email)}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.verified && data.user) {
+            // Email has been verified! Redirect user
+            clearInterval(pollInterval);
+            setMessage('Email verified successfully! Redirecting to login...');
+            setMessageType('success');
+            
+            // Clear any existing session data first to prevent logging in to wrong account
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('token'); // Legacy token key
+            localStorage.removeItem('user_role');
+            localStorage.removeItem('user_id');
+            
+            // Clear verification session
+            localStorage.removeItem('pending_verification_session');
+            localStorage.removeItem('pending_verification_email');
+            
+            // Store verified email to show success message on login page
+            if (data.user && data.user.email) {
+              localStorage.setItem('verified_email', data.user.email);
+            }
+            
+            // Call the verification complete callback to redirect to login
+            if (onVerificationReceived) {
+              setTimeout(() => {
+                onVerificationReceived(data.user);
+              }, 1500);
+            }
+          }
+        }
+      } catch (error) {
+        // Silently handle errors - don't spam user with error messages
+        // Only log occasionally to avoid console spam
+        if (pollCount % 10 === 0) {
+          console.log('Waiting for email verification...');
+        }
+      }
+    }, 3000); // Poll every 3 seconds
+
+    // Cleanup interval on unmount
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [email, onVerificationReceived]);
 
   const handleResendEmail = async () => {
     setIsResending(true);
@@ -72,6 +204,16 @@ const EmailVerificationPending = ({ email, onResendEmail, onBackToLogin }) => {
                 <li>• Click the verification link in the email</li>
                 <li>• If you don't see it, check your spam folder</li>
               </ul>
+            </div>
+
+            {/* Active polling indicator */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <div className="flex items-center justify-center space-x-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"></div>
+                <p className="text-sm text-blue-700">
+                  Waiting for email verification... This page will automatically refresh when verified.
+                </p>
+              </div>
             </div>
 
             {/* Message display */}

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import apiService from '../../services/api';
+import { notificationRequestLock } from './notificationRequestLock';
 
 const TenantNotifications = ({ isOpen, onClose, onUpdate }) => {
   const [notifications, setNotifications] = useState([]);
@@ -7,13 +8,85 @@ const TenantNotifications = ({ isOpen, onClose, onUpdate }) => {
   const [error, setError] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const notificationRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const backoffAttemptsRef = useRef(0);
 
-  // Fetch notifications
+  // Fetch notifications with rate limiting protection
+  const fetchNotifications = useCallback(async (force = false) => {
+    const now = Date.now();
+    const timeSinceLastFetch = now - notificationRequestLock.lastFetchTime;
+    
+    // Prevent concurrent requests (shared lock across all notification components)
+    if (notificationRequestLock.isFetching) {
+      // If another component is fetching, wait a bit and try again
+      if (force) {
+        setTimeout(() => fetchNotifications(true), 500);
+      }
+      return;
+    }
+    
+    // Throttle requests - don't fetch if less than minTimeBetweenRequests has passed
+    if (!force && timeSinceLastFetch < notificationRequestLock.minTimeBetweenRequests) {
+      return;
+    }
+    
+    notificationRequestLock.isFetching = true;
+    notificationRequestLock.lastFetchTime = now;
+    
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await apiService.getTenantNotifications();
+      
+      if (data && data.notifications) {
+        setNotifications(data.notifications);
+        const unread = data.notifications.filter(n => !n.is_read).length;
+        setUnreadCount(unread);
+      } else {
+        setNotifications([]);
+        setUnreadCount(0);
+      }
+      // Clear any retry timeout on success and reset backoff
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+      backoffAttemptsRef.current = 0;
+    } catch (err) {
+      // Handle rate limit errors gracefully
+      if (err?.message?.includes('Rate limit') || err?.message?.includes('429')) {
+        console.warn('Rate limit hit in Notifications, backing off...');
+        setError('Rate limit exceeded. Please wait a moment...');
+        // Exponential backoff: wait 5 seconds, then 10, then 20, etc.
+        backoffAttemptsRef.current += 1;
+        const backoffTime = Math.min(30000, 5000 * Math.pow(2, backoffAttemptsRef.current - 1));
+        retryTimeoutRef.current = setTimeout(() => {
+          fetchNotifications(true);
+        }, backoffTime);
+      } else {
+        console.error('Failed to fetch notifications:', err);
+        setError('Failed to load notifications');
+        // Set empty array on error to show empty state
+        setNotifications([]);
+        setUnreadCount(0);
+      }
+    } finally {
+      notificationRequestLock.isFetching = false;
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch notifications when popover opens (with delay to avoid conflicts)
   useEffect(() => {
     if (isOpen) {
-      fetchNotifications();
+      // Add a small delay to avoid conflicts with NotificationBell's initial fetch
+      const timeoutId = setTimeout(() => {
+        fetchNotifications(true);
+      }, 300);
+      
+      return () => clearTimeout(timeoutId);
     }
-  }, [isOpen]);
+  }, [isOpen, fetchNotifications]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -32,33 +105,11 @@ const TenantNotifications = ({ isOpen, onClose, onUpdate }) => {
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
     };
   }, [isOpen, onClose]);
-
-  const fetchNotifications = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await apiService.getTenantNotifications();
-      
-      if (data && data.notifications) {
-        setNotifications(data.notifications);
-        const unread = data.notifications.filter(n => !n.is_read).length;
-        setUnreadCount(unread);
-      } else {
-        setNotifications([]);
-        setUnreadCount(0);
-      }
-    } catch (err) {
-      console.error('Failed to fetch notifications:', err);
-      setError('Failed to load notifications');
-      // Set empty array on error to show empty state
-      setNotifications([]);
-      setUnreadCount(0);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const markAsRead = async (notificationId) => {
     try {

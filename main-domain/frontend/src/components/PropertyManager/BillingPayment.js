@@ -17,9 +17,19 @@ const BillingPayment = () => {
     file: null,
     proofUrl: '',
     reference: '',
-    remarks: ''
+    remarks: '',
+    payment_method: 'GCash',
+    amount: 0,
+    invoiceNumber: null
   });
   const [error, setError] = useState(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const [cancellingBillingId, setCancellingBillingId] = useState(null);
+  const [showCancelBillingModal, setShowCancelBillingModal] = useState(false);
+  const [billingToCancel, setBillingToCancel] = useState(null);
   // Card form removed
 
   // Utility functions
@@ -38,7 +48,9 @@ const BillingPayment = () => {
       proofUrl: '',
       reference: '',
       remarks: '',
-      amount: Number(billing?.amount || 0)
+      payment_method: 'GCash',
+      amount: Number(billing?.amount || 0),
+      invoiceNumber: billing?.invoice_number || null
     });
     setShowManualProofModal(true);
   };
@@ -86,7 +98,18 @@ const BillingPayment = () => {
       ]);
 
       setCurrentPlan(planRes?.subscription || planRes);
-      setBillingHistory(historyRes?.billing_history || historyRes || []);
+      const history = historyRes?.billing_history || historyRes || [];
+      
+      // Apply cancelled status to entries that were previously cancelled (persist across refreshes)
+      const historyWithCancelled = history.map(b => {
+        if (recentlyCancelledIds.has(b.id)) {
+          return { ...b, status: 'cancelled' };
+        }
+        return b;
+      });
+      
+      // Create a new array to ensure React detects the state change
+      setBillingHistory([...historyWithCancelled]);
       // Payment methods removed
       
       // Normalize plans from backend and sort by monthly price
@@ -117,9 +140,207 @@ const BillingPayment = () => {
     }
   };
 
+  // Track recently cancelled billing IDs to prevent them from being treated as pending
+  // Load from localStorage on mount to persist across page refreshes
+  const [recentlyCancelledIds, setRecentlyCancelledIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem('cancelled_billing_ids');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  
+  // Save to localStorage whenever cancelled IDs change
+  useEffect(() => {
+    try {
+      localStorage.setItem('cancelled_billing_ids', JSON.stringify(Array.from(recentlyCancelledIds)));
+    } catch (error) {
+      console.error('Failed to save cancelled billing IDs:', error);
+    }
+  }, [recentlyCancelledIds]);
+  
+  // Check if there's a pending billing (excluding recently cancelled ones)
+  const hasPendingBilling = () => {
+    return billingHistory.some(billing => {
+      // Skip if this was recently cancelled
+      if (recentlyCancelledIds.has(billing.id)) {
+        return false;
+      }
+      const status = (billing.status || '').toLowerCase();
+      return status === 'pending';
+    });
+  };
+
   const handlePlanUpgrade = (plan) => {
+    // Check for pending billing before allowing plan selection
+    if (hasPendingBilling()) {
+      const pendingBilling = billingHistory.find(b => {
+        const status = (b.status || '').toLowerCase();
+        return status === 'pending';
+      });
+      const invoiceText = pendingBilling?.invoice_number 
+        ? ` (Invoice: ${pendingBilling.invoice_number})` 
+        : '';
+      setErrorMessage(`You have a pending billing${invoiceText} that needs to be paid or cancelled before selecting a new plan. Please upload proof of payment or cancel the pending subscription first.`);
+      setShowErrorModal(true);
+      return;
+    }
+    
     setSelectedPlan(plan);
     setShowUpgradeModal(true);
+  };
+
+  const handleCancelSubscription = async () => {
+    try {
+      setCancelling(true);
+      setError(null);
+      
+      // Find the pending billing
+      const pendingBilling = billingHistory.find(b => {
+        const status = (b.status || '').toLowerCase();
+        return status === 'pending';
+      });
+      
+      if (!pendingBilling) {
+        setError('No pending subscription found to cancel.');
+        setShowCancelModal(false);
+        return;
+      }
+
+      // Call cancel subscription API
+      await ApiService.cancelSubscription();
+      
+      // Refresh billing data
+      await fetchBillingData();
+      
+      setShowCancelModal(false);
+      // No popup - user will see the updated status
+    } catch (error) {
+      console.error('Error cancelling subscription:', error);
+      setError(error.message || 'Failed to cancel subscription. Please try again.');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleCancelBilling = (billing) => {
+    setBillingToCancel(billing);
+    setShowCancelBillingModal(true);
+  };
+
+  const confirmCancelBilling = async () => {
+    if (!billingToCancel) return;
+    
+    try {
+      setCancellingBillingId(billingToCancel.id);
+      setError(null);
+      
+      // Call API to cancel the specific billing entry
+      const response = await fetch(`/api/subscriptions/billing/${billingToCancel.id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('access_token') || localStorage.getItem('token')}`
+        }
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(responseData.message || responseData.error || 'Failed to cancel billing entry');
+      }
+
+      // Verify success response
+      if (!responseData.success && !responseData.message) {
+        throw new Error('Unexpected response from server');
+      }
+
+      // Close modal first
+      const cancelledBillingId = billingToCancel.id;
+      setShowCancelBillingModal(false);
+      setBillingToCancel(null);
+      
+      // Mark this billing ID as recently cancelled
+      setRecentlyCancelledIds(prev => new Set([...prev, cancelledBillingId]));
+      
+      // If backend returns updated billing entry, update it immediately in state
+      if (responseData.updated_billing) {
+        console.log('Backend returned updated billing entry:', responseData.updated_billing);
+        console.log('Status in response:', responseData.updated_billing.status);
+        
+        // Update state immediately with the cancelled status
+        setBillingHistory(prev => {
+          const updated = prev.map(b => {
+            if (b.id === cancelledBillingId) {
+              const merged = { ...b, ...responseData.updated_billing };
+              // Force status to 'cancelled' since we just cancelled it
+              merged.status = 'cancelled';
+              console.log('Merged billing entry (forced cancelled):', merged);
+              return merged;
+            }
+            return b;
+          });
+          console.log('Updated billing history in state:', updated);
+          return updated;
+        });
+      } else {
+        // Even if backend doesn't return updated_billing, mark it as cancelled in state
+        setBillingHistory(prev => {
+          return prev.map(b => {
+            if (b.id === cancelledBillingId) {
+              return { ...b, status: 'cancelled' };
+            }
+            return b;
+          });
+        });
+      }
+      
+      // Also fetch fresh data from server to ensure consistency
+      // But preserve the cancelled status if it was just cancelled (don't let server overwrite it)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Fetch fresh data
+      try {
+        const historyRes = await ApiService.getBillingHistory();
+        const history = historyRes?.billing_history || historyRes || [];
+        
+        // Check if the cancelled entry is in the fresh data
+        const cancelledEntry = history.find(b => b.id === cancelledBillingId);
+        console.log('Cancelled entry in fresh data:', cancelledEntry);
+        if (cancelledEntry) {
+          console.log('Status in fresh data:', cancelledEntry.status);
+          
+          // If the server still shows 'pending', force it to 'cancelled' since we just cancelled it
+          // This handles the case where the UPDATE hasn't persisted yet or there's a database issue
+          if ((cancelledEntry.status || '').toLowerCase() !== 'cancelled') {
+            console.warn('Server still shows pending for cancelled entry, forcing to cancelled');
+            cancelledEntry.status = 'cancelled';
+          }
+        }
+        
+        // Update billing history, preserving cancelled status for the entry we just cancelled
+        // Always force it to 'cancelled' if it was recently cancelled, regardless of what server says
+        setBillingHistory(history.map(b => {
+          if (b.id === cancelledBillingId) {
+            // This was just cancelled, force status to 'cancelled' even if server says 'pending'
+            console.log('Preserving cancelled status for entry:', b.id, 'Server status:', b.status);
+            return { ...b, status: 'cancelled' };
+          }
+          return b;
+        }));
+      } catch (error) {
+        console.error('Error fetching fresh billing data:', error);
+        // Don't fail - we already updated the state above
+      }
+      
+      // No popup - user will see the updated status
+    } catch (error) {
+      console.error('Error cancelling billing:', error);
+      setError(error.message || 'Failed to cancel billing entry. Please try again.');
+    } finally {
+      setCancellingBillingId(null);
+    }
   };
 
   const confirmUpgrade = async () => {
@@ -129,10 +350,12 @@ const BillingPayment = () => {
       
       const response = await ApiService.upgradePlan(selectedPlan.id, null);
       
-      // Inform and open manual proof upload flow
-      alert(`Success! ${response.message}\nInvoice: ${response.billing?.invoice_number || 'N/A'}\nPlease upload your proof of payment.`);
+      // Close upgrade modal first
+      setShowUpgradeModal(false);
+      setSelectedPlan(null);
 
       // Prepare manual proof modal with the created billing id
+      // No success popup - directly open proof upload modal
       if (response?.billing?.id) {
         setProofForm({
           billingId: response.billing.id,
@@ -142,18 +365,21 @@ const BillingPayment = () => {
           remarks: '',
           subscriptionId: response?.subscription?.id || null,
           planId: selectedPlan?.id || null,
-          amount: Number(selectedPlan?.monthly_price || 0)
+          amount: Number(selectedPlan?.monthly_price || 0),
+          payment_method: 'GCash',
+          invoiceNumber: response.billing?.invoice_number || null
         });
         setShowManualProofModal(true);
+      } else {
+        setError('Failed to create billing entry. Please try again.');
       }
 
-      // Refresh billing list but keep modal open for proof
+      // Refresh billing list
       await fetchBillingData();
-      setShowUpgradeModal(false);
-      setSelectedPlan(null);
     } catch (error) {
       console.error('Error upgrading plan:', error);
       setError(error.message || 'Failed to upgrade plan. Please try again.');
+      setShowUpgradeModal(false);
     } finally {
       setProcessingPayment(false);
     }
@@ -216,15 +442,13 @@ const BillingPayment = () => {
         body: JSON.stringify(payload)
       });
 
-      alert('Proof submitted for verification. An admin will review it shortly.');
-
-      // Mark the local billing entry as having proof (client-side hint)
-      setBillingHistory(prev => prev.map(b => (
-        b.id === proofForm.billingId ? { ...b, has_proof: true, proof_url: proofForm.proofUrl, reference: proofForm.reference } : b
-      )));
-
+      // No popup - just close modal and refresh
+      // Admin will send notification when payment is approved
       setShowManualProofModal(false);
-      setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '' });
+      setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null });
+      
+      // Refresh billing data to show updated status
+      await fetchBillingData();
     } catch (err) {
       alert(err.message || 'Failed to submit proof');
     } finally {
@@ -344,9 +568,21 @@ const BillingPayment = () => {
                     : currentPlan?.status?.toUpperCase() || 'INACTIVE'
                   }
                 </span>
-                {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) || currentPlan?.status === 'inactive' ? (
+                  {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) || currentPlan?.status === 'inactive' ? (
                   <button 
                     onClick={() => {
+                      if (hasPendingBilling()) {
+                        const pendingBilling = billingHistory.find(b => {
+                          const status = (b.status || '').toLowerCase();
+                          return status === 'pending';
+                        });
+                        const invoiceText = pendingBilling?.invoice_number 
+                          ? ` (Invoice: ${pendingBilling.invoice_number})` 
+                          : '';
+                        setErrorMessage(`You have a pending billing${invoiceText} that needs to be paid or cancelled before selecting a new plan. Please upload proof of payment or cancel the pending subscription first.`);
+                        setShowErrorModal(true);
+                        return;
+                      }
                       if (subscriptionPlans.length > 0) {
                         handlePlanUpgrade(subscriptionPlans[0]);
                       }
@@ -355,6 +591,29 @@ const BillingPayment = () => {
                   >
                     {currentPlan?.status === 'inactive' ? 'Choose Plan' : 'Renew Now'}
                   </button>
+                ) : hasPendingBilling() ? (
+                  <>
+                    <button 
+                      onClick={() => {
+                        const pendingBilling = billingHistory.find(b => {
+                          const status = (b.status || '').toLowerCase();
+                          return status === 'pending';
+                        });
+                        if (pendingBilling) {
+                          openProofForBilling(pendingBilling);
+                        }
+                      }}
+                      className="bg-black text-white px-6 py-2 rounded-xl hover:bg-gray-800 transition-colors font-semibold"
+                    >
+                      Upload Proof
+                    </button>
+                    <button 
+                      onClick={() => setShowCancelModal(true)}
+                      className="bg-red-600 text-white px-6 py-2 rounded-xl hover:bg-red-700 transition-colors font-semibold"
+                    >
+                      Cancel Subscription
+                    </button>
+                  </>
                 ) : (
                   <button 
                     onClick={() => setShowManualProofModal(true)}
@@ -495,14 +754,21 @@ const BillingPayment = () => {
 
                     <button
                       onClick={() => handlePlanUpgrade(plan)}
-                      disabled={currentPlan?.plan?.id === plan.id}
+                      disabled={currentPlan?.plan?.id === plan.id || hasPendingBilling()}
                       className={`w-full py-3 px-6 rounded-xl font-semibold transition-colors ${
                         currentPlan?.plan?.id === plan.id
                           ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                          : hasPendingBilling()
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           : 'bg-gray-900 text-white hover:bg-gray-700'
                       }`}
                     >
-                      {currentPlan?.plan?.id === plan.id ? 'Current Plan' : `Choose ${plan.name}`}
+                      {currentPlan?.plan?.id === plan.id 
+                        ? 'Current Plan' 
+                        : hasPendingBilling()
+                        ? 'Pending Payment Required'
+                        : `Choose ${plan.name}`
+                      }
                     </button>
                   </div>
                 ))}
@@ -511,7 +777,7 @@ const BillingPayment = () => {
           </div>
         </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div>
           {/* Billing History */}
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100">
             <div className="px-8 py-6 border-b border-gray-100">
@@ -547,23 +813,40 @@ const BillingPayment = () => {
                         <div>
                           <p className="font-bold text-gray-900">₱{Number(transaction.amount || 0).toLocaleString()}</p>
                           <span className={`text-sm px-2 py-1 rounded-full ${
-                            transaction.status === 'paid' 
-                              ? 'bg-green-100 text-green-800' 
-                              : transaction.status === 'pending'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-gray-100 text-gray-500'
+                            (() => {
+                              const status = (transaction.status || '').toLowerCase();
+                              if (status === 'paid') return 'bg-green-100 text-green-800';
+                              if (status === 'pending') return 'bg-yellow-100 text-yellow-800';
+                              if (status === 'cancelled') return 'bg-red-100 text-red-800';
+                              return 'bg-gray-100 text-gray-500';
+                            })()
                           }`}>
-                            {(transaction.status || 'pending').toUpperCase()}
+                            {((transaction.status || 'pending').toUpperCase())}
                           </span>
                         </div>
-                        {transaction.status === 'pending' && (
-                          <button
-                            onClick={() => openProofForBilling(transaction)}
-                            className="bg-black text-white px-3 py-1 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
-                          >
-                            Upload Proof
-                          </button>
-                        )}
+                        {(() => {
+                          const status = (transaction.status || '').toLowerCase();
+                          if (status === 'pending') {
+                            return (
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => openProofForBilling(transaction)}
+                                  className="bg-black text-white px-3 py-1 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
+                                >
+                                  Upload Proof
+                                </button>
+                                <button
+                                  onClick={() => handleCancelBilling(transaction)}
+                                  disabled={cancellingBillingId === transaction.id}
+                                  className="bg-red-600 text-white px-3 py-1 rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {cancellingBillingId === transaction.id ? 'Cancelling...' : 'Cancel'}
+                                </button>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -621,6 +904,11 @@ const BillingPayment = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-8 max-w-lg w-full mx-4">
             <h3 className="text-2xl font-bold text-gray-900 mb-4">Upload Proof of Payment</h3>
+            {proofForm.invoiceNumber && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
+                <p className="font-semibold">Invoice: {proofForm.invoiceNumber}</p>
+              </div>
+            )}
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 text-sm text-yellow-800">
               <p className="font-semibold mb-1">Payment Instructions</p>
               <ul className="list-disc ml-5 space-y-1">
@@ -697,7 +985,10 @@ const BillingPayment = () => {
 
             <div className="flex space-x-4 mt-6">
               <button
-                onClick={() => { setShowManualProofModal(false); setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0 }); }}
+                onClick={() => { 
+                  setShowManualProofModal(false); 
+                  setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null }); 
+                }}
                 disabled={processingPayment}
                 className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
               >
@@ -715,6 +1006,139 @@ const BillingPayment = () => {
                 className="flex-1 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-semibold disabled:opacity-50"
               >
                 {processingPayment ? 'Submitting...' : 'Submit for Verification'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Subscription Modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">Cancel Pending Subscription</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to cancel your pending subscription? This will cancel the pending billing entry and allow you to select a new plan.
+            </p>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <p className="text-sm text-yellow-800">
+                <strong>Note:</strong> Cancelling will remove the pending billing entry. You will need to select a plan again if you want to subscribe.
+              </p>
+            </div>
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowCancelModal(false)}
+                disabled={cancelling}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
+              >
+                Keep Subscription
+              </button>
+              <button
+                onClick={handleCancelSubscription}
+                disabled={cancelling}
+                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 flex items-center justify-center"
+              >
+                {cancelling ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Cancelling...
+                  </>
+                ) : (
+                  'Cancel Subscription'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Modal */}
+      {showErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mr-4">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Cannot Select Plan</h3>
+            </div>
+            <p className="text-gray-600 mb-6">
+              {errorMessage || 'You have a pending billing that needs to be resolved before selecting a new plan.'}
+            </p>
+            <div className="flex space-x-4">
+              <button
+                onClick={() => {
+                  setShowErrorModal(false);
+                  setErrorMessage('');
+                }}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold"
+              >
+                Close
+              </button>
+              {hasPendingBilling() && (
+                <button
+                  onClick={() => {
+                    setShowErrorModal(false);
+                    setShowCancelModal(true);
+                  }}
+                  className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-semibold"
+                >
+                  Cancel Subscription
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Billing Modal */}
+      {showCancelBillingModal && billingToCancel && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">Cancel Pending Billing</h3>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to cancel this pending billing entry?
+            </p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+              <div className="space-y-2 text-sm">
+                <p><span className="font-semibold">Plan:</span> {billingToCancel.plan_name || billingToCancel.plan} Plan</p>
+                <p><span className="font-semibold">Amount:</span> ₱{Number(billingToCancel.amount || 0).toLocaleString()}</p>
+                {billingToCancel.invoice_number && (
+                  <p><span className="font-semibold">Invoice:</span> {billingToCancel.invoice_number}</p>
+                )}
+              </div>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <p className="text-sm text-yellow-800">
+                <strong>Note:</strong> Cancelling this billing entry will allow you to select a new plan. The pending subscription will be cancelled.
+              </p>
+            </div>
+            <div className="flex space-x-4">
+              <button
+                onClick={() => {
+                  setShowCancelBillingModal(false);
+                  setBillingToCancel(null);
+                }}
+                disabled={cancellingBillingId === billingToCancel.id}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
+              >
+                Keep Billing
+              </button>
+              <button
+                onClick={confirmCancelBilling}
+                disabled={cancellingBillingId === billingToCancel.id}
+                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-semibold disabled:opacity-50 flex items-center justify-center"
+              >
+                {cancellingBillingId === billingToCancel.id ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Cancelling...
+                  </>
+                ) : (
+                  'Cancel Billing'
+                )}
               </button>
             </div>
           </div>

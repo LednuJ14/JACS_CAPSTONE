@@ -8,6 +8,7 @@ const Login = ({ onLoginSuccess, onBackToMain, onSignUpClick, onForgotPasswordCl
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   // const [role] = useState('tenant'); // Removed unused variable
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -21,6 +22,23 @@ const Login = ({ onLoginSuccess, onBackToMain, onSignUpClick, onForgotPasswordCl
   useEffect(() => {
     const timer = setTimeout(() => setIsLoaded(true), 100);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Check if user just verified their email and show success message
+  useEffect(() => {
+    const verifiedEmail = localStorage.getItem('verified_email');
+    if (verifiedEmail) {
+      // Pre-fill email field
+      setEmail(verifiedEmail);
+      // Show success message
+      setSuccessMessage('Email verified successfully! You can now log in with your credentials.');
+      setErrorMessage(''); // Clear any errors
+      // Remove the verified_email flag after showing
+      setTimeout(() => {
+        localStorage.removeItem('verified_email');
+        setSuccessMessage(''); // Clear success message after 5 seconds
+      }, 5000);
+    }
   }, []);
 
   const handleSubmit = async (event) => {
@@ -383,6 +401,18 @@ const Login = ({ onLoginSuccess, onBackToMain, onSignUpClick, onForgotPasswordCl
                   Forgot password?
                 </button>
               </div>
+
+              {/* Success Message */}
+              {successMessage && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 transform transition-all duration-300">
+                  <div className="flex items-center space-x-2">
+                    <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="text-sm text-green-700">{successMessage}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Error Message */}
               {errorMessage && (

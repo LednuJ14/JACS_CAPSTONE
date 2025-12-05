@@ -146,6 +146,25 @@ def verify_email():
         return jsonify({'error': 'Email verification failed', 'message': 'An error occurred during email verification'}), 500
 
 
+@auth_bp.route('/check-verification-status', methods=['GET'])
+@limiter.limit("30 per minute")
+def check_verification_status():
+    """Check if an email has been verified (for polling from original browser)."""
+    try:
+        email = request.args.get('email')
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        service = AuthServiceV2()
+        data = service.check_verification_status({'email': email})
+        return jsonify(data), 200
+    except AuthValidationError as e:
+        return jsonify({'error': str(e), **e.details}), 400
+    except Exception as e:
+        current_app.logger.error(f'Check verification status error: {e}')
+        return jsonify({'error': 'Failed to check verification status', 'message': 'An error occurred'}), 500
+
+
 @auth_bp.route('/resend-verification', methods=['POST'])
 @validate_json_content_type
 @limiter.limit("5 per minute")

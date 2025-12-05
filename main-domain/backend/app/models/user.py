@@ -43,12 +43,14 @@ class User(db.Model):
     # Manager profile fields removed: location, bio (not needed)
     
     # Address fields
-    address_line1 = db.Column(db.String(255))
-    address_line2 = db.Column(db.String(255))
+    address = db.Column(db.Text)  # Single address field (consolidated from address_line1 and address_line2)
     city = db.Column(db.String(100))
     province = db.Column(db.String(100))
     postal_code = db.Column(db.String(20))
     country = db.Column(db.String(100), default='Philippines')
+    
+    # Bio field for user description
+    bio = db.Column(db.Text)
     
     # Verification fields
     email_verified = db.Column(db.Boolean, default=False)
@@ -193,14 +195,12 @@ class User(db.Model):
             'profile_image_url': self.profile_image_url,
             'two_factor_enabled': bool(self.two_factor_enabled),
             # location and bio removed - not needed for managers
-            'address': {
-                'line1': self.address_line1,
-                'line2': self.address_line2,
-                'city': self.city,
-                'province': self.province,
-                'postal_code': self.postal_code,
-                'country': self.country
-            },
+            'address': self.address,
+            'city': self.city,
+            'province': self.province,
+            'postal_code': self.postal_code,
+            'country': self.country,
+            'bio': self.bio,
             'email_verified': self.email_verified,
             # phone_verified removed - not used
             'created_at': safe_iso(self.created_at),
