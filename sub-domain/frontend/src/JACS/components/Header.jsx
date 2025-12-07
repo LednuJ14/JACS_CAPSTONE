@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Building2, User, MessageCircle, Settings, LogOut, ChevronDown, Bell, Edit, CreditCard, Wrench, HelpCircle, BarChart3, Calendar } from 'lucide-react';
+import { Building2, User, MessageCircle, Settings, LogOut, ChevronDown, Bell, Edit, CreditCard, Wrench, BarChart3, Calendar } from 'lucide-react';
 import { apiService } from '../../services/api';
 import { useProperty } from './PropertyContext';
 import ProfileEditModal from '../pages/property manager/ProfileEditModal';
@@ -9,7 +9,6 @@ import TenantProfileEditModal from '../pages/tenant/TenantProfileEditModal';
 import SettingsModal from '../pages/property manager/SettingsModal';
 import StaffSettingsModal from '../pages/staff/StaffSettingsModal';
 import TenantSettingsModal from '../pages/tenant/TenantSettingsModal';
-import TenantHelpModal from '../pages/tenant/TenantHelpModal';
 import TenantChatsModal from '../pages/tenant/TenantChatsModal';
 import ChatsModal from '../pages/property manager/ChatsModal';
 import StaffChatsModal from '../pages/staff/StaffChatsModal';
@@ -24,7 +23,6 @@ const Header = ({ userType = 'manager' }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
   const [showChats, setShowChats] = useState(false);
   const [showPMChats, setShowPMChats] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
@@ -34,6 +32,15 @@ const Header = ({ userType = 'manager' }) => {
     setCurrentUser(user);
     // Initialize property context based on host
     apiService.getDashboardContext().catch(() => {});
+    
+    // Listen for user updates (e.g., after profile image upload)
+    const handleUserUpdate = () => {
+      const updatedUser = apiService.getStoredUser();
+      setCurrentUser(updatedUser);
+    };
+    
+    window.addEventListener('userUpdated', handleUserUpdate);
+    return () => window.removeEventListener('userUpdated', handleUserUpdate);
   }, []);
 
   // Close dropdown when clicking outside
@@ -82,10 +89,6 @@ const Header = ({ userType = 'manager' }) => {
 
   const handleSettingsClose = () => {
     setShowSettings(false);
-  };
-
-  const handleHelpClose = () => {
-    setShowHelp(false);
   };
 
   const handleChatsClose = () => {
@@ -317,8 +320,51 @@ const Header = ({ userType = 'manager' }) => {
                   : 'text-white hover:text-gray-300'
               }`}
             >
-              <div className={`w-8 h-8 ${isTenant ? 'bg-gray-300' : 'bg-gray-600'} rounded-full flex items-center justify-center`}>
-                <User className={`w-5 h-5 ${isTenant ? 'text-gray-600' : 'text-white'}`} />
+              <div className={`w-8 h-8 ${isTenant ? 'bg-gray-300' : 'bg-gray-600'} rounded-full flex items-center justify-center overflow-hidden relative`}>
+                {currentUser?.profile_image_url || currentUser?.avatar_url ? (
+                  <img
+                    src={(() => {
+                      const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+                      // If it's already a full URL, use it as-is
+                      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+                        return imageUrl;
+                      }
+                      // If it starts with /uploads/, it's from main-domain (port 5000)
+                      else if (imageUrl.startsWith('/uploads/')) {
+                        return `http://localhost:5000${imageUrl}`;
+                      }
+                      // If it starts with /api/users/profile/image/, it's from sub-domain (port 5001)
+                      else if (imageUrl.startsWith('/api/users/profile/image/')) {
+                        return `http://localhost:5001${imageUrl}`;
+                      }
+                      // If it starts with /api/, assume sub-domain
+                      else if (imageUrl.startsWith('/api/')) {
+                        return `http://localhost:5001${imageUrl}`;
+                      }
+                      // If it starts with /, assume sub-domain
+                      else if (imageUrl.startsWith('/')) {
+                        return `http://localhost:5001${imageUrl}`;
+                      }
+                      // Otherwise, prepend sub-domain API path
+                      else {
+                        return `http://localhost:5001/api${imageUrl}`;
+                      }
+                    })()}
+                    alt={`${currentUser?.first_name || ''} ${currentUser?.last_name || ''}`.trim() || 'Profile'}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      const fallback = e.target.nextSibling;
+                      if (fallback) fallback.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                <div 
+                  className={`w-full h-full flex items-center justify-center ${currentUser?.profile_image_url || currentUser?.avatar_url ? 'hidden' : ''}`}
+                  style={{ display: (currentUser?.profile_image_url || currentUser?.avatar_url) ? 'none' : 'flex' }}
+                >
+                  <User className={`w-5 h-5 ${isTenant ? 'text-gray-600' : 'text-white'}`} />
+                </div>
               </div>
               {isTenant && (
                 <span className="text-sm font-medium">{currentUser?.first_name || 'Profile'}</span>
@@ -372,17 +418,6 @@ const Header = ({ userType = 'manager' }) => {
                     >
                       <Settings className="w-4 h-4" />
                       <span>Settings</span>
-                    </button>
-                    
-                    <button 
-                      onClick={() => {
-                        setShowHelp(true);
-                        setProfileDropdownOpen(false);
-                      }}
-                      className="w-full flex items-center space-x-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                    >
-                      <HelpCircle className="w-4 h-4" />
-                      <span>Help & Support</span>
                     </button>
                   </>
                 )}
@@ -530,14 +565,6 @@ const Header = ({ userType = 'manager' }) => {
           onClose={handleSettingsClose}
           currentUser={currentUser}
           isTenant={isTenant}
-        />
-      )}
-
-      {/* Help Modal */}
-      {isTenant && (
-        <TenantHelpModal
-          isOpen={showHelp}
-          onClose={handleHelpClose}
         />
       )}
 

@@ -10,12 +10,46 @@ import re
 staff_bp = Blueprint('staff', __name__)
 
 @staff_bp.route('/', methods=['GET'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def get_staff():
-    """Get all staff members with their user info."""
+    """Get all staff members with their user info, filtered by property_id from subdomain."""
     try:
-        staff_members = db.session.query(Staff).join(User).all()
-        print(f"Found {len(staff_members)} staff members in database")
+        # Get property_id from request (subdomain, header, query param, or JWT)
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        
+        # If property_id not in request, try to get from JWT token
+        if not property_id:
+            from flask_jwt_extended import get_jwt
+            try:
+                property_id = get_jwt().get('property_id')
+            except Exception:
+                pass
+        
+        if not property_id:
+            return jsonify({
+                'error': 'Property context is required. Please access through a property subdomain.',
+                'code': 'PROPERTY_CONTEXT_REQUIRED'
+            }), 400
+        
+        # CRITICAL: Verify property exists and user owns it (for property managers)
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+        
+        # Filter staff by property_id
+        staff_members = db.session.query(Staff).join(User).filter(Staff.property_id == property_id).all()
+        print(f"Found {len(staff_members)} staff members in database for property {property_id}")
         
         staff_list = []
         for staff in staff_members:

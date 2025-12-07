@@ -229,24 +229,16 @@ def upload_document():
             except Exception as tenant_error:
                 current_app.logger.warning(f"Could not get property_id from tenant profile: {str(tenant_error)}")
         
-        # For property managers/staff, get property_id from their owned/managed properties if not provided
+        # CRITICAL: Do NOT auto-detect from owned properties for property managers
+        # Property managers must access through the correct subdomain
+        # If property_id not in request, try to get from JWT token
         if not property_id and user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            from flask_jwt_extended import get_jwt
             try:
-                from models.property import Property
-                from sqlalchemy import text
-                # Get first property owned by this user
-                owned_property = db.session.execute(text(
-                    """
-                    SELECT id FROM properties 
-                    WHERE owner_id = :user_id 
-                    LIMIT 1
-                    """
-                ), {'user_id': current_user.id}).first()
-                if owned_property:
-                    property_id = owned_property[0]
-                    current_app.logger.info(f"Using property {property_id} from user's owned properties")
-            except Exception as manager_error:
-                current_app.logger.warning(f"Could not get property_id from manager's properties: {str(manager_error)}")
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
         
         # Validate and convert property_id (handle both numeric IDs and subdomain strings)
         property_id_final = None

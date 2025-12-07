@@ -709,6 +709,22 @@ class ApiService {
       throw error;
     }
   }
+
+  async uploadProfileImage(file) {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      return await this.makeRequest('/users/profile/image', {
+        method: 'POST',
+        body: formData,
+        baseURL: this.propertyBaseURL
+      });
+    } catch (error) {
+      console.error('Failed to upload profile image:', error);
+      throw error;
+    }
+  }
   async getMyTenant() {
     try {
       const user = this.getStoredUser();

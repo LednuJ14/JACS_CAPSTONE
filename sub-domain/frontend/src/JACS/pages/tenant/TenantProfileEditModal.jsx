@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, User, Mail, Phone, Calendar, MapPin, Home, Shield, AlertCircle, CreditCard, FileText } from 'lucide-react';
+import { X, Save, User, Mail, Phone, MapPin, Shield, AlertCircle, Camera, Upload } from 'lucide-react';
+import { apiService } from '../../../services/api';
 
 const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
   const [profileData, setProfileData] = useState({
@@ -8,52 +9,106 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     email: '',
     phone: '',
     address: '',
-    city: '',
-    zip_code: '',
     emergency_contact: '',
-    emergency_phone: '',
-    unit_number: '',
-    lease_start_date: '',
-    lease_end_date: '',
-    monthly_rent: '',
-    preferred_contact_method: 'email',
-    notification_preferences: {
-      bill_reminders: true,
-      maintenance_updates: true,
-      announcements: true,
-      emergency_alerts: true
-    }
+    emergency_phone: ''
   });
 
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
+  const [profileImage, setProfileImage] = useState(null);
+  const [profileImagePreview, setProfileImagePreview] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [tenantData, setTenantData] = useState(null);
+  const [loadingTenantData, setLoadingTenantData] = useState(false);
 
+  // Fetch tenant data from database when modal opens
   useEffect(() => {
-    if (currentUser) {
-      setProfileData({
-        first_name: currentUser.first_name || '',
-        last_name: currentUser.last_name || '',
-        email: currentUser.email || '',
-        phone: currentUser.phone || '',
-        address: currentUser.address || '',
-        city: currentUser.city || '',
-        zip_code: currentUser.zip_code || '',
-        emergency_contact: currentUser.emergency_contact || '',
-        emergency_phone: currentUser.emergency_phone || '',
-        unit_number: currentUser.unit_number || '',
-        lease_start_date: currentUser.lease_start_date || '',
-        lease_end_date: currentUser.lease_end_date || '',
-        monthly_rent: currentUser.monthly_rent || '',
-        preferred_contact_method: currentUser.preferred_contact_method || 'email',
-        notification_preferences: {
-          bill_reminders: currentUser.notification_preferences?.bill_reminders ?? true,
-          maintenance_updates: currentUser.notification_preferences?.maintenance_updates ?? true,
-          announcements: currentUser.notification_preferences?.announcements ?? true,
-          emergency_alerts: currentUser.notification_preferences?.emergency_alerts ?? true
+    if (isOpen && currentUser) {
+      const fetchTenantData = async () => {
+        try {
+          setLoadingTenantData(true);
+          const tenantResponse = await apiService.getMyTenant();
+          if (tenantResponse) {
+            setTenantData(tenantResponse);
+            
+            // Merge user and tenant data
+            const user = tenantResponse.user || currentUser;
+            const currentRent = tenantResponse.current_rent || {};
+            const unit = currentRent.unit || {};
+            
+            setProfileData({
+              first_name: user.first_name || currentUser.first_name || '',
+              last_name: user.last_name || currentUser.last_name || '',
+              email: user.email || currentUser.email || '',
+              phone: user.phone_number || currentUser.phone_number || currentUser.phone || '',
+              address: user.address || currentUser.address || '',
+              emergency_contact: user.emergency_contact_name || currentUser.emergency_contact_name || currentUser.emergency_contact || '',
+              emergency_phone: user.emergency_contact_phone || currentUser.emergency_contact_phone || currentUser.emergency_phone || ''
+            });
+            
+            // Set profile image from user data
+            const imageUrl = user.profile_image_url || user.avatar_url || currentUser.profile_image_url || currentUser.avatar_url;
+            if (imageUrl) {
+              if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+                setProfileImagePreview(imageUrl);
+              } else if (imageUrl.startsWith('/uploads/')) {
+                setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+              } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else if (imageUrl.startsWith('/api/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else if (imageUrl.startsWith('/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else {
+                setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+              }
+            } else {
+              setProfileImagePreview(null);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching tenant data:', error);
+          // Fallback to currentUser if fetch fails
+          if (currentUser) {
+            setProfileData({
+              first_name: currentUser.first_name || '',
+              last_name: currentUser.last_name || '',
+              email: currentUser.email || '',
+              phone: currentUser.phone_number || currentUser.phone || '',
+              address: currentUser.address || '',
+              emergency_contact: currentUser.emergency_contact_name || currentUser.emergency_contact || '',
+              emergency_phone: currentUser.emergency_contact_phone || currentUser.emergency_phone || ''
+            });
+            
+            // Set profile image preview
+            const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+            if (imageUrl) {
+              if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+                setProfileImagePreview(imageUrl);
+              } else if (imageUrl.startsWith('/uploads/')) {
+                setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+              } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else if (imageUrl.startsWith('/api/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else if (imageUrl.startsWith('/')) {
+                setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+              } else {
+                setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+              }
+            } else {
+              setProfileImagePreview(null);
+            }
+          }
+        } finally {
+          setLoadingTenantData(false);
+          setProfileImage(null);
         }
-      });
+      };
+      
+      fetchTenantData();
     }
-  }, [currentUser]);
+  }, [isOpen, currentUser]);
 
   const handleInputChange = (field, value) => {
     setProfileData(prev => ({
@@ -62,14 +117,72 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     }));
   };
 
-  const handleNotificationChange = (preference, value) => {
-    setProfileData(prev => ({
-      ...prev,
-      notification_preferences: {
-        ...prev.notification_preferences,
-        [preference]: value
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        setErrors({ submit: 'Invalid file type. Please upload PNG, JPG, JPEG, GIF, or WEBP.' });
+        return;
       }
-    }));
+      
+      if (file.size > 2 * 1024 * 1024) {
+        setErrors({ submit: 'File size exceeds 2MB limit.' });
+        return;
+      }
+      
+      setProfileImage(file);
+      setErrors({ submit: '' });
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfileImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleImageUpload = async () => {
+    if (!profileImage) return;
+    
+    setUploadingImage(true);
+    setErrors({});
+    
+    try {
+      const response = await apiService.uploadProfileImage(profileImage);
+      
+      if (response && response.user) {
+        localStorage.setItem('user', JSON.stringify(response.user));
+        
+        if (response.image_url) {
+          const imageUrl = response.image_url;
+          if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+            setProfileImagePreview(imageUrl);
+          } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else if (imageUrl.startsWith('/api/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else {
+            setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+          }
+        }
+        
+        if (onSave) {
+          await onSave(response.user);
+        }
+        
+        window.dispatchEvent(new CustomEvent('userUpdated'));
+        
+        setProfileImage(null);
+      }
+    } catch (error) {
+      console.error('Error uploading profile image:', error);
+      const errorMessage = error.message || error.error || 'Failed to upload profile image. Please try again.';
+      setErrors({ submit: errorMessage });
+    } finally {
+      setUploadingImage(false);
+    }
   };
 
   const validateForm = () => {
@@ -81,11 +194,7 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     if (!profileData.last_name.trim()) {
       newErrors.last_name = 'Last name is required';
     }
-    if (!profileData.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(profileData.email)) {
-      newErrors.email = 'Email is invalid';
-    }
+    // Email validation removed since it's read-only
     if (!profileData.phone.trim()) {
       newErrors.phone = 'Phone number is required';
     }
@@ -107,40 +216,144 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     
     setIsLoading(true);
     try {
-      await onSave(profileData);
+      // Upload profile image first if a new one was selected
+      if (profileImage) {
+        await handleImageUpload();
+      }
+      
+      // Update user profile via API
+      const updateData = {
+        first_name: String(profileData.first_name || '').trim(),
+        last_name: String(profileData.last_name || '').trim(),
+        phone_number: String(profileData.phone || '').trim(),
+        address: profileData.address ? String(profileData.address).trim() : null,
+        emergency_contact_name: profileData.emergency_contact ? String(profileData.emergency_contact).trim() : null,
+        emergency_contact_phone: profileData.emergency_phone ? String(profileData.emergency_phone).trim() : null
+      };
+      
+      console.log('Sending update data:', updateData);
+      
+      const response = await apiService.updateProfile(updateData);
+      
+      console.log('Update response:', response);
+      
+      if (response && response.user) {
+        // Update stored user data
+        localStorage.setItem('user', JSON.stringify(response.user));
+        
+        // Refetch tenant data to get the latest information
+        try {
+          const tenantResponse = await apiService.getMyTenant();
+          if (tenantResponse) {
+            setTenantData(tenantResponse);
+            const user = tenantResponse.user || response.user;
+            
+            // Update profile data with fresh data from database
+            setProfileData({
+              first_name: user.first_name || '',
+              last_name: user.last_name || '',
+              email: user.email || '',
+              phone: user.phone_number || '',
+              address: user.address || '',
+              emergency_contact: user.emergency_contact_name || '',
+              emergency_phone: user.emergency_contact_phone || ''
+            });
+          }
+        } catch (fetchError) {
+          console.error('Error refetching tenant data:', fetchError);
+          // Continue with response.user if refetch fails
+        }
+        
+        // Dispatch event to notify Header component
+        window.dispatchEvent(new CustomEvent('userUpdated'));
+        
+        // Call parent callback if provided
+        if (onSave) {
+          await onSave(response.user);
+        }
+        
+        // Close modal after a short delay
+        setTimeout(() => {
+          onClose();
+        }, 1000);
+      }
     } catch (error) {
       console.error('Error saving profile:', error);
+      const errorMessage = error.message || error.error || 'Failed to update profile. Please try again.';
+      setErrors({ submit: errorMessage });
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleCancel = () => {
-    // Reset profile data to original values
-    if (currentUser) {
+    // Reset to original values from tenantData or currentUser
+    if (tenantData) {
+      const user = tenantData.user || currentUser;
+      const currentRent = tenantData.current_rent || {};
+      const unit = currentRent.unit || {};
+      
+      setProfileData({
+        first_name: user.first_name || '',
+        last_name: user.last_name || '',
+        email: user.email || '',
+        phone: user.phone_number || '',
+        address: user.address || '',
+        emergency_contact: user.emergency_contact_name || '',
+        emergency_phone: user.emergency_contact_phone || ''
+      });
+      
+      // Reset profile image
+      const imageUrl = user.profile_image_url || user.avatar_url;
+      if (imageUrl) {
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          setProfileImagePreview(imageUrl);
+        } else if (imageUrl.startsWith('/uploads/')) {
+          setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else {
+          setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+        }
+      } else {
+        setProfileImagePreview(null);
+      }
+    } else if (currentUser) {
       setProfileData({
         first_name: currentUser.first_name || '',
         last_name: currentUser.last_name || '',
         email: currentUser.email || '',
-        phone: currentUser.phone || '',
+        phone: currentUser.phone_number || currentUser.phone || '',
         address: currentUser.address || '',
-        city: currentUser.city || '',
-        zip_code: currentUser.zip_code || '',
-        emergency_contact: currentUser.emergency_contact || '',
-        emergency_phone: currentUser.emergency_phone || '',
-        unit_number: currentUser.unit_number || '',
-        lease_start_date: currentUser.lease_start_date || '',
-        lease_end_date: currentUser.lease_end_date || '',
-        monthly_rent: currentUser.monthly_rent || '',
-        preferred_contact_method: currentUser.preferred_contact_method || 'email',
-        notification_preferences: {
-          bill_reminders: currentUser.notification_preferences?.bill_reminders ?? true,
-          maintenance_updates: currentUser.notification_preferences?.maintenance_updates ?? true,
-          announcements: currentUser.notification_preferences?.announcements ?? true,
-          emergency_alerts: currentUser.notification_preferences?.emergency_alerts ?? true
-        }
+        emergency_contact: currentUser.emergency_contact_name || currentUser.emergency_contact || '',
+        emergency_phone: currentUser.emergency_contact_phone || currentUser.emergency_phone || ''
       });
+      
+      // Reset profile image
+      const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+      if (imageUrl) {
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          setProfileImagePreview(imageUrl);
+        } else if (imageUrl.startsWith('/uploads/')) {
+          setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else {
+          setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+        }
+      } else {
+        setProfileImagePreview(null);
+      }
     }
+    setProfileImage(null);
     setErrors({});
     onClose();
   };
@@ -173,6 +386,69 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
 
         {/* Content */}
         <div className="p-6">
+          {loadingTenantData ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="flex items-center space-x-2">
+                <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <span className="text-gray-600">Loading profile data...</span>
+              </div>
+            </div>
+          ) : (
+            <>
+          {/* Profile Image Section */}
+          <div className="mb-6 flex justify-center">
+            <div className="relative">
+              <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-gray-200 bg-gray-100 flex items-center justify-center">
+                {profileImagePreview ? (
+                  <img
+                    src={profileImagePreview}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                <div className={`w-full h-full flex items-center justify-center ${profileImagePreview ? 'hidden' : ''}`}>
+                  <User className="w-16 h-16 text-gray-400" />
+                </div>
+              </div>
+              <label
+                htmlFor="tenant-profile-image-upload"
+                className="absolute bottom-0 right-0 w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-colors shadow-lg"
+              >
+                <Camera className="w-5 h-5 text-white" />
+                <input
+                  id="tenant-profile-image-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                  onChange={handleImageChange}
+                  className="hidden"
+                />
+              </label>
+              {profileImage && (
+                <button
+                  onClick={handleImageUpload}
+                  disabled={uploadingImage}
+                  className="mt-2 w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {uploadingImage ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Image</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Left Column */}
             <div className="space-y-6">
@@ -245,19 +521,13 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
                       <input
                         type="email"
                         value={profileData.email}
-                        onChange={(e) => handleInputChange('email', e.target.value)}
-                        className={`w-full pl-10 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          errors.email ? 'border-red-300' : 'border-gray-300'
-                        }`}
+                        readOnly
+                        disabled
+                        className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
                         placeholder="Enter email address"
                       />
                     </div>
-                    {errors.email && (
-                      <p className="mt-1 text-sm text-red-600 flex items-center">
-                        <AlertCircle className="w-4 h-4 mr-1" />
-                        {errors.email}
-                      </p>
-                    )}
+                    <p className="mt-1 text-xs text-gray-500">Email cannot be changed</p>
                   </div>
                   
                   <div>
@@ -283,21 +553,6 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
                       </p>
                     )}
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Preferred Contact Method
-                    </label>
-                    <select
-                      value={profileData.preferred_contact_method}
-                      onChange={(e) => handleInputChange('preferred_contact_method', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="email">Email</option>
-                      <option value="phone">Phone</option>
-                      <option value="sms">SMS</option>
-                    </select>
-                  </div>
                 </div>
               </div>
 
@@ -321,107 +576,12 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
                       placeholder="Enter street address"
                     />
                   </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        City
-                      </label>
-                      <input
-                        type="text"
-                        value={profileData.city}
-                        onChange={(e) => handleInputChange('city', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Enter city"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        ZIP Code
-                      </label>
-                      <input
-                        type="text"
-                        value={profileData.zip_code}
-                        onChange={(e) => handleInputChange('zip_code', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Enter ZIP code"
-                      />
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
 
             {/* Right Column */}
             <div className="space-y-6">
-              {/* Tenant Information */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Home className="w-5 h-5 mr-2 text-purple-600" />
-                  Tenant Information
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Unit Number
-                    </label>
-                    <input
-                      type="text"
-                      value={profileData.unit_number}
-                      onChange={(e) => handleInputChange('unit_number', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="e.g., 101, 2A, etc."
-                    />
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Lease Start Date
-                      </label>
-                      <input
-                        type="date"
-                        value={profileData.lease_start_date}
-                        onChange={(e) => handleInputChange('lease_start_date', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Lease End Date
-                      </label>
-                      <input
-                        type="date"
-                        value={profileData.lease_end_date}
-                        onChange={(e) => handleInputChange('lease_end_date', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Monthly Rent
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
-                      <input
-                        type="number"
-                        value={profileData.monthly_rent}
-                        onChange={(e) => handleInputChange('monthly_rent', e.target.value)}
-                        className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="0.00"
-                        min="0"
-                        step="0.01"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               {/* Emergency Contact */}
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
@@ -473,82 +633,10 @@ const TenantProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
                   </div>
                 </div>
               </div>
-
-              {/* Notification Preferences */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <FileText className="w-5 h-5 mr-2 text-indigo-600" />
-                  Notification Preferences
-                </h3>
-                
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Bill Reminders</p>
-                      <p className="text-xs text-gray-500">Get notified about upcoming bill due dates</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={profileData.notification_preferences.bill_reminders}
-                        onChange={(e) => handleNotificationChange('bill_reminders', e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Maintenance Updates</p>
-                      <p className="text-xs text-gray-500">Get notified about maintenance request status</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={profileData.notification_preferences.maintenance_updates}
-                        onChange={(e) => handleNotificationChange('maintenance_updates', e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Announcements</p>
-                      <p className="text-xs text-gray-500">Get notified about property announcements</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={profileData.notification_preferences.announcements}
-                        onChange={(e) => handleNotificationChange('announcements', e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Emergency Alerts</p>
-                      <p className="text-xs text-gray-500">Get notified about emergency situations</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={profileData.notification_preferences.emergency_alerts}
-                        onChange={(e) => handleNotificationChange('emergency_alerts', e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
+          </>
+          )}
         </div>
 
         {/* Footer */}

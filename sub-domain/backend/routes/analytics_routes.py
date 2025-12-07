@@ -156,22 +156,15 @@ def get_dashboard_data():
         # Get property_id from request (subdomain, query param, header, or JWT)
         property_id = get_property_id_from_request()
         
-        # If no property_id provided, try to get from user's owned properties (owner_id instead of manager_id)
-        if not property_id and user_role == 'property_manager':
+        # If property_id not in request, try to get from JWT token
+        if not property_id:
             try:
-                user = User.query.get(current_user_id)
-                if user:
-                    # Get the first property owned by this user
-                    owned_property = Property.query.filter_by(
-                        owner_id=user.id
-                    ).first()
-                    
-                    if owned_property:
-                        property_id = owned_property.id
-            except Exception as e:
-                current_app.logger.warning(f"Error getting owned property: {str(e)}")
-                property_id = None
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
         
+        # CRITICAL: Do NOT auto-detect from owned properties
+        # Property managers must access through the correct subdomain
         if user_role == 'property_manager':
             if not property_id:
                 # Return safe empty dashboard instead of error
@@ -253,6 +246,18 @@ def get_manager_dashboard(property_id):
         if not property_obj:
             current_app.logger.warning(f"Property {property_id} not found")
             return jsonify({'error': 'Property not found'}), 404
+        
+        # CRITICAL: Verify current user owns this property
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         # Key Metrics - Property-specific with error handling
         try:

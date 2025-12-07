@@ -67,21 +67,59 @@ def get_my_tenant():
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/', methods=['GET'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def get_tenants():
-    """Get all tenants with their user info."""
+    """Get all tenants with their user info, filtered by property_id from subdomain."""
     try:
-        # Load tenants with user relationship
+        # CRITICAL: Get property_id from request (subdomain, header, query param, or JWT)
+        # This ensures we only return tenants for the current property subdomain
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        
+        # If property_id not in request, try to get from JWT token
+        if not property_id:
+            from flask_jwt_extended import get_jwt
+            try:
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
+        
+        if not property_id:
+            return jsonify({
+                'error': 'Property context is required. Please access through a property subdomain.',
+                'code': 'PROPERTY_CONTEXT_REQUIRED'
+            }), 400
+        
+        # CRITICAL: Verify property exists and user owns it (for property managers)
+        from flask_jwt_extended import get_jwt_identity
+        from models.property import Property
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                property_obj = Property.query.get(property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+        
+        current_app.logger.info(f"Getting tenants for property_id: {property_id}")
+        
+        # Load tenants with user relationship, FILTERED BY PROPERTY_ID
         from sqlalchemy.orm import joinedload
         try:
             tenants = db.session.query(Tenant).options(
                 joinedload(Tenant.user)
-            ).join(User).all()
+            ).join(User).filter(Tenant.property_id == property_id).all()
         except Exception as e:
             # Fallback to simple query if eager loading fails
             current_app.logger.warning(f"Eager loading failed, using simple query: {str(e)}")
-            tenants = db.session.query(Tenant).join(User).all()
-        print(f"Found {len(tenants)} tenants in database")
+            tenants = db.session.query(Tenant).join(User).filter(Tenant.property_id == property_id).all()
+        print(f"Found {len(tenants)} tenants in database for property {property_id}")
         
         tenant_list = []
         for tenant in tenants:

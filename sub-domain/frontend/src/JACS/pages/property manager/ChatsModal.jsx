@@ -225,9 +225,9 @@ const ChatsModal = ({ isOpen, onClose }) => {
                                 )}
                               </div>
                               <p className="text-xs text-gray-600 truncate mb-1">
-                                {chat.messages && chat.messages.length > 0
+                                {chat.last_message?.content || (chat.messages && chat.messages.length > 0
                                   ? chat.messages[chat.messages.length - 1].content
-                                  : 'No messages yet'}
+                                  : 'No messages yet')}
                               </p>
                               <span className="text-xs text-gray-500">
                                 {formatTime(chat.last_message_at || chat.created_at)}

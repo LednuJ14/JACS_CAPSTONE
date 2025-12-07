@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import Header from '../../components/Header';
 import { apiService } from '../../../services/api';
 
@@ -27,7 +27,7 @@ const TasksPage = () => {
   const [priorityOptions, setPriorityOptions] = useState([]);
   const [statusFilter, setStatusFilter] = useState('All');
   const [search, setSearch] = useState('');
-  const assignFormRef = useRef(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
 
   const loadTasks = async () => {
     try {
@@ -111,6 +111,9 @@ const TasksPage = () => {
       setPriority('medium');
       setDueDate('');
       
+      // Close modal
+      setShowAssignModal(false);
+      
       // Reload tasks
       await loadTasks();
     } catch (e) {
@@ -119,6 +122,16 @@ const TasksPage = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleCloseModal = () => {
+    setShowAssignModal(false);
+    // Reset form when closing
+    setAssigneeId('');
+    setTitle('');
+    setDescription('');
+    setPriority('medium');
+    setDueDate('');
   };
 
   const updateStatus = async (id, status) => {
@@ -192,7 +205,7 @@ const TasksPage = () => {
               <p className="text-gray-600">Assign and track staff tasks with backend integration.</p>
             </div>
             <button
-              onClick={() => assignFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              onClick={() => setShowAssignModal(true)}
               className="h-10 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm shadow-sm"
             >
               + Assign Task
@@ -220,77 +233,6 @@ const TasksPage = () => {
           </div>
         </div>
 
-        {/* Assignment Form */}
-        <div ref={assignFormRef} className="bg-white border rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">Assign Task to Staff</h2>
-          <p className="text-sm text-gray-500 mb-4">Create and assign tasks with backend integration.</p>
-
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 space-y-4">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Title</label>
-                <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full h-11 border rounded-lg px-3" placeholder="e.g. Repair broken faucet in 2A" />
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {mockTemplates.map(t => (
-                    <button key={t} type="button" onClick={() => handleTemplate(t)} className="text-xs px-2 py-1 border rounded-lg bg-gray-50 hover:bg-gray-100">
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Description</label>
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className="w-full border rounded-lg px-3 py-2" placeholder="Add task details, unit number, instructions..." />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Priority</label>
-                  <select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full h-11 border rounded-lg px-3">
-                    {priorityOptions.map(p => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Due Date</label>
-                  <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full h-11 border rounded-lg px-3" />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Assign To</label>
-                  <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="w-full h-11 border rounded-lg px-3">
-                    <option value="">Select staff</option>
-                    {staff.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} — {s.role || 'Staff'}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <button 
-                  disabled={!canSubmit || submitting} 
-                  className={`h-11 px-4 rounded-lg text-white flex items-center gap-2 ${canSubmit && !submitting ? 'bg-black hover:bg-black/90' : 'bg-gray-300 cursor-not-allowed'}`}
-                >
-                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {submitting ? 'Creating...' : 'Assign Task'}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="border rounded-xl p-4 bg-gray-50">
-                <p className="text-sm text-gray-600">Tips</p>
-                <ul className="text-sm text-gray-600 list-disc ml-5 mt-1">
-                  <li>Use templates for common tasks</li>
-                  <li>Set due dates for time-sensitive work</li>
-                  <li>Provide clear instructions</li>
-                </ul>
-              </div>
-            </div>
-          </form>
-        </div>
 
         {/* Task Board */}
         <div className="bg-white border rounded-2xl p-6 shadow-sm">
@@ -339,6 +281,145 @@ const TasksPage = () => {
           )}
         </div>
       </div>
+
+      {/* Assign Task Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 rounded-t-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Assign Task to Staff</h2>
+                  <p className="text-sm text-gray-500">Create and assign tasks with backend integration.</p>
+                </div>
+                <button
+                  onClick={handleCloseModal}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Form Content */}
+            <form onSubmit={handleSubmit} className="flex flex-col">
+              <div className="p-6 flex-1 overflow-y-auto">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Title *</label>
+                    <input 
+                      value={title} 
+                      onChange={(e) => setTitle(e.target.value)} 
+                      className="w-full h-11 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                      placeholder="e.g. Repair broken faucet in 2A" 
+                    />
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {mockTemplates.map(t => (
+                        <button 
+                          key={t} 
+                          type="button" 
+                          onClick={() => handleTemplate(t)} 
+                          className="text-xs px-2 py-1 border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                    <textarea 
+                      value={description} 
+                      onChange={(e) => setDescription(e.target.value)} 
+                      rows={4} 
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none" 
+                      placeholder="Add task details, unit number, instructions..." 
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                      <select 
+                        value={priority} 
+                        onChange={(e) => setPriority(e.target.value)} 
+                        className="w-full h-11 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        {priorityOptions.map(p => (
+                          <option key={p.value} value={p.value}>{p.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Due Date</label>
+                      <input 
+                        type="date" 
+                        value={dueDate} 
+                        onChange={(e) => setDueDate(e.target.value)} 
+                        className="w-full h-11 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Assign To *</label>
+                      <select 
+                        value={assigneeId} 
+                        onChange={(e) => setAssigneeId(e.target.value)} 
+                        className="w-full h-11 border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">Select staff</option>
+                        {staff.map(s => (
+                          <option key={s.id} value={s.id}>{s.name || `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.email} — {s.role || 'Staff'}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Tips</p>
+                      <ul className="text-sm text-gray-600 list-disc ml-5 space-y-1">
+                        <li>Use templates for common tasks</li>
+                        <li>Set due dates for time-sensitive work</li>
+                        <li>Provide clear instructions</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4 rounded-b-xl">
+                <div className="flex justify-end space-x-3">
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    disabled={submitting}
+                    className="px-6 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={!canSubmit || submitting} 
+                    className={`px-6 py-2 text-sm font-medium text-white rounded-lg flex items-center gap-2 transition-colors ${
+                      canSubmit && !submitting 
+                        ? 'bg-blue-600 hover:bg-blue-700' 
+                        : 'bg-gray-300 cursor-not-allowed'
+                    }`}
+                  >
+                    {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {submitting ? 'Creating...' : 'Assign Task'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -568,7 +568,7 @@ const BillingPayment = () => {
                     : currentPlan?.status?.toUpperCase() || 'INACTIVE'
                   }
                 </span>
-                  {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) || currentPlan?.status === 'inactive' ? (
+                {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) || currentPlan?.status === 'inactive' ? (
                   <button 
                     onClick={() => {
                       if (hasPendingBilling()) {
@@ -829,12 +829,12 @@ const BillingPayment = () => {
                           if (status === 'pending') {
                             return (
                               <div className="flex items-center space-x-2">
-                                <button
-                                  onClick={() => openProofForBilling(transaction)}
-                                  className="bg-black text-white px-3 py-1 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
-                                >
-                                  Upload Proof
-                                </button>
+                          <button
+                            onClick={() => openProofForBilling(transaction)}
+                            className="bg-black text-white px-3 py-1 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
+                          >
+                            Upload Proof
+                          </button>
                                 <button
                                   onClick={() => handleCancelBilling(transaction)}
                                   disabled={cancellingBillingId === transaction.id}

@@ -77,19 +77,66 @@ def get_requests():
         else:
             user_role_str = str(user_role).upper() if user_role else 'TENANT'
         
+        # CRITICAL: Get property_id from request (subdomain, header, query param, or JWT)
+        # This ensures we only return requests for the current property subdomain
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        
+        # If property_id not in request, try to get from JWT token
+        if not property_id:
+            from flask_jwt_extended import get_jwt
+            try:
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
+        
         # Build query based on role
         if user_role_str == 'TENANT':
-            # Tenants can only see their own requests
+            # Tenants can only see their own requests for their property
             tenant = get_current_tenant()
             if not tenant:
                 return jsonify({'error': 'Tenant profile not found'}), 404
             
+            # Filter by tenant_id and property_id (if available)
             query = MaintenanceRequest.query.filter_by(tenant_id=tenant.id)
-        elif user_role_str in ['MANAGER', 'STAFF']:
-            # Managers/Staff can see all requests, optionally filtered by tenant_id
-            query = MaintenanceRequest.query
+            if property_id:
+                query = query.filter_by(property_id=property_id)
+        elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            # Property managers can see all requests for their property
+            if not property_id:
+                return jsonify({
+                    'error': 'Property context is required. Please access through a property subdomain.',
+                    'code': 'PROPERTY_CONTEXT_REQUIRED'
+                }), 400
+            
+            # CRITICAL: Verify property exists and user owns it
+            from models.property import Property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+            
+            # Filter by property_id
+            query = MaintenanceRequest.query.filter_by(property_id=property_id)
             if tenant_id:
                 query = query.filter_by(tenant_id=tenant_id)
+        elif user_role_str == 'STAFF':
+            # Staff can see requests for their property
+            if property_id:
+                query = MaintenanceRequest.query.filter_by(property_id=property_id)
+                if tenant_id:
+                    query = query.filter_by(tenant_id=tenant_id)
+            else:
+                # If no property_id, staff can see all (fallback for backward compatibility)
+                query = MaintenanceRequest.query
+                if tenant_id:
+                    query = query.filter_by(tenant_id=tenant_id)
         else:
             return jsonify({'error': 'Access denied'}), 403
         

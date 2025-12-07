@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from app import db
 import enum
+from flask import current_app
+from flask import current_app
 
 class ChatStatus(enum.Enum):
     """Chat status enum."""
@@ -41,7 +43,7 @@ class Chat(db.Model):
             if hasattr(self, key) and key != 'status':
                 setattr(self, key, value)
     
-    def to_dict(self, include_messages=False, include_tenant=False, include_property=False):
+    def to_dict(self, include_messages=False, include_tenant=False, include_property=False, include_last_message=False):
         """Convert chat to dictionary."""
         data = {
             'id': self.id,
@@ -54,6 +56,29 @@ class Chat(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'unread_count': 0  # Will be calculated by the route handler with proper user context
         }
+        
+        # Include last message if requested (for chat list preview)
+        if include_last_message and self.last_message_at:
+            try:
+                # Get the most recent message
+                last_message = None
+                if self.messages:
+                    messages_list = list(self.messages) if hasattr(self.messages, '__iter__') else []
+                    if messages_list:
+                        # Sort by created_at descending and get the first one
+                        sorted_messages = sorted(messages_list, key=lambda m: getattr(m, 'created_at', None) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                        last_message = sorted_messages[0] if sorted_messages else None
+                else:
+                    # If messages relationship is not loaded, query directly
+                    from models.message import Message
+                    last_message = Message.query.filter_by(chat_id=self.id).order_by(Message.created_at.desc()).first()
+                
+                if last_message:
+                    data['last_message'] = last_message.to_dict(include_sender=True)
+            except Exception as last_msg_error:
+                # If we can't get the last message, just continue without it
+                current_app.logger.warning(f"Error getting last message for chat {self.id}: {str(last_msg_error)}")
+                data['last_message'] = None
         
         if include_messages:
             # Try to get messages from relationship first

@@ -117,19 +117,54 @@ def get_chats():
             chats_list = []
             for chat in chats:
                 try:
-                    # Update chat subject if it's still a default value
+                    # Update chat subject if it's still a default value or if it needs to be refreshed
+                    should_update_subject = False
                     if chat.subject and chat.subject.lower() in ['new inquiry', 'new conversation']:
+                        should_update_subject = True
+                    else:
+                        # Also update if subject seems incorrect (too short or doesn't match manager's name)
+                        try:
+                            property_obj = Property.query.get(chat.property_id)
+                            if property_obj and property_obj.owner_id:
+                                manager = User.query.get(property_obj.owner_id)
+                                if manager:
+                                    # Use User model's full_name property for consistent formatting
+                                    manager_name = manager.full_name if hasattr(manager, 'full_name') else ''
+                                    if not manager_name:
+                                        first_name = getattr(manager, 'first_name', '') or ''
+                                        last_name = getattr(manager, 'last_name', '') or ''
+                                        manager_name = f"{first_name} {last_name}".strip()
+                                    
+                                    # If still no name, try email
+                                    if not manager_name:
+                                        email = getattr(manager, 'email', '')
+                                        if email:
+                                            manager_name = email.split('@')[0].replace('.', ' ').title()
+                                        else:
+                                            manager_name = f"Manager {manager.id}"
+                                    
+                                    # Check if current subject doesn't match manager's name
+                                    if chat.subject != manager_name:
+                                        should_update_subject = True
+                        except Exception:
+                            pass
+                    
+                    if should_update_subject:
                         try:
                             # Get property manager's name
                             property_obj = Property.query.get(chat.property_id)
                             if property_obj and property_obj.owner_id:
                                 manager = User.query.get(property_obj.owner_id)
                                 if manager:
-                                    first_name = getattr(manager, 'first_name', '') or ''
-                                    last_name = getattr(manager, 'last_name', '') or ''
-                                    if first_name or last_name:
+                                    # Use User model's full_name property for consistent formatting
+                                    manager_name = manager.full_name if hasattr(manager, 'full_name') else ''
+                                    if not manager_name:
+                                        first_name = getattr(manager, 'first_name', '') or ''
+                                        last_name = getattr(manager, 'last_name', '') or ''
                                         manager_name = f"{first_name} {last_name}".strip()
-                                    else:
+                                    
+                                    # If still no name, try email
+                                    if not manager_name:
                                         email = getattr(manager, 'email', '')
                                         if email:
                                             manager_name = email.split('@')[0].replace('.', ' ').title()
@@ -144,7 +179,7 @@ def get_chats():
                             current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
                             db.session.rollback()
                     
-                    chat_dict = chat.to_dict(include_messages=False, include_property=True)
+                    chat_dict = chat.to_dict(include_messages=False, include_property=True, include_last_message=True)
                     # Get unread count for tenant
                     chat_dict['unread_count'] = chat.get_unread_count(current_user.id, 'tenant')
                     chats_list.append(chat_dict)
@@ -159,22 +194,23 @@ def get_chats():
         
         elif user_role_str in ['MANAGER']:
             # Property managers see chats for their property
-            # If property_id not provided, try to get from user's owned properties
+            # CRITICAL: Must use property_id from subdomain, not auto-detect from owned properties
+            # This ensures they only see chats for the property subdomain they're currently accessing
+            
+            # If property_id not in request, try to get from JWT token
             if not property_id:
+                from flask_jwt_extended import get_jwt
                 try:
-                    # Get the first property owned by this user
-                    owned_property = Property.query.filter_by(
-                        owner_id=current_user.id
-                    ).first()
-                    
-                    if owned_property:
-                        property_id = owned_property.id
-                        current_app.logger.info(f"Auto-detected property {property_id} for manager {current_user.id}")
-                    else:
-                        return jsonify({'error': 'No property found for this manager. Please contact support.'}), 404
-                except Exception as prop_error:
-                    current_app.logger.error(f"Error getting owned property: {str(prop_error)}")
-                    return jsonify({'error': 'Failed to determine property context'}), 500
+                    claims = get_jwt()
+                    property_id = claims.get('property_id')
+                except Exception:
+                    pass
+            
+            if not property_id:
+                return jsonify({
+                    'error': 'Property context is required. Please access through a property subdomain.',
+                    'code': 'PROPERTY_CONTEXT_REQUIRED'
+                }), 400
             
             # Verify property exists and user is the manager
             property_obj = Property.query.get(property_id)
@@ -182,7 +218,10 @@ def get_chats():
                 return jsonify({'error': 'Property not found'}), 404
             
             if property_obj.owner_id != current_user.id:
-                return jsonify({'error': 'Access denied'}), 403
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
             
             query = Chat.query.filter_by(property_id=property_id)
             if status:
@@ -239,7 +278,7 @@ def get_chats():
                             current_app.logger.warning(f"Error updating chat {chat.id} subject: {str(update_error)}")
                             db.session.rollback()
                     
-                    chat_dict = chat.to_dict(include_messages=False, include_tenant=True)
+                    chat_dict = chat.to_dict(include_messages=False, include_tenant=True, include_last_message=True)
                     # Get unread count for property manager
                     chat_dict['unread_count'] = chat.get_unread_count(current_user.id, 'property_manager')
                     chats_list.append(chat_dict)
@@ -317,11 +356,16 @@ def create_chat():
         # Use property manager's name as the conversation name
         manager_name = None
         try:
-            # Try to get full name first
-            first_name = getattr(property_manager, 'first_name', '') or ''
-            last_name = getattr(property_manager, 'last_name', '') or ''
-            if first_name or last_name:
-                manager_name = f"{first_name} {last_name}".strip()
+            # Use User model's full_name property for consistent formatting
+            if hasattr(property_manager, 'full_name'):
+                manager_name = property_manager.full_name
+            
+            # Fallback to manual construction if full_name is empty
+            if not manager_name:
+                first_name = getattr(property_manager, 'first_name', '') or ''
+                last_name = getattr(property_manager, 'last_name', '') or ''
+                if first_name or last_name:
+                    manager_name = f"{first_name} {last_name}".strip()
             
             # Fallback to email username if no name
             if not manager_name:
@@ -448,19 +492,52 @@ def get_chat(chat_id):
         if not chat:
             return jsonify({'error': 'Chat not found'}), 404
         
-        # Update chat subject if it's still a default value
+        # Update chat subject if it's still a default value or needs refresh
+        should_update_subject = False
         if chat.subject and chat.subject.lower() in ['new inquiry', 'new conversation']:
+            should_update_subject = True
+        else:
+            # Also check if subject needs to be updated to match current manager name
+            try:
+                property_obj = Property.query.get(chat.property_id)
+                if property_obj and property_obj.owner_id:
+                    manager = User.query.get(property_obj.owner_id)
+                    if manager:
+                        # Use User model's full_name property
+                        manager_name = manager.full_name if hasattr(manager, 'full_name') else ''
+                        if not manager_name:
+                            first_name = getattr(manager, 'first_name', '') or ''
+                            last_name = getattr(manager, 'last_name', '') or ''
+                            manager_name = f"{first_name} {last_name}".strip()
+                        
+                        if not manager_name:
+                            email = getattr(manager, 'email', '')
+                            if email:
+                                manager_name = email.split('@')[0].replace('.', ' ').title()
+                            else:
+                                manager_name = f"Manager {manager.id}"
+                        
+                        # Check if current subject doesn't match manager's name
+                        if chat.subject != manager_name:
+                            should_update_subject = True
+            except Exception:
+                pass
+        
+        if should_update_subject:
             try:
                 # Get property manager's name
                 property_obj = Property.query.get(chat.property_id)
                 if property_obj and property_obj.owner_id:
                     manager = User.query.get(property_obj.owner_id)
                     if manager:
-                        first_name = getattr(manager, 'first_name', '') or ''
-                        last_name = getattr(manager, 'last_name', '') or ''
-                        if first_name or last_name:
+                        # Use User model's full_name property for consistent formatting
+                        manager_name = manager.full_name if hasattr(manager, 'full_name') else ''
+                        if not manager_name:
+                            first_name = getattr(manager, 'first_name', '') or ''
+                            last_name = getattr(manager, 'last_name', '') or ''
                             manager_name = f"{first_name} {last_name}".strip()
-                        else:
+                        
+                        if not manager_name:
                             email = getattr(manager, 'email', '')
                             if email:
                                 manager_name = email.split('@')[0].replace('.', ' ').title()

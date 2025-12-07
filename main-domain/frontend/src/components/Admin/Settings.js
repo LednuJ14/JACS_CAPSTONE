@@ -180,10 +180,7 @@ const AdminSettingsModal = ({ isOpen, onClose }) => {
             <div className="w-64 bg-gray-50 border-r border-gray-200 p-4">
               <nav className="space-y-2">
                 {[
-                  { id: 'general', name: 'General' },
-                  { id: 'notifications', name: 'Notifications' },
-                  { id: 'security', name: 'Security' },
-                  { id: 'backup', name: 'Backup & Storage' }
+                  { id: 'general', name: 'General' }
                 ].map((tab) => (
                   <button
                     key={tab.id}
@@ -285,201 +282,144 @@ const AdminSettingsModal = ({ isOpen, onClose }) => {
                       </button>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {!loading && activeTab === 'notifications' && (
-                <div className="space-y-6">
-                  <h3 className="text-xl font-bold text-gray-900">
-                    Notification Settings
-                  </h3>
-                  
-                  <div className="space-y-4">
+                  {/* Security Settings Section */}
+                  <div className="mt-8">
+                    <h3 className="text-xl font-bold text-gray-900 mb-6">
+                      Security Settings
+                    </h3>
+                    
                     <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-bold text-gray-900 text-lg">
-                            Email Notifications
-                          </h4>
-                          <p className="text-gray-600 mt-1">Receive important notifications via email</p>
-                        </div>
-                        <button
-                          onClick={() => handleToggle('emailNotifications')}
-                          className={`relative inline-flex h-8 w-14 items-center rounded-full transition-all duration-300 ${
-                            settings.emailNotifications ? 'bg-black shadow-lg' : 'bg-gray-300'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 shadow-md ${
-                              settings.emailNotifications ? 'translate-x-7' : 'translate-x-1'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-bold text-gray-900 text-lg">
-                            SMS Notifications
-                          </h4>
-                          <p className="text-gray-600 mt-1">Receive urgent notifications via SMS</p>
-                        </div>
-                        <button
-                          onClick={() => handleToggle('smsNotifications')}
-                          className={`relative inline-flex h-8 w-14 items-center rounded-full transition-all duration-300 ${
-                            settings.smsNotifications ? 'bg-black shadow-lg' : 'bg-gray-300'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 shadow-md ${
-                              settings.smsNotifications ? 'translate-x-7' : 'translate-x-1'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!loading && activeTab === 'security' && (
-                <div className="space-y-6">
-                  <h3 className="text-xl font-bold text-gray-900">
-                    Security Settings
-                  </h3>
-                  
-                  <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
-                    <h4 className="font-bold text-gray-900 text-lg mb-6">
-                      Password Policy
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-sm font-bold text-black mb-2">Minimum Length</label>
-                        <input
-                          type="number"
-                          value={settings.passwordPolicy.minLength}
-                          onChange={(e) => handlePasswordPolicyChange('minLength', e.target.value)}
-                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all text-black"
-                          min="6"
-                          max="20"
-                        />
-                      </div>
-                      
-                      <div className="space-y-4">
-                        <div className="flex items-center p-3 bg-gray-50 rounded-xl">
-                          <input
-                            type="checkbox"
-                            checked={settings.passwordPolicy.requireUppercase}
-                            onChange={(e) => handlePasswordPolicyChange('requireUppercase', e.target.checked)}
-                            className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
-                          />
-                          <label className="ml-3 text-sm font-medium text-gray-700">Require uppercase letters (A-Z)</label>
-                        </div>
-                        
-                        <div className="flex items-center p-3 bg-gray-50 rounded-xl">
-                          <input
-                            type="checkbox"
-                            checked={settings.passwordPolicy.requireLowercase}
-                            onChange={(e) => handlePasswordPolicyChange('requireLowercase', e.target.checked)}
-                            className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
-                          />
-                          <label className="ml-3 text-sm font-medium text-gray-700">Require lowercase letters (a-z)</label>
-                        </div>
-                        
-                        <div className="flex items-center p-3 bg-gray-50 rounded-xl">
-                          <input
-                            type="checkbox"
-                            checked={settings.passwordPolicy.requireNumbers}
-                            onChange={(e) => handlePasswordPolicyChange('requireNumbers', e.target.checked)}
-                            className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
-                          />
-                          <label className="ml-3 text-sm font-medium text-gray-700">Require numbers (0-9)</label>
-                        </div>
-                        
-                        <div className="flex items-center p-3 bg-gray-50 rounded-xl">
-                          <input
-                            type="checkbox"
-                            checked={settings.passwordPolicy.requireSpecialChars}
-                            onChange={(e) => handlePasswordPolicyChange('requireSpecialChars', e.target.checked)}
-                            className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
-                          />
-                          <label className="ml-3 text-sm font-medium text-gray-700">Require special characters (!@#$%)</label>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!loading && activeTab === 'backup' && (
-                <div className="space-y-6">
-                  <h3 className="text-xl font-bold text-gray-900">
-                    Backup & Storage Settings
-                  </h3>
-                  
-                  <div className="space-y-4">
-                    <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-bold text-gray-900 text-lg">
-                            Automatic Backup
-                          </h4>
-                          <p className="text-gray-600 mt-1">Automatically backup system data regularly</p>
-                        </div>
-                        <button
-                          onClick={() => handleToggle('autoBackup')}
-                          className={`relative inline-flex h-8 w-14 items-center rounded-full transition-all duration-300 ${
-                            settings.autoBackup ? 'bg-black shadow-lg' : 'bg-gray-300'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 shadow-md ${
-                              settings.autoBackup ? 'translate-x-7' : 'translate-x-1'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
-                      <label className="block text-sm font-bold text-black mb-3">Backup Frequency</label>
-                      <select
-                        value={settings.backupFrequency}
-                        onChange={(e) => handleInputChange('backupFrequency', e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all text-black"
-                        disabled={!settings.autoBackup}
-                      >
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                      </select>
-                    </div>
-
-                    <div className="bg-gradient-to-r from-gray-50 to-gray-100 p-6 rounded-2xl border-2 border-gray-200">
-                      <h4 className="font-bold text-gray-900 text-lg mb-3">
-                        Manual Backup
+                      <h4 className="font-bold text-gray-900 text-lg mb-6">
+                        Password Policy
                       </h4>
-                      <p className="text-gray-600 mb-4">Create an immediate backup of all system data and settings</p>
-                      <button 
-                        onClick={createBackup}
-                        disabled={loading}
-                        className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {loading ? (
-                          <span className="flex items-center">
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                            Creating Backup...
-                          </span>
-                        ) : (
-                          'Create Backup Now'
-                        )}
-                      </button>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-sm font-bold text-black mb-2">Minimum Length</label>
+                          <input
+                            type="number"
+                            value={settings.passwordPolicy.minLength}
+                            onChange={(e) => handlePasswordPolicyChange('minLength', e.target.value)}
+                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all text-black"
+                            min="6"
+                            max="20"
+                          />
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div className="flex items-center p-3 bg-gray-50 rounded-xl">
+                            <input
+                              type="checkbox"
+                              checked={settings.passwordPolicy.requireUppercase}
+                              onChange={(e) => handlePasswordPolicyChange('requireUppercase', e.target.checked)}
+                              className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
+                            />
+                            <label className="ml-3 text-sm font-medium text-gray-700">Require uppercase letters (A-Z)</label>
+                          </div>
+                          
+                          <div className="flex items-center p-3 bg-gray-50 rounded-xl">
+                            <input
+                              type="checkbox"
+                              checked={settings.passwordPolicy.requireLowercase}
+                              onChange={(e) => handlePasswordPolicyChange('requireLowercase', e.target.checked)}
+                              className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
+                            />
+                            <label className="ml-3 text-sm font-medium text-gray-700">Require lowercase letters (a-z)</label>
+                          </div>
+                          
+                          <div className="flex items-center p-3 bg-gray-50 rounded-xl">
+                            <input
+                              type="checkbox"
+                              checked={settings.passwordPolicy.requireNumbers}
+                              onChange={(e) => handlePasswordPolicyChange('requireNumbers', e.target.checked)}
+                              className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
+                            />
+                            <label className="ml-3 text-sm font-medium text-gray-700">Require numbers (0-9)</label>
+                          </div>
+                          
+                          <div className="flex items-center p-3 bg-gray-50 rounded-xl">
+                            <input
+                              type="checkbox"
+                              checked={settings.passwordPolicy.requireSpecialChars}
+                              onChange={(e) => handlePasswordPolicyChange('requireSpecialChars', e.target.checked)}
+                              className="w-5 h-5 text-black border-2 border-gray-300 rounded focus:ring-black"
+                            />
+                            <label className="ml-3 text-sm font-medium text-gray-700">Require special characters (!@#$%)</label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Backup & Storage Settings Section */}
+                  <div className="mt-8">
+                    <h3 className="text-xl font-bold text-gray-900 mb-6">
+                      Backup & Storage Settings
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-bold text-gray-900 text-lg">
+                              Automatic Backup
+                            </h4>
+                            <p className="text-gray-600 mt-1">Automatically backup system data regularly</p>
+                          </div>
+                          <button
+                            onClick={() => handleToggle('autoBackup')}
+                            className={`relative inline-flex h-8 w-14 items-center rounded-full transition-all duration-300 ${
+                              settings.autoBackup ? 'bg-black shadow-lg' : 'bg-gray-300'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 shadow-md ${
+                                settings.autoBackup ? 'translate-x-7' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border-2 border-gray-100 shadow-sm">
+                        <label className="block text-sm font-bold text-black mb-3">Backup Frequency</label>
+                        <select
+                          value={settings.backupFrequency}
+                          onChange={(e) => handleInputChange('backupFrequency', e.target.value)}
+                          className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all text-black"
+                          disabled={!settings.autoBackup}
+                        >
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </div>
+
+                      <div className="bg-gradient-to-r from-gray-50 to-gray-100 p-6 rounded-2xl border-2 border-gray-200">
+                        <h4 className="font-bold text-gray-900 text-lg mb-3">
+                          Manual Backup
+                        </h4>
+                        <p className="text-gray-600 mb-4">Create an immediate backup of all system data and settings</p>
+                        <button 
+                          onClick={createBackup}
+                          disabled={loading}
+                          className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-all duration-200 font-medium shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {loading ? (
+                            <span className="flex items-center">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              Creating Backup...
+                            </span>
+                          ) : (
+                            'Create Backup Now'
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
+
             </div>
           </div>
 

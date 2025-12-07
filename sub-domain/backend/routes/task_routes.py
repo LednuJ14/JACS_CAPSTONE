@@ -24,7 +24,8 @@ def get_my_tasks():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        if user.role != UserRole.STAFF:
+        # Use the helper method that handles both enum and string role values
+        if not user.is_staff():
             return jsonify({'error': 'Only staff can access their tasks'}), 403
         
         # Get staff profile (optional check)
@@ -47,20 +48,27 @@ def get_my_tasks():
 @task_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_tasks():
-    """Get tasks filtered by user's role and permissions."""
+    """Get tasks filtered by user's role and permissions, and property_id from subdomain."""
     try:
-        current_app.logger.info("Getting tasks - endpoint called")
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'error': 'User not found'}), 404
         
-        # Simplified version - just return empty list for now to test basic functionality
-        return jsonify({
-            'tasks': [],
-            'total': 0,
-            'pages': 0,
-            'current_page': 1,
-            'per_page': 20,
-            'has_next': False,
-            'has_prev': False
-        }), 200
+        # Get property_id from request (subdomain, header, query param, or JWT)
+        property_id = None
+        try:
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+        except Exception:
+            property_id = request.args.get('property_id', type=int) or request.headers.get('X-Property-ID', type=int)
+        
+        # If property_id not in request, try to get from JWT token
+        if not property_id:
+            try:
+                from flask_jwt_extended import get_jwt
+                property_id = get_jwt().get('property_id')
+            except Exception:
+                pass
         
         # Get query parameters
         page = request.args.get('page', 1, type=int)
@@ -73,18 +81,95 @@ def get_tasks():
         # Base query
         query = Task.query
         
-        # Filter by user role
-        if current_user.role == UserRole.TENANT:
-            # Tenants can only see tasks assigned to them or their unit
-            query = query.filter(
-                (Task.assigned_to == current_user.id) |
-                (Task.tenant_id == current_user.id)
-            )
-        elif current_user.role == UserRole.STAFF:
-            # Staff can see all tasks except private tasks between property managers and specific tenants
-            # For simplicity, let's allow staff to see all tasks for now
-            pass
-        # Property managers can see all tasks
+        # Determine user role
+        user_role = current_user.role
+        if isinstance(user_role, UserRole):
+            user_role_str = user_role.value
+        elif isinstance(user_role, str):
+            user_role_str = user_role.upper()
+        else:
+            user_role_str = str(user_role).upper() if user_role else 'TENANT'
+        
+        # Filter by user role AND property_id
+        if user_role_str == 'TENANT':
+            # Tenants can only see tasks assigned to them or their unit, for their property
+            from models.tenant import Tenant
+            tenant = Tenant.query.filter_by(user_id=current_user.id).first()
+            # Tenants can only see tasks assigned to them or their tenant_id
+            # Simple filter - don't complicate with property filtering for tenants
+            if tenant:
+                query = query.filter(
+                    (Task.assigned_to == current_user.id) |
+                    (Task.tenant_id == tenant.id)
+                )
+            else:
+                query = query.filter(Task.assigned_to == current_user.id)
+        elif user_role_str == 'STAFF':
+            # Staff can see tasks for their property
+            if property_id:
+                from models.property import Unit
+                from models.tenant import Tenant
+                from sqlalchemy import or_
+                # Filter by tasks where unit belongs to property OR tenant belongs to property
+                # Use subqueries to avoid join complexity and duplicates
+                # Get unit IDs and tenant IDs for this property
+                unit_ids = [u[0] for u in db.session.query(Unit.id).filter(Unit.property_id == property_id).all()]
+                tenant_ids = [t[0] for t in db.session.query(Tenant.id).filter(Tenant.property_id == property_id).all()]
+                
+                # Filter tasks where unit_id is in property's units OR tenant_id is in property's tenants
+                conditions = []
+                if unit_ids:
+                    conditions.append(Task.unit_id.in_(unit_ids))
+                if tenant_ids:
+                    conditions.append(Task.tenant_id.in_(tenant_ids))
+                
+                if conditions:
+                    query = query.filter(or_(*conditions) if len(conditions) > 1 else conditions[0])
+                else:
+                    query = query.filter(Task.id == -1)  # No units/tenants, return empty
+        elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            # Property managers can see all tasks for their property
+            if not property_id:
+                return jsonify({
+                    'error': 'Property context is required. Please access through a property subdomain.',
+                    'code': 'PROPERTY_CONTEXT_REQUIRED'
+                }), 400
+            
+            # CRITICAL: Verify property exists and user owns it
+            from models.property import Property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+            
+            # Filter tasks by property_id through units or tenants
+            from models.property import Unit
+            from models.tenant import Tenant
+            from sqlalchemy import or_
+            
+            # Get unit IDs and tenant IDs for this property
+            unit_ids = [u[0] for u in db.session.query(Unit.id).filter(Unit.property_id == property_id).all()]
+            tenant_ids = [t[0] for t in db.session.query(Tenant.id).filter(Tenant.property_id == property_id).all()]
+            
+            # Filter tasks where unit_id is in property's units OR tenant_id is in property's tenants
+            conditions = []
+            if unit_ids:
+                conditions.append(Task.unit_id.in_(unit_ids))
+            if tenant_ids:
+                conditions.append(Task.tenant_id.in_(tenant_ids))
+            
+            if conditions:
+                query = query.filter(or_(*conditions) if len(conditions) > 1 else conditions[0])
+            else:
+                query = query.filter(Task.id == -1)  # No units/tenants, return empty
+        else:
+            # Unknown role - return empty result for security
+            query = query.filter(Task.id == -1)
         
         # Apply search filter
         if search:
@@ -95,84 +180,80 @@ def get_tasks():
         
         # Apply status filter
         if status:
-            try:
-                status_enum = TaskStatus(status)
-                query = query.filter(Task.status == status_enum)
-            except ValueError:
-                return jsonify({'error': f'Invalid task status: {status}'}), 400
+            # Task.status is stored as String, not Enum, so compare as string
+            status_str = str(status).lower()
+            valid_statuses = ['open', 'in_progress', 'completed', 'cancelled']
+            if status_str in valid_statuses:
+                query = query.filter(Task.status == status_str)
+            else:
+                return jsonify({'error': f'Invalid task status: {status}. Valid values: {", ".join(valid_statuses)}'}), 400
         
         # Apply priority filter
         if priority:
-            try:
-                priority_enum = TaskPriority(priority)
-                query = query.filter(Task.priority == priority_enum)
-            except ValueError:
-                return jsonify({'error': f'Invalid task priority: {priority}'}), 400
+            # Task.priority is stored as String, not Enum, so compare as string
+            priority_str = str(priority).lower()
+            valid_priorities = ['low', 'medium', 'high', 'urgent']
+            if priority_str in valid_priorities:
+                query = query.filter(Task.priority == priority_str)
+            else:
+                return jsonify({'error': f'Invalid task priority: {priority}. Valid values: {", ".join(valid_priorities)}'}), 400
         
         # Apply assigned_to filter
         if assigned_to:
-            if assigned_to.isdigit():
-                query = query.filter(Task.assigned_to == int(assigned_to))
+            try:
+                assigned_id = int(assigned_to) if isinstance(assigned_to, str) and assigned_to.isdigit() else assigned_to
+                if isinstance(assigned_id, int):
+                    query = query.filter(Task.assigned_to == assigned_id)
+            except (ValueError, TypeError):
+                pass
         
         # Order by priority and due date
+        # Priority is a string, so we need to order by a custom expression
+        from sqlalchemy import case
+        priority_order = case(
+            (Task.priority == 'urgent', 1),
+            (Task.priority == 'high', 2),
+            (Task.priority == 'medium', 3),
+            (Task.priority == 'low', 4),
+            else_=5
+        )
+        # Order by priority and due date
+        # MariaDB/MySQL doesn't support NULLS LAST, so we use a CASE expression to handle NULLs
+        from sqlalchemy import case
+        # For due_date: NULL values should come last, so we use a CASE to put NULLs at the end
+        due_date_order = case(
+            (Task.due_date.is_(None), 1),  # NULL dates get value 1 (will sort after non-NULL)
+            else_=0  # Non-NULL dates get value 0 (will sort first)
+        )
         query = query.order_by(
-            Task.priority.desc(),
-            Task.due_date.asc().nullslast(),
-            Task.created_at.desc()
+            priority_order.asc(),  # Lower number = higher priority
+            due_date_order.asc(),  # Non-NULL dates first (0), then NULL dates (1)
+            Task.due_date.asc(),   # Then order by actual date value
+            Task.created_at.desc()  # Finally by creation date (newest first)
         )
         
-        # Paginate
-        try:
-            current_app.logger.info(f"About to paginate query")
-            tasks = query.paginate(
-                page=page, per_page=per_page, error_out=False
-            )
-            current_app.logger.info(f"Pagination successful, found {len(tasks.items)} tasks")
-        except Exception as paginate_error:
-            current_app.logger.error(f"Pagination error: {str(paginate_error)}")
-            raise
+        # Paginate and convert to dict
+        tasks = query.paginate(page=page, per_page=per_page, error_out=False)
         
-        try:
-            current_app.logger.info(f"Converting tasks to dict...")
-            task_dicts = []
-            for i, task in enumerate(tasks.items):
-                try:
-                    task_dict = task.to_dict()
-                    task_dicts.append(task_dict)
-                    current_app.logger.info(f"Task {i+1} converted successfully")
-                except Exception as task_error:
-                    current_app.logger.error(f"Error converting task {task.id}: {str(task_error)}")
-                    # Skip this task and continue
-                    continue
-            
-            current_app.logger.info(f"All tasks converted, returning response")
-            
-            return jsonify({
-                'tasks': task_dicts,
-                'total': tasks.total,
-                'pages': tasks.pages,
-                'current_page': page,
-                'per_page': per_page,
-                'has_next': tasks.has_next,
-                'has_prev': tasks.has_prev
-            }), 200
-        except Exception as dict_error:
-            current_app.logger.error(f"Dict conversion error: {str(dict_error)}")
-            # Return empty list if conversion fails
-            return jsonify({
-                'tasks': [],
-                'total': 0,
-                'pages': 0,
-                'current_page': page,
-                'per_page': per_page,
-                'has_next': False,
-                'has_prev': False
-            }), 200
+        task_dicts = []
+        for task in tasks.items:
+            try:
+                task_dicts.append(task.to_dict())
+            except Exception:
+                continue  # Skip tasks that fail to convert
+        
+        return jsonify({
+            'tasks': task_dicts,
+            'total': tasks.total,
+            'pages': tasks.pages,
+            'current_page': page,
+            'per_page': per_page,
+            'has_next': tasks.has_next,
+            'has_prev': tasks.has_prev
+        }), 200
         
     except Exception as e:
         current_app.logger.error(f"Get tasks error: {str(e)}")
-        import traceback
-        current_app.logger.error(f"Full traceback: {traceback.format_exc()}")
         return jsonify({'error': 'Failed to fetch tasks'}), 500
 
 @task_bp.route('/<int:task_id>', methods=['GET'])

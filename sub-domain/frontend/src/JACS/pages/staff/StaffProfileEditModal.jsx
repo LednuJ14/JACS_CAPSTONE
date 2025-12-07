@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { X, Save, User, Mail, Phone, Briefcase, Wrench, Clock, Sparkles, AlertCircle } from 'lucide-react';
+import { X, Save, User, Mail, Phone, Briefcase, Wrench, Clock, Sparkles, AlertCircle, Camera, Upload } from 'lucide-react';
+import { apiService } from '../../../services/api';
 
 // Staff-only Profile Edit Modal (UI-only)
 // Props: isOpen, onClose, currentUser, onSave
@@ -18,6 +19,9 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
 
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [profileImage, setProfileImage] = useState(null);
+  const [profileImagePreview, setProfileImagePreview] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -32,6 +36,30 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
         shift_preference: currentUser.shift_preference || 'Day',
         bio: currentUser.bio || ''
       });
+      
+      // Set profile image preview
+      if (currentUser.profile_image_url || currentUser.avatar_url) {
+        const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          setProfileImagePreview(imageUrl);
+        } else if (imageUrl.startsWith('/uploads/')) {
+          // Images from main-domain (port 5000)
+          setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+          // Images from sub-domain (port 5001)
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else {
+          setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+        }
+      } else {
+        setProfileImagePreview(null);
+      }
+      
+      setProfileImage(null);
     }
   }, [currentUser]);
 
@@ -50,10 +78,82 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     return Object.keys(next).length === 0;
   };
 
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        setErrors({ submit: 'Invalid file type. Please upload PNG, JPG, JPEG, GIF, or WEBP.' });
+        return;
+      }
+      
+      if (file.size > 2 * 1024 * 1024) {
+        setErrors({ submit: 'File size exceeds 2MB limit.' });
+        return;
+      }
+      
+      setProfileImage(file);
+      setErrors({ submit: '' });
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfileImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleImageUpload = async () => {
+    if (!profileImage) return;
+    
+    setUploadingImage(true);
+    setErrors({});
+    
+    try {
+      const response = await apiService.uploadProfileImage(profileImage);
+      
+      if (response && response.user) {
+        localStorage.setItem('user', JSON.stringify(response.user));
+        
+        if (response.image_url) {
+          const imageUrl = response.image_url;
+          if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+            setProfileImagePreview(imageUrl);
+          } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else if (imageUrl.startsWith('/api/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else {
+            setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+          }
+        }
+        
+        if (onSave) {
+          await onSave(response.user);
+        }
+        
+        window.dispatchEvent(new CustomEvent('userUpdated'));
+        
+        setProfileImage(null);
+      }
+    } catch (error) {
+      console.error('Error uploading profile image:', error);
+      const errorMessage = error.message || error.error || 'Failed to upload profile image. Please try again.';
+      setErrors({ submit: errorMessage });
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     setSaving(true);
     try {
+      // Upload profile image first if a new one was selected
+      if (profileImage) {
+        await handleImageUpload();
+      }
+      
       await (onSave ? onSave(profile) : Promise.resolve());
       onClose && onClose();
     } catch (e) {
@@ -84,6 +184,60 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
         </div>
 
         <div className="p-6 space-y-6">
+          {/* Profile Image Section */}
+          <div className="flex justify-center mb-6">
+            <div className="relative">
+              <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-gray-200 bg-gray-100 flex items-center justify-center">
+                {profileImagePreview ? (
+                  <img
+                    src={profileImagePreview}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                <div className={`w-full h-full flex items-center justify-center ${profileImagePreview ? 'hidden' : ''}`}>
+                  <User className="w-16 h-16 text-gray-400" />
+                </div>
+              </div>
+              <label
+                htmlFor="staff-profile-image-upload"
+                className="absolute bottom-0 right-0 w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-colors shadow-lg"
+              >
+                <Camera className="w-5 h-5 text-white" />
+                <input
+                  id="staff-profile-image-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                  onChange={handleImageChange}
+                  className="hidden"
+                />
+              </label>
+              {profileImage && (
+                <button
+                  onClick={handleImageUpload}
+                  disabled={uploadingImage}
+                  className="mt-2 w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {uploadingImage ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Image</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Names */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

@@ -86,7 +86,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       // Find matching chat
       const matchingChat = chats.find(c => Number(c.propertyId) === Number(initialChat.propertyId));
       
-        if (matchingChat) {
+      if (matchingChat) {
         // Chat exists - select it and pre-fill message
         processedInitialChatRef.current = initialChatKey;
         setSelectedChatId(matchingChat.id);

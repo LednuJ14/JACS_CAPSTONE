@@ -75,16 +75,6 @@ const StaffDashboardPage = () => {
                 <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Dashboard</h1>
                 <p className="text-gray-600">Welcome back! Here is your overview.</p>
               </div>
-              <div className="flex items-center gap-2">
-                <button className="inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-gray-50">
-                  <CalendarDays className="w-4 h-4" />
-                  This week
-                </button>
-                <span className="hidden sm:inline-flex items-center gap-1 text-sm text-gray-600">
-                  <CheckCircle className="w-4 h-4 text-emerald-500" />
-                  Status: Online
-                </span>
-              </div>
             </div>
           </div>
 

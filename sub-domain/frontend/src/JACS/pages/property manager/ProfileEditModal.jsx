@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, User, Mail, Phone, MapPin, Shield, AlertCircle, CheckCircle } from 'lucide-react';
+import { X, Save, User, Mail, Phone, MapPin, Shield, AlertCircle, CheckCircle, Camera, Upload } from 'lucide-react';
 import { apiService } from '../../../services/api';
 
 const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
@@ -16,6 +16,9 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [profileImage, setProfileImage] = useState(null);
+  const [profileImagePreview, setProfileImagePreview] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -39,8 +42,33 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
         emergency_contact_name: currentUser.emergency_contact_name || currentUser.emergency_contact || '',
         emergency_contact_phone: currentUser.emergency_contact_phone || currentUser.emergency_phone || ''
       });
+      
+      // Set profile image preview
+      if (currentUser.profile_image_url || currentUser.avatar_url) {
+        const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+        // Construct full URL if it's a relative path
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          setProfileImagePreview(imageUrl);
+        } else if (imageUrl.startsWith('/uploads/')) {
+          // Images from main-domain (port 5000)
+          setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+          // Images from sub-domain (port 5001)
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else {
+          setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+        }
+      } else {
+        setProfileImagePreview(null);
+      }
+      
       setErrors({});
       setSuccessMessage('');
+      setProfileImage(null);
     }
   }, [currentUser, isOpen]);
 
@@ -49,6 +77,81 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file type
+      const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        setErrors({ submit: 'Invalid file type. Please upload PNG, JPG, JPEG, GIF, or WEBP.' });
+        return;
+      }
+      
+      // Validate file size (2MB max)
+      if (file.size > 2 * 1024 * 1024) {
+        setErrors({ submit: 'File size exceeds 2MB limit.' });
+        return;
+      }
+      
+      setProfileImage(file);
+      setErrors({ submit: '' });
+      
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfileImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleImageUpload = async () => {
+    if (!profileImage) return;
+    
+    setUploadingImage(true);
+    setErrors({});
+    
+    try {
+      const response = await apiService.uploadProfileImage(profileImage);
+      
+      if (response && response.user) {
+        // Update stored user data
+        localStorage.setItem('user', JSON.stringify(response.user));
+        
+        // Update preview with new URL
+        if (response.image_url) {
+          const imageUrl = response.image_url;
+          if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+            setProfileImagePreview(imageUrl);
+          } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else if (imageUrl.startsWith('/api/')) {
+            setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+          } else {
+            setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+          }
+        }
+        
+        // Call parent callback if provided
+        if (onSave) {
+          await onSave(response.user);
+        }
+        
+        // Dispatch event to notify Header component
+        window.dispatchEvent(new CustomEvent('userUpdated'));
+        
+        setProfileImage(null);
+        setSuccessMessage('Profile image uploaded successfully!');
+      }
+    } catch (error) {
+      console.error('Error uploading profile image:', error);
+      const errorMessage = error.message || error.error || 'Failed to upload profile image. Please try again.';
+      setErrors({ submit: errorMessage });
+    } finally {
+      setUploadingImage(false);
+    }
   };
 
   const validateForm = () => {
@@ -83,6 +186,11 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     setErrors({});
     
     try {
+      // Upload profile image first if a new one was selected
+      if (profileImage) {
+        await handleImageUpload();
+      }
+      
       // Prepare data for API (match backend field names)
       // Ensure all string fields are properly converted to strings before trimming
       const updateData = {
@@ -106,6 +214,9 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
         if (onSave) {
           await onSave(response.user);
         }
+        
+        // Dispatch event to notify Header component
+        window.dispatchEvent(new CustomEvent('userUpdated'));
         
         // Close modal after a short delay to show success message
         setTimeout(() => {
@@ -133,7 +244,28 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
         emergency_contact_name: currentUser.emergency_contact_name || currentUser.emergency_contact || '',
         emergency_contact_phone: currentUser.emergency_contact_phone || currentUser.emergency_phone || ''
       });
+      
+      // Reset profile image
+      if (currentUser.profile_image_url || currentUser.avatar_url) {
+        const imageUrl = currentUser.profile_image_url || currentUser.avatar_url;
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          setProfileImagePreview(imageUrl);
+        } else if (imageUrl.startsWith('/uploads/')) {
+          setProfileImagePreview(`http://localhost:5000${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/users/profile/image/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/api/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else if (imageUrl.startsWith('/')) {
+          setProfileImagePreview(`http://localhost:5001${imageUrl}`);
+        } else {
+          setProfileImagePreview(`http://localhost:5001/api${imageUrl}`);
+        }
+      } else {
+        setProfileImagePreview(null);
+      }
     }
+    setProfileImage(null);
     setErrors({});
     setSuccessMessage('');
     onClose();
@@ -182,6 +314,60 @@ const ProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
               <p className="text-sm text-red-800">{errors.submit}</p>
             </div>
           )}
+
+          {/* Profile Image Section */}
+          <div className="mb-6 flex justify-center">
+            <div className="relative">
+              <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-gray-200 bg-gray-100 flex items-center justify-center">
+                {profileImagePreview ? (
+                  <img
+                    src={profileImagePreview}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                <div className={`w-full h-full flex items-center justify-center ${profileImagePreview ? 'hidden' : ''}`}>
+                  <User className="w-16 h-16 text-gray-400" />
+                </div>
+              </div>
+              <label
+                htmlFor="profile-image-upload"
+                className="absolute bottom-0 right-0 w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center cursor-pointer hover:bg-blue-700 transition-colors shadow-lg"
+              >
+                <Camera className="w-5 h-5 text-white" />
+                <input
+                  id="profile-image-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                  onChange={handleImageChange}
+                  className="hidden"
+                />
+              </label>
+              {profileImage && (
+                <button
+                  onClick={handleImageUpload}
+                  disabled={uploadingImage}
+                  className="mt-2 w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {uploadingImage ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Image</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Left Column - Personal & Contact Info */}

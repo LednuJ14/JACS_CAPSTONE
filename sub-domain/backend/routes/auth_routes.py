@@ -869,8 +869,75 @@ def login():
                     'code': 'PROPERTY_VERIFICATION_FAILED'
                 }), 403
         
+        # For property managers: STRICTLY check if they own the property from subdomain
+        # Property managers can ONLY login to property subdomains they own
+        elif user.is_property_manager():
+            try:
+                # Get property_id from request (subdomain, header, query param, or body)
+                property_id = get_property_id_from_request(data=data)
+                
+                # Log for debugging
+                current_app.logger.info(f"Property manager login attempt - user_id={user.id}, email={user.email}, extracted property_id={property_id}")
+                
+                if not property_id:
+                    return jsonify({
+                        'error': 'Property context is required. Please login through your property portal.',
+                        'code': 'PROPERTY_CONTEXT_REQUIRED',
+                        'message': 'You must login through the specific property subdomain you own.'
+                    }), 403
+                
+                # Verify property exists and user owns THIS SPECIFIC property
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if not property_obj:
+                    return jsonify({
+                        'error': 'Property not found',
+                        'code': 'PROPERTY_NOT_FOUND'
+                    }), 404
+                
+                # CRITICAL: Verify the property manager owns this property
+                if property_obj.owner_id != user.id:
+                    property_name = property_obj.name if property_obj else f"Property {property_id}"
+                    
+                    # Get property manager's owned properties for helpful error message
+                    owned_properties = Property.query.filter_by(owner_id=user.id).all()
+                    owned_property_names = [p.name for p in owned_properties] if owned_properties else []
+                    
+                    error_msg = f'You do not own {property_name}.'
+                    if owned_property_names:
+                        error_msg += f' You can only access: {", ".join(owned_property_names)}'
+                    else:
+                        error_msg += ' You do not own any properties.'
+                    
+                    return jsonify({
+                        'error': error_msg,
+                        'code': 'PROPERTY_ACCESS_DENIED',
+                        'property_id': property_id,
+                        'attempted_property': property_name,
+                        'owned_properties': owned_property_names
+                    }), 403
+                
+                # Log successful property validation
+                current_app.logger.info(f"Property manager {user.id} validated for property {property_id}")
+                
+            except Exception as pm_check_error:
+                current_app.logger.error(f"Error checking property manager property access: {str(pm_check_error)}", exc_info=True)
+                # For security, deny login if we can't verify property access
+                return jsonify({
+                    'error': 'Unable to verify property access. Please contact support.',
+                    'code': 'PROPERTY_VERIFICATION_FAILED'
+                }), 403
+        
         # Update last login (don't commit here, commit at the end)
         user.last_login = datetime.now(timezone.utc)
+        
+        # Get property_id for JWT token (if available from validation above)
+        property_id_for_token = None
+        if user.is_tenant() or user.is_staff() or user.is_property_manager():
+            try:
+                property_id_for_token = get_property_id_from_request(data=data)
+            except Exception:
+                pass
         
         # Create tokens
         try:
@@ -878,13 +945,22 @@ def login():
             role_value = get_role_value(user.role)
             username_value = user.username if user.username else user.email
             
+            # Build JWT claims - include property_id if available
+            jwt_claims = {
+                'role': role_value,
+                'email': user.email,
+                'username': username_value
+            }
+            
+            # Add property_id to token for property managers, staff, and tenants
+            # This ensures subsequent requests know which property context they're in
+            if property_id_for_token:
+                jwt_claims['property_id'] = property_id_for_token
+                current_app.logger.info(f"Adding property_id {property_id_for_token} to JWT token for user {user.id}")
+            
             access_token = create_access_token(
                 identity=str(user.id),
-                additional_claims={
-                    'role': role_value,
-                    'email': user.email,
-                    'username': username_value
-                }
+                additional_claims=jwt_claims
             )
             refresh_token = create_refresh_token(identity=str(user.id))
         except Exception as token_error:
