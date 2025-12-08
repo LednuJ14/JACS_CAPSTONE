@@ -134,6 +134,6 @@ class PaginationSchema(Schema):
     """Schema for pagination parameters."""
     from marshmallow import fields
     
-    page = fields.Integer(missing=1, validate=lambda x: x > 0)
-    per_page = fields.Integer(missing=10, validate=lambda x: 1 <= x <= 100)
+    page = fields.Integer(load_default=1, validate=lambda x: x > 0)
+    per_page = fields.Integer(load_default=10, validate=lambda x: 1 <= x <= 100)
 
