@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ApiService from '../../services/api';
 
 const AdminPropertyReview = () => {
@@ -22,36 +22,16 @@ const AdminPropertyReview = () => {
       setLoading(true);
       setError('');
       
-      // Check authentication status
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-      console.log('Authentication check:', {
-        hasToken: !!token,
-        tokenLength: token ? token.length : 0,
-        userRole: localStorage.getItem('userRole'),
-        userId: localStorage.getItem('userId')
-      });
-      
       // Add timestamp to prevent caching
       const timestamp = new Date().getTime();
-      const statusParam = activeTab === 'all' ? 'all' : activeTab;
-      
-      console.log('Fetching properties with params:', { 
-        t: timestamp, 
-        status: statusParam,
-        per_page: 50 
-      });
+      // Always fetch ALL properties regardless of activeTab to get accurate counts
+      const statusParam = 'all';
       
       const data = await ApiService.getPendingProperties({ 
         t: timestamp, 
         status: statusParam,
-        per_page: 50 
+        per_page: 100 // Fetch all properties for accurate counts
       });
-      
-      // API Response received
-      console.log('API Response:', data);
-      console.log('API Response type:', typeof data);
-      console.log('API Response keys:', data ? Object.keys(data) : 'No data');
-      console.log('Properties in response:', data && data.properties ? data.properties.length : 'No properties');
       
       // Transform API data to match component expectations
       if (!data || !data.properties) {
@@ -60,12 +40,7 @@ const AdminPropertyReview = () => {
         return;
       }
       
-      console.log('Raw properties from API:', data.properties);
-      console.log('Properties count:', data.properties.length);
-      
       const transformedProperties = data.properties.map(prop => {
-        console.log('Processing property:', prop.id, 'Status:', prop.status);
-        console.log('Legal documents for property', prop.id, ':', prop.legal_documents);
         return {
           id: prop.id,
           name: prop.name || prop.title || 'Unnamed Property',
@@ -87,9 +62,7 @@ const AdminPropertyReview = () => {
           managerNotes: prop.managerNotes || 'Property submitted for review'
         };
       });
-      // Properties transformed successfully
-      console.log('Transformed properties:', transformedProperties);
-      console.log('Setting properties state with:', transformedProperties.length, 'properties');
+      
       setProperties(transformedProperties);
     } catch (error) {
       console.error('Fetch error:', error);
@@ -122,12 +95,12 @@ const AdminPropertyReview = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeTab]); // Only depend on activeTab since that's what changes the data
+  }, []); // Remove activeTab dependency - always fetch all properties
 
+  // Fetch all properties on component mount
   useEffect(() => {
-    console.log('useEffect triggered with activeTab:', activeTab);
     fetchPendingProperties();
-  }, [activeTab, fetchPendingProperties]); // Include fetchPendingProperties in dependencies
+  }, [fetchPendingProperties]); // Only fetch on mount, not when tab changes
 
   // Fetch documents for a specific property
   const fetchPropertyDocuments = useCallback(async (propertyId) => {
@@ -325,8 +298,8 @@ const AdminPropertyReview = () => {
           notes: adminNotes || 'Approved and portal enabled'
         });
         
-        // Remove from properties list
-        setProperties(prev => prev.filter(prop => prop.id !== propertyId));
+        // Refetch all properties to get updated status and accurate counts
+        await fetchPendingProperties();
         
         // Show success message
         if (data.portal_url) {
@@ -339,7 +312,9 @@ const AdminPropertyReview = () => {
           reason: adminNotes
         });
         
-        setProperties(prev => prev.filter(prop => prop.id !== propertyId));
+        // Refetch all properties to get updated status and accurate counts
+        await fetchPendingProperties();
+        
         alert('✅ Property rejected successfully');
       }
     } catch (error) {
@@ -373,7 +348,6 @@ const AdminPropertyReview = () => {
   };
 
   const getStatusText = (status) => {
-    console.log('getStatusText called with status:', status);
     switch (status) {
       case 'pending':
       case 'pending_approval': return 'Pending Review';
@@ -381,24 +355,61 @@ const AdminPropertyReview = () => {
       case 'active': return 'Approved';
       case 'rejected': return 'Rejected';
       default: 
-        console.log('Unknown status:', status);
         return 'Unknown';
     }
   };
 
-  const filteredProperties = properties.filter(prop => {
-    console.log('Filtering property:', prop.id, 'Status:', prop.status, 'ActiveTab:', activeTab);
-    if (activeTab === 'all') return true;
-    if (activeTab === 'pending') return prop.status === 'pending' || prop.status === 'pending_approval';
-    if (activeTab === 'approved') return prop.status === 'approved' || prop.status === 'active';
-    if (activeTab === 'rejected') return prop.status === 'rejected';
-    return prop.status === activeTab;
-  });
-  
-  console.log('Filtered properties count:', filteredProperties.length);
-  console.log('All properties:', properties.length);
-  console.log('Active tab:', activeTab);
-  console.log('Properties array:', properties);
+  // Calculate property counts for tabs using useMemo for performance
+  const propertyCounts = useMemo(() => {
+    // Ensure properties is an array
+    const propsArray = Array.isArray(properties) ? properties : [];
+    
+    return {
+      all: propsArray.length,
+      pending: propsArray.filter(p => {
+        const status = (p.status || '').toLowerCase();
+        return status === 'pending' || status === 'pending_approval';
+      }).length,
+      approved: propsArray.filter(p => {
+        const status = (p.status || '').toLowerCase();
+        return status === 'approved' || status === 'active';
+      }).length,
+      rejected: propsArray.filter(p => {
+        const status = (p.status || '').toLowerCase();
+        return status === 'rejected';
+      }).length
+    };
+  }, [properties]);
+
+  const filteredProperties = useMemo(() => {
+    // Ensure properties is an array
+    const propsArray = Array.isArray(properties) ? properties : [];
+    
+    if (activeTab === 'all') return propsArray;
+    
+    if (activeTab === 'pending') {
+      return propsArray.filter(prop => {
+        const status = (prop.status || '').toLowerCase();
+        return status === 'pending' || status === 'pending_approval';
+      });
+    }
+    
+    if (activeTab === 'approved') {
+      return propsArray.filter(prop => {
+        const status = (prop.status || '').toLowerCase();
+        return status === 'approved' || status === 'active';
+      });
+    }
+    
+    if (activeTab === 'rejected') {
+      return propsArray.filter(prop => {
+        const status = (prop.status || '').toLowerCase();
+        return status === 'rejected';
+      });
+    }
+    
+    return propsArray;
+  }, [properties, activeTab]);
 
   if (loading) {
     return (
@@ -446,19 +457,19 @@ const AdminPropertyReview = () => {
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
                   <span className="text-sm text-gray-300">
-                    {properties.filter(p => p.status === 'pending' || p.status === 'pending_approval').length} Pending Review
+                    {propertyCounts.pending} Pending Review
                   </span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 bg-green-400 rounded-full"></div>
                   <span className="text-sm text-gray-300">
-                    {properties.filter(p => p.status === 'approved' || p.status === 'active').length} Approved
+                    {propertyCounts.approved} Approved
                   </span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 bg-red-400 rounded-full"></div>
                   <span className="text-sm text-gray-300">
-                    {properties.filter(p => p.status === 'rejected').length} Rejected
+                    {propertyCounts.rejected} Rejected
                   </span>
                 </div>
               </div>
@@ -522,7 +533,7 @@ const AdminPropertyReview = () => {
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     activeTab === 'all' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
                   }`}>
-                    {properties.length}
+                    {propertyCounts.all}
                   </span>
                 </div>
               </button>
@@ -540,7 +551,7 @@ const AdminPropertyReview = () => {
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     activeTab === 'pending' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
                   }`}>
-                    {properties.filter(p => p.status === 'pending' || p.status === 'pending_approval').length}
+                    {propertyCounts.pending}
                   </span>
                 </div>
               </button>
@@ -558,7 +569,7 @@ const AdminPropertyReview = () => {
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     activeTab === 'approved' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
                   }`}>
-                    {properties.filter(p => p.status === 'approved' || p.status === 'active').length}
+                    {propertyCounts.approved}
                   </span>
                 </div>
               </button>
@@ -576,7 +587,7 @@ const AdminPropertyReview = () => {
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     activeTab === 'rejected' ? 'bg-white text-black' : 'bg-gray-600 text-gray-300'
                   }`}>
-                    {properties.filter(p => p.status === 'rejected').length}
+                    {propertyCounts.rejected}
                   </span>
                 </div>
               </button>
@@ -680,7 +691,6 @@ const AdminPropertyReview = () => {
                   {(property.status === 'pending' || property.status === 'pending_approval') ? (
                     <button
                       onClick={() => {
-                        console.log('Opening modal for property:', property.id, property.name);
                         setSelectedProperty(property);
                         setShowModal(true);
                       }}
@@ -705,7 +715,6 @@ const AdminPropertyReview = () => {
                     <>
                       <button
                         onClick={() => {
-                          console.log('Opening modal for property:', property.id, property.name);
                           setSelectedProperty(property);
                           setShowModal(true);
                         }}
@@ -779,8 +788,6 @@ const AdminPropertyReview = () => {
             </div>
 
             <div className="p-6">
-              {console.log('Modal opened for property:', selectedProperty.id, selectedProperty.name)}
-              
               {/* Property Images Gallery */}
               <div className="mb-8">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">

@@ -736,8 +736,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
     // Close modal immediately for better UX
     setShowAddSpaceModal(false);
     
-    // Reset form (status will be reset to 'draft' by default in useState)
-    // Note: Form reset happens above, this is just for clarity
+    // Reset form after closing modal
+    resetNewSpaceForm();
     
     // Persist to backend and refresh
     (async () => {
@@ -781,6 +781,29 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
         setSavingUnit(false);
       }
     })();
+  };
+
+  const resetNewSpaceForm = () => {
+    setNewSpace({
+      unitName: '',
+      bedrooms: 1,
+      bathrooms: 'own',
+      sizeSqm: '',
+      price: '',
+      securityDeposit: '',
+      status: 'draft', // New units default to Draft status
+      description: '',
+      floorNumber: '',
+      parkingSpaces: 0,
+      amenities: {
+        balcony: false,
+        furnished: false,
+        airConditioning: false,
+        wifi: false,
+        security: false
+      },
+      images: []
+    });
   };
 
   const handleInputChange = (field, value) => {
@@ -930,11 +953,11 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             onClick={() => handlePropertyClick(property)}
           >
             {/* Property Image */}
-            <div className="relative h-60 bg-gray-200 flex items-center justify-center">
+            <div className="relative h-60 bg-gray-200 overflow-hidden">
               <img
                 src={property.image && property.image.trim() !== '' ? property.image : defaultProperty}
                 alt={property.name}
-                className="w-full object-cover rounded-lg"
+                className="w-full h-full object-cover"
                 onError={(e) => { e.target.src = defaultProperty; }}
               />
               <div className="absolute top-3 right-3">
@@ -1027,6 +1050,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                   alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);
                   return;
                 }
+                resetNewSpaceForm(); // Reset form before opening modal
                 setShowAddSpaceModal(true);
               }}
               className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-colors font-medium"
@@ -1385,6 +1409,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                     alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);
                     return;
                   }
+                  resetNewSpaceForm(); // Reset form before opening modal
                   setShowAddSpaceModal(true);
                 }}
                 className="bg-black text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition-colors"
@@ -1409,11 +1434,11 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
           {currentPageItems.map((listing) => (
             <div key={listing.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300">
               {/* Unit Image */}
-              <div className="relative h-60 bg-gray-200 flex items-center justify-center">
+              <div className="relative h-60 bg-gray-200 overflow-hidden">
                 <img
                   src={normalizeImageUrl(listing.images?.[0] ?? listing.image) || defaultUnit}
                   alt={listing.unitName}
-                  className="w-full object-cover rounded-lg"
+                  className="w-full h-full object-cover"
                   onError={(e) => { e.target.src = defaultUnit; }}
                 />
                 <div className="absolute top-3 left-3">
@@ -1802,11 +1827,11 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                     {newSpace.images && newSpace.images.length > 0 && (
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                         {newSpace.images.map((image, index) => (
-                          <div key={index} className="relative group">
+                          <div key={index} className="relative group h-32 rounded-lg overflow-hidden">
                             <img
                               src={image}
                               alt={`Unit image ${index + 1}`}
-                              className="w-full h-32 object-cover rounded-lg"
+                              className="w-full h-full object-cover"
                             />
                             <button
                               onClick={() => removeImage(index)}
@@ -1825,7 +1850,10 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
 
             <div className="flex space-x-3 p-2 border-t border-gray-200 bg-gray-50">
               <button
-                onClick={() => setShowAddSpaceModal(false)}
+                onClick={() => {
+                  setShowAddSpaceModal(false);
+                  resetNewSpaceForm(); // Reset form when canceling
+                }}
                 className="flex-1 px-6 py-2 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-medium"
               >
                 Cancel
@@ -1869,7 +1897,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
                 {/* Image Gallery */}
                 <div className="space-y-4">
-                  <div className="relative w-full h-80 flex items-center justify-center bg-gray-50 rounded-2xl overflow-hidden">
+                  <div className="relative w-full h-80 bg-gray-50 rounded-2xl overflow-hidden">
                 {(() => {
                   const imgs = Array.isArray(previewListing.images) ? previewListing.images.filter(Boolean) : [];
                   const total = imgs.length;
@@ -1882,7 +1910,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                       <img
                         src={currentSrc}
                         alt={previewListing.unitName}
-                            className="w-full h-full object-cover rounded-xl border border-gray-200 shadow-lg"
+                            className="w-full h-full object-cover"
                         onError={(e) => { e.target.src = defaultUnit; }}
                       />
                           {total > 1 && (
@@ -2438,11 +2466,11 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                     {editingListing.images && editingListing.images.length > 0 && (
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                         {editingListing.images.map((image, index) => (
-                          <div key={index} className="relative group">
+                          <div key={index} className="relative group h-32 rounded-lg overflow-hidden">
                             <img
                               src={image}
                               alt={`Unit image ${index + 1}`}
-                              className="w-full h-32 object-cover rounded-lg"
+                              className="w-full h-full object-cover"
                             />
                             <button
                               onClick={() => removeEditImage(index)}

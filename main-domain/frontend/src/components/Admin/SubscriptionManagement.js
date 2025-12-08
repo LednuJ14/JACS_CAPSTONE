@@ -154,14 +154,44 @@ const SubscriptionManagement = () => {
     }
   };
 
-  const fetchBillingHistory = async () => {
+  const fetchBillingHistory = async (enrichWithTransactions = true) => {
     try {
       setError('');
       setLoading(true);
       const response = await ApiService.getAdminBillingHistory();
       const bills = response.data || response || [];
+      
+      // Enrich billing history with payment transaction data
+      // Payment transactions contain the actual payment method used by the user
+      let enrichedBills = Array.isArray(bills) ? bills : [];
+      
+      if (enrichWithTransactions && paymentTransactions.length > 0) {
+        enrichedBills = enrichedBills.map(bill => {
+          // Find matching payment transaction for this bill
+          // Match by user_id and plan_id, or by subscription_id
+          const matchingTransaction = paymentTransactions.find(pt => 
+            (pt.user_id === bill.user_id && pt.plan_id === bill.plan_id) ||
+            (pt.subscription_id && bill.subscription_id && pt.subscription_id === bill.subscription_id)
+          );
+          
+          // If a matching payment transaction exists, use its payment method
+          if (matchingTransaction && matchingTransaction.payment_method) {
+            return {
+              ...bill,
+              payment_method: matchingTransaction.payment_method,
+              // Keep other transaction data for reference
+              payment_transaction_id: matchingTransaction.id,
+              payment_reference: matchingTransaction.payment_reference || bill.payment_reference
+            };
+          }
+          
+          // Otherwise, use the payment method from the bill
+          return bill;
+        });
+      }
+      
       // Use the real status from the database - no local state manipulation
-      setBillingHistory(Array.isArray(bills) ? bills : []);
+      setBillingHistory(enrichedBills);
     } catch (error) {
       console.error('Error fetching billing history:', error);
       setBillingHistory([]);
@@ -249,16 +279,30 @@ const SubscriptionManagement = () => {
     if (activeTab === 'subscribers') {
       fetchSubscribers();
     } else if (activeTab === 'billing') {
-      fetchBillingHistory();
-      fetchPaymentTransactions();
+      // Fetch payment transactions first, then billing history
+      const loadBillingData = async () => {
+        await fetchPaymentTransactions();
+        fetchBillingHistory(true);
+      };
+      loadBillingData();
     }
   }, [activeTab]);
+
+  // Enrich billing history when payment transactions are loaded or updated
+  useEffect(() => {
+    if (activeTab === 'billing' && paymentTransactions.length > 0) {
+      // Re-enrich billing history with payment transactions
+      fetchBillingHistory(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentTransactions.length, activeTab]);
 
   // Refresh billing history periodically when on billing tab to get real-time status updates
   useEffect(() => {
     if (activeTab === 'billing') {
       const interval = setInterval(() => {
-        fetchBillingHistory();
+        fetchBillingHistory(true);
+        fetchPaymentTransactions();
       }, 10000); // Refresh every 10 seconds when on billing tab
 
       return () => clearInterval(interval);
@@ -1375,8 +1419,17 @@ const SubscriptionManagement = () => {
                           {bill.billing_date ? new Date(bill.billing_date).toLocaleDateString() : 
                            bill.created_at ? new Date(bill.created_at).toLocaleDateString() : 'N/A'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                          {bill.payment_method || 'N/A'}
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-black font-medium">
+                            {(() => {
+                              const method = bill.payment_method || bill.paymentMethod || '';
+                              if (!method) return 'N/A';
+                              // Format payment method: capitalize first letter of each word
+                              return method.split(' ').map(word => 
+                                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                              ).join(' ');
+                            })()}
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <button 
