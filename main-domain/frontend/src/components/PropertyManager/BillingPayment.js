@@ -805,88 +805,88 @@ const BillingPayment = () => {
           <div className="bg-white rounded-2xl max-w-lg w-full mx-4 max-h-[90vh] flex flex-col">
             {/* Header - Fixed */}
             <div className="p-8 pb-4 border-b border-gray-200 flex-shrink-0">
-              <h3 className="text-2xl font-bold text-gray-900 mb-4">Upload Proof of Payment</h3>
-              {proofForm.invoiceNumber && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                  <p className="font-semibold">Invoice: {proofForm.invoiceNumber}</p>
-                </div>
-              )}
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">Upload Proof of Payment</h3>
+            {proofForm.invoiceNumber && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
+                <p className="font-semibold">Invoice: {proofForm.invoiceNumber}</p>
+              </div>
+            )}
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-                <p className="font-semibold mb-1">Payment Instructions</p>
-                <ul className="list-disc ml-5 space-y-1">
-                  <li>GCash: 09XXXXXXXXX (Account Name: JACS Platform)</li>
-                  <li>Bank Transfer: ABC Bank, Account #######, Jun P.</li>
-                  <li>
-                    Amount: ₱{
-                      Number(
-                        (proofForm.amount ?? (selectedPlan?.monthly_price || 0)) || 0
-                      ).toLocaleString()
-                    } (Monthly)
-                  </li>
-                </ul>
+              <p className="font-semibold mb-1">Payment Instructions</p>
+              <ul className="list-disc ml-5 space-y-1">
+                <li>GCash: 09XXXXXXXXX (Account Name: JACS Platform)</li>
+                <li>Bank Transfer: ABC Bank, Account #######, Jun P.</li>
+                <li>
+                  Amount: ₱{
+                    Number(
+                      (proofForm.amount ?? (selectedPlan?.monthly_price || 0)) || 0
+                    ).toLocaleString()
+                  } (Monthly)
+                </li>
+              </ul>
               </div>
             </div>
 
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto px-8 py-4">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot / Receipt</label>
-                  <input type="file" accept="image/*" onChange={handleProofFileChange} className="block w-full text-sm text-gray-700" />
-                  {proofForm.proofUrl && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot / Receipt</label>
+                <input type="file" accept="image/*" onChange={handleProofFileChange} className="block w-full text-sm text-gray-700" />
+                {proofForm.proofUrl && (
                     <div className="mt-3 flex justify-center">
-                      <img
-                        src={proofForm.proofUrl}
-                        alt="Proof"
+                  <img
+                    src={proofForm.proofUrl}
+                    alt="Proof"
                         className="max-h-64 max-w-full rounded-lg border object-contain"
-                      />
+                  />
                     </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                  <select
-                    value={proofForm.payment_method || 'GCash'}
-                    onChange={(e) => setProofForm(prev => ({ ...prev, payment_method: e.target.value }))}
-                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                  >
-                    <option value="GCash">GCash</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="PayPal">PayPal</option>
-                    <option value="Cash">Cash</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={
-                      (proofForm.amount ?? Number(selectedPlan?.monthly_price || 0))
-                    }
-                    onChange={(e) => setProofForm(prev => ({ ...prev, amount: Number(e.target.value || 0) }))}
-                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number (optional)</label>
-                  <input
-                    type="text"
-                    value={proofForm.reference}
-                    onChange={(e) => setProofForm(prev => ({ ...prev, reference: e.target.value }))}
-                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                    placeholder="e.g., GCASH-1234"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Remarks (optional)</label>
-                  <textarea
-                    rows={3}
-                    value={proofForm.remarks}
-                    onChange={(e) => setProofForm(prev => ({ ...prev, remarks: e.target.value }))}
-                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                    placeholder="Any notes for the admin"
-                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <select
+                  value={proofForm.payment_method || 'GCash'}
+                  onChange={(e) => setProofForm(prev => ({ ...prev, payment_method: e.target.value }))}
+                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                >
+                  <option value="GCash">GCash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="PayPal">PayPal</option>
+                  <option value="Cash">Cash</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={
+                    (proofForm.amount ?? Number(selectedPlan?.monthly_price || 0))
+                  }
+                  onChange={(e) => setProofForm(prev => ({ ...prev, amount: Number(e.target.value || 0) }))}
+                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number (optional)</label>
+                <input
+                  type="text"
+                  value={proofForm.reference}
+                  onChange={(e) => setProofForm(prev => ({ ...prev, reference: e.target.value }))}
+                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                  placeholder="e.g., GCASH-1234"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Remarks (optional)</label>
+                <textarea
+                  rows={3}
+                  value={proofForm.remarks}
+                  onChange={(e) => setProofForm(prev => ({ ...prev, remarks: e.target.value }))}
+                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                  placeholder="Any notes for the admin"
+                />
                 </div>
               </div>
             </div>
@@ -894,29 +894,29 @@ const BillingPayment = () => {
             {/* Footer - Fixed */}
             <div className="p-8 pt-4 border-t border-gray-200 flex-shrink-0">
               <div className="flex space-x-4">
-                <button
-                  onClick={() => { 
-                    setShowManualProofModal(false); 
-                    setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null }); 
-                  }}
-                  disabled={processingPayment}
-                  className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    // minimal front-end validation
-                    const amt = Number(proofForm.amount ?? 0);
-                    if (!proofForm.proofUrl) { alert('Please upload a screenshot or receipt image.'); return; }
-                    if (!(amt > 0)) { alert('Please enter a valid amount.'); return; }
-                    submitManualProof();
-                  }}
-                  disabled={processingPayment}
-                  className="flex-1 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-semibold disabled:opacity-50"
-                >
-                  {processingPayment ? 'Submitting...' : 'Submit for Verification'}
-                </button>
+              <button
+                onClick={() => { 
+                  setShowManualProofModal(false); 
+                  setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null }); 
+                }}
+                disabled={processingPayment}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  // minimal front-end validation
+                  const amt = Number(proofForm.amount ?? 0);
+                  if (!proofForm.proofUrl) { alert('Please upload a screenshot or receipt image.'); return; }
+                  if (!(amt > 0)) { alert('Please enter a valid amount.'); return; }
+                  submitManualProof();
+                }}
+                disabled={processingPayment}
+                className="flex-1 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-semibold disabled:opacity-50"
+              >
+                {processingPayment ? 'Submitting...' : 'Submit for Verification'}
+              </button>
               </div>
             </div>
           </div>

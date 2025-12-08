@@ -71,8 +71,7 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
     const next = {};
     if (!profile.first_name.trim()) next.first_name = 'First name is required';
     if (!profile.last_name.trim()) next.last_name = 'Last name is required';
-    if (!profile.email.trim()) next.email = 'Email is required';
-    if (profile.email && !/\S+@\S+\.\S+/.test(profile.email)) next.email = 'Email is invalid';
+    // Email validation removed since email is not editable
     if (!profile.phone.trim()) next.phone = 'Phone is required';
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -275,14 +274,13 @@ const StaffProfileEditModal = ({ isOpen, onClose, currentUser, onSave }) => {
                 <input
                   type="email"
                   value={profile.email}
-                  onChange={(e) => updateField('email', e.target.value)}
-                  className={`w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.email ? 'border-red-300' : 'border-gray-300'}`}
-                  placeholder="Enter email"
+                  readOnly
+                  disabled
+                  className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
+                  placeholder="Email address"
                 />
               </div>
-              {errors.email && (
-                <p className="mt-1 text-sm text-red-600 flex items-center"><AlertCircle className="w-4 h-4 mr-1" />{errors.email}</p>
-              )}
+              <p className="mt-1 text-xs text-gray-500">Email cannot be changed</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>

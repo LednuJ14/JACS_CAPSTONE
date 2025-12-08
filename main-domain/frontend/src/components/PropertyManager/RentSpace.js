@@ -63,18 +63,18 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
       return status === 'occupied' || status === 'rented';
     }).length;
     
-        setProperties(prev => prev.map(p => {
-          if (p.id === propertyId) {
-            return {
-              ...p,
+    setProperties(prev => prev.map(p => {
+      if (p.id === propertyId) {
+        return {
+          ...p,
               maxUnits: p.maxUnits || 0, // Preserve the property's unit limit from database
-              vacantUnits: vacant,
-              occupiedUnits: occupied,
+          vacantUnits: vacant,
+          occupiedUnits: occupied,
               totalUnits: propertyUnits.length // Actual count of units currently added
-            };
-          }
-          return p;
-        }));
+        };
+      }
+      return p;
+    }));
   }, [listings]);
 
   const fetchUnitsForProperty = async (property) => {

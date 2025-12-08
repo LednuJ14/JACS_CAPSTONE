@@ -466,14 +466,11 @@ const Profile = ({ onClose }) => {
                           type="email"
                           name="email"
                           value={profileData.email}
-                          onChange={handleInputChange}
-                          disabled={!isEditing}
-                          className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 ${
-                            isEditing 
-                              ? 'border-gray-200 bg-white hover:border-gray-300' 
-                              : 'border-gray-200 bg-gray-50'
-                          }`}
+                          readOnly
+                          disabled
+                          className="w-full px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50 text-black placeholder-gray-400 cursor-not-allowed"
                         />
+                        <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
                       </div>
                       <div className="space-y-2">
                         <label className="block text-sm font-semibold text-black">Phone Number</label>

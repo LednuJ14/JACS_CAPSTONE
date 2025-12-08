@@ -123,7 +123,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
         }
         break;
       case 1:
-        // Validate all fields are filled
+        // Validate Step 1 fields only (Personal Information)
         if (!formData.firstName || !formData.firstName.trim()) {
           setErrorMessage('First name is required.');
           return false;
@@ -144,16 +144,9 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
           setErrorMessage('Phone number is required.');
           return false;
         }
-        if (!formData.dateOfBirth || !formData.dateOfBirth.trim()) {
-          setErrorMessage('Date of birth is required.');
-          return false;
-        }
-        if (!formData.address || !formData.address.trim()) {
-          setErrorMessage('Address is required.');
-          return false;
-        }
         break;
       case 2:
+        // Validate Step 2 fields (Account Setup - Password and Additional Info)
         if (!formData.password || !formData.password.trim()) {
           setErrorMessage('Password is required.');
           return false;
@@ -168,6 +161,15 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
         }
         if (!passwordStrength.isValid) {
           setErrorMessage('Password must be at least 8 characters, include a number, at least one capital letter, and a special character.');
+          return false;
+        }
+        // Validate additional info fields (Date of Birth and Address are on Step 2)
+        if (!formData.dateOfBirth || !formData.dateOfBirth.trim()) {
+          setErrorMessage('Date of birth is required.');
+          return false;
+        }
+        if (!formData.address || !formData.address.trim()) {
+          setErrorMessage('Address is required.');
           return false;
         }
         break;

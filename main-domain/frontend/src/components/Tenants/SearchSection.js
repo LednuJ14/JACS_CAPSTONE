@@ -73,7 +73,6 @@ const forwardGeocode = async (query) => {
 const SearchSection = ({ filters = {}, onChange = () => {} }) => {
   const [showClassificationDropdown, setShowClassificationDropdown] = useState(false);
   const [showPriceDropdown, setShowPriceDropdown] = useState(false);
-  const [showLocationModal, setShowLocationModal] = useState(false);
   const [showMapModal, setShowMapModal] = useState(false);
   const [selectedType, setSelectedType] = useState(filters.type || '');
   const [selectedLocation, setSelectedLocation] = useState(filters.city || filters.location || '');
@@ -217,7 +216,6 @@ const SearchSection = ({ filters = {}, onChange = () => {} }) => {
   // Handle location modal open
   const handleLocationClick = () => {
     setShowMapModal(true);
-    setShowLocationModal(false);
     setShowClassificationDropdown(false);
     setShowPriceDropdown(false);
   };
