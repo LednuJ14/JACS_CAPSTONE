@@ -14,7 +14,34 @@ admin_properties_bp = Blueprint('admin_properties', __name__)
 @admin_properties_bp.route('/all', methods=['GET'])
 @admin_required
 def get_all_properties(current_user):
-    """Get all properties for admin analytics."""
+    """
+    Get all properties (Admin)
+    ---
+    tags:
+      - Admin Properties
+    summary: Get all properties for admin analytics
+    description: Retrieve all properties in the system for admin analytics and management
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Properties retrieved successfully
+        schema:
+          type: object
+          properties:
+            properties:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         current_app.logger.info(f"Admin all properties request - User: {current_user.id}, Role: {current_user.role}")
         
@@ -88,7 +115,32 @@ def get_all_properties(current_user):
 @admin_properties_bp.route('/pending-properties', methods=['GET'])
 @admin_required
 def get_pending_properties(current_user):
-    """Get properties for admin review with simple, reliable implementation."""
+    """
+    Get pending properties (Admin)
+    ---
+    tags:
+      - Admin Properties
+    summary: Get properties pending admin approval
+    description: Retrieve all properties that are pending admin review and approval
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Pending properties retrieved successfully
+        schema:
+          type: object
+          properties:
+            properties:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         from sqlalchemy import text
         
@@ -269,7 +321,42 @@ def get_pending_properties(current_user):
 @admin_properties_bp.route('/approve-property/<int:property_id>', methods=['POST'])
 @admin_required
 def approve_property(current_user, property_id):
-    """Approve property and enable portal."""
+    """
+    Approve property (Admin)
+    ---
+    tags:
+      - Admin Properties
+    summary: Approve a property and enable portal
+    description: Approve a pending property and optionally set a custom subdomain for the portal
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            notes:
+              type: string
+            custom_subdomain:
+              type: string
+    responses:
+      200:
+        description: Property approved successfully
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json() or {}
         notes = data.get('notes', 'Property approved by admin')
@@ -373,7 +460,7 @@ def approve_property(current_user, property_id):
             'message': 'Property approved successfully',
             'property_id': property_id,
             'portal_subdomain': custom_subdomain,
-            'portal_url': f'http://{custom_subdomain}.localhost:8080',
+            'portal_url': f'http://localhost:8080',
             'notes': notes,
             'status': 'approved'
         }), 200
@@ -388,7 +475,41 @@ def approve_property(current_user, property_id):
 @admin_properties_bp.route('/reject-property/<int:property_id>', methods=['POST'])
 @admin_required
 def reject_property(current_user, property_id):
-    """Reject property with reason."""
+    """
+    Reject property (Admin)
+    ---
+    tags:
+      - Admin Properties
+    summary: Reject a property with reason
+    description: Reject a pending property with an optional rejection reason
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            reason:
+              type: string
+              description: Rejection reason
+    responses:
+      200:
+        description: Property rejected successfully
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json() or {}
         rejection_reason = data.get('reason', 'No reason provided')

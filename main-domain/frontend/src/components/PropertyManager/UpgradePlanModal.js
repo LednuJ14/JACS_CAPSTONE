@@ -31,7 +31,7 @@ const UpgradePlanModal = ({ isOpen, onClose, onUpgrade }) => {
         .sort((a, b) => a.monthly_price - b.monthly_price);
       setSubscriptionPlans(normalizedPlans);
     } catch (error) {
-      console.error('Error fetching plans:', error);
+      // Error handled silently to reduce log noise
     }
   };
 
@@ -40,7 +40,7 @@ const UpgradePlanModal = ({ isOpen, onClose, onUpgrade }) => {
       const subRes = await ApiService.getCurrentSubscription();
       setCurrentPlan(subRes?.subscription || subRes);
     } catch (error) {
-      console.error('Error fetching subscription:', error);
+      // Error handled silently to reduce log noise
     }
   };
 

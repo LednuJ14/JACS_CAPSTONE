@@ -54,7 +54,49 @@ def generate_request_number():
 @request_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_requests():
-    """Get maintenance requests (filtered by user role)."""
+    """
+    Get maintenance requests
+    ---
+    tags:
+      - Requests
+    summary: Get maintenance requests
+    description: Retrieve maintenance requests filtered by user role
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+      - in: query
+        name: priority
+        type: string
+    responses:
+      200:
+        description: Requests retrieved successfully
+        schema:
+          type: object
+          properties:
+            requests:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -188,7 +230,53 @@ def get_requests():
 @request_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_request():
-    """Create a new maintenance request (Tenant only)."""
+    """
+    Create maintenance request
+    ---
+    tags:
+      - Requests
+    summary: Create a new maintenance request
+    description: Create a new maintenance request. Tenant only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - subject
+            - description
+          properties:
+            subject:
+              type: string
+            description:
+              type: string
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+            unit_id:
+              type: integer
+    responses:
+      201:
+        description: Request created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            request:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Tenant access required
+      500:
+        description: Server error
+    """
     try:
         tenant = get_current_tenant()
         if not tenant:
@@ -316,7 +404,38 @@ def create_request():
 @request_bp.route('/<int:request_id>', methods=['GET'])
 @jwt_required()
 def get_request(request_id):
-    """Get a specific maintenance request."""
+    """
+    Get request by ID
+    ---
+    tags:
+      - Requests
+    summary: Get a specific maintenance request
+    description: Retrieve a specific maintenance request by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: request_id
+        type: integer
+        required: true
+        description: The request ID
+    responses:
+      200:
+        description: Request retrieved successfully
+        schema:
+          type: object
+          properties:
+            request:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Request not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -356,7 +475,58 @@ def get_request(request_id):
 @request_bp.route('/<int:request_id>', methods=['PUT'])
 @jwt_required()
 def update_request(request_id):
-    """Update a maintenance request (Tenant can update their own, Managers can update any)."""
+    """
+    Update maintenance request
+    ---
+    tags:
+      - Requests
+    summary: Update a maintenance request
+    description: Update a maintenance request. Tenant can update their own, Managers can update any.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: request_id
+        type: integer
+        required: true
+        description: The request ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            subject:
+              type: string
+            description:
+              type: string
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+            status:
+              type: string
+            assigned_to:
+              type: integer
+    responses:
+      200:
+        description: Request updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            request:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Request not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -581,7 +751,38 @@ def update_request(request_id):
 @request_bp.route('/<int:request_id>', methods=['DELETE'])
 @jwt_required()
 def delete_request(request_id):
-    """Delete a maintenance request (Tenant can delete their own pending requests only)."""
+    """
+    Delete maintenance request
+    ---
+    tags:
+      - Requests
+    summary: Delete a maintenance request
+    description: Delete a maintenance request. Tenant can delete their own pending requests only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: request_id
+        type: integer
+        required: true
+        description: The request ID
+    responses:
+      200:
+        description: Request deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Request not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -640,7 +841,57 @@ def delete_request(request_id):
 @request_bp.route('/<int:request_id>/feedback', methods=['POST'])
 @jwt_required()
 def add_feedback(request_id):
-    """Add tenant feedback to a completed request."""
+    """
+    Add request feedback
+    ---
+    tags:
+      - Requests
+    summary: Add tenant feedback to a completed request
+    description: Add tenant feedback to a completed request
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: request_id
+        type: integer
+        required: true
+        description: The request ID
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - rating
+            - comment
+          properties:
+            rating:
+              type: integer
+              minimum: 1
+              maximum: 5
+            comment:
+              type: string
+    responses:
+      201:
+        description: Feedback added successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            feedback:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Request not found
+      500:
+        description: Server error
+    """
     try:
         tenant = get_current_tenant()
         if not tenant:

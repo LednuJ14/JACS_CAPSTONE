@@ -54,8 +54,12 @@ class ApiService {
       const isFormData = options.isFormData || options.body instanceof FormData;
       const headers = { ...this.getHeaders({ isFormData, noAuth: options.noAuth }), ...(options.headers || {}) };
       
-      // Remove isFormData and responseType from options before passing to fetch
-      const { isFormData: _, responseType, ...fetchOptions } = options;
+      // Support AbortController for request cancellation
+      // Use provided signal or create new AbortController
+      const signal = options.signal || (new AbortController()).signal;
+      
+      // Remove isFormData, responseType, and signal from options before passing to fetch
+      const { isFormData: _, responseType, signal: _signal, ...fetchOptions } = options;
       
       // Suppress console errors for 404s on attachment downloads
       const isAttachmentDownload = url.includes('/inquiries/attachments/');
@@ -87,6 +91,7 @@ class ApiService {
         res = await fetch(url, {
           ...fetchOptions,
           headers,
+          signal, // Add abort signal
         });
       } catch (fetchError) {
         // If fetch itself fails (network error, not HTTP error), restore console and rethrow

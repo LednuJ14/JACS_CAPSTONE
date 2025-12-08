@@ -69,7 +69,47 @@ def get_my_tenant():
 @tenant_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_tenants():
-    """Get all tenants with their user info, filtered by property_id from subdomain."""
+    """
+    Get all tenants
+    ---
+    tags:
+      - Tenants
+    summary: Get all tenants for the property
+    description: Retrieve all tenants with their user info, filtered by property_id from subdomain context
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: property_id
+        type: integer
+        description: Property ID (usually from subdomain context)
+      - in: query
+        name: page
+        type: integer
+        description: Page number for pagination
+      - in: query
+        name: per_page
+        type: integer
+        description: Number of items per page
+    responses:
+      200:
+        description: Tenants retrieved successfully
+        schema:
+          type: object
+          properties:
+            tenants:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+      400:
+        description: Property context required
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         # CRITICAL: Get property_id from request (subdomain, header, query param, or JWT)
         # This ensures we only return tenants for the current property subdomain
@@ -204,7 +244,61 @@ def get_tenants():
 @tenant_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_tenant():
-    """Create a new tenant."""
+    """
+    Create tenant
+    ---
+    tags:
+      - Tenants
+    summary: Create a new tenant
+    description: Create a new tenant account and profile
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - username
+            - password
+            - first_name
+            - last_name
+          properties:
+            email:
+              type: string
+              format: email
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+            first_name:
+              type: string
+            last_name:
+              type: string
+            phone_number:
+              type: string
+            property_id:
+              type: integer
+    responses:
+      201:
+        description: Tenant created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            tenant:
+              type: object
+      400:
+        description: Validation error or user already exists
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         print(f"Received tenant creation data: {data}")
@@ -475,7 +569,55 @@ def create_tenant():
 @tenant_bp.route('/<int:tenant_id>', methods=['PUT'])
 @jwt_required()
 def update_tenant(tenant_id):
-    """Update a tenant."""
+    """
+    Update tenant
+    ---
+    tags:
+      - Tenants
+    summary: Update tenant information
+    description: Update tenant profile information. Property managers can update any tenant, tenants can only update themselves.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: tenant_id
+        type: integer
+        required: true
+        description: The tenant ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            phone_number:
+              type: string
+            email:
+              type: string
+            property_id:
+              type: integer
+            unit_id:
+              type: integer
+    responses:
+      200:
+        description: Tenant updated successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            user_id:
+              type: integer
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Tenant not found
+      500:
+        description: Server error
+    """
     try:
         from flask_jwt_extended import get_jwt_identity
         current_user_id = get_jwt_identity()
@@ -790,7 +932,38 @@ def update_tenant(tenant_id):
 @tenant_bp.route('/<int:tenant_id>', methods=['DELETE'])
 @jwt_required()
 def delete_tenant(tenant_id):
-    """Delete a tenant."""
+    """
+    Delete tenant
+    ---
+    tags:
+      - Tenants
+    summary: Delete a tenant
+    description: Delete a tenant account and profile. Property managers only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: tenant_id
+        type: integer
+        required: true
+        description: The tenant ID
+    responses:
+      200:
+        description: Tenant deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property manager access required
+      404:
+        description: Tenant not found
+      500:
+        description: Server error
+    """
     try:
         from flask_jwt_extended import get_jwt_identity
         current_user_id = get_jwt_identity()
@@ -845,7 +1018,44 @@ def delete_tenant(tenant_id):
 @tenant_bp.route('/<int:tenant_id>', methods=['GET'])
 @jwt_required()
 def get_tenant(tenant_id):
-    """Get a specific tenant."""
+    """
+    Get tenant by ID
+    ---
+    tags:
+      - Tenants
+    summary: Get a specific tenant
+    description: Retrieve tenant information by ID. Property managers can view tenants in their property, tenants can view themselves.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: tenant_id
+        type: integer
+        required: true
+        description: The tenant ID
+    responses:
+      200:
+        description: Tenant retrieved successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            user_id:
+              type: integer
+            property_id:
+              type: integer
+            user:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Tenant not found
+      500:
+        description: Server error
+    """
     try:
         from flask_jwt_extended import get_jwt_identity
         current_user_id = get_jwt_identity()

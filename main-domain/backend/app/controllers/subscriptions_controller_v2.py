@@ -10,6 +10,35 @@ subscriptions_bp = Blueprint('subscriptions', __name__)
 
 @subscriptions_bp.route('/plans', methods=['GET'])
 def get_subscription_plans():
+    """
+    Get subscription plans
+    ---
+    tags:
+      - Subscriptions
+    summary: List all available subscription plans
+    description: Retrieve a list of all available subscription plans with pricing and features
+    responses:
+      200:
+        description: Subscription plans retrieved successfully
+        schema:
+          type: object
+          properties:
+            plans:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  price:
+                    type: number
+                  features:
+                    type: array
+      500:
+        description: Server error
+    """
     try:
         data = SubscriptionsService().plans()
         return jsonify(data), 200
@@ -21,6 +50,34 @@ def get_subscription_plans():
 @subscriptions_bp.route('/my-subscription', methods=['GET'])
 @manager_required
 def get_my_subscription(current_user):
+    """
+    Get current user's subscription
+    ---
+    tags:
+      - Subscriptions
+    summary: Get the authenticated manager's subscription
+    description: Retrieve the current subscription details for the authenticated property manager
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Subscription retrieved successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            plan:
+              type: object
+            status:
+              type: string
+            expires_at:
+              type: string
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         data = SubscriptionsService().my_subscription(current_user)
         return jsonify(data), 200
@@ -32,6 +89,37 @@ def get_my_subscription(current_user):
 @subscriptions_bp.route('/billing-history', methods=['GET'])
 @manager_required
 def get_billing_history(current_user):
+    """
+    Get billing history
+    ---
+    tags:
+      - Subscriptions
+    summary: Get billing history for authenticated manager
+    description: Retrieve billing history for the authenticated property manager
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        description: Page number for pagination
+    responses:
+      200:
+        description: Billing history retrieved successfully
+        schema:
+          type: object
+          properties:
+            bills:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         data = SubscriptionsService().billing_history(current_user)
         return jsonify(data), 200
@@ -43,6 +131,37 @@ def get_billing_history(current_user):
 @subscriptions_bp.route('/payment-methods', methods=['GET'])
 @manager_required
 def get_payment_methods(current_user):
+    """
+    Get payment methods
+    ---
+    tags:
+      - Subscriptions
+    summary: Get saved payment methods
+    description: Retrieve all saved payment methods for the authenticated manager
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Payment methods retrieved successfully
+        schema:
+          type: object
+          properties:
+            payment_methods:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  type:
+                    type: string
+                  last4:
+                    type: string
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         data = SubscriptionsService().payment_methods(current_user)
         return jsonify(data), 200
@@ -54,6 +173,44 @@ def get_payment_methods(current_user):
 @subscriptions_bp.route('/upgrade', methods=['POST'])
 @manager_required
 def upgrade_plan(current_user):
+    """
+    Upgrade subscription plan
+    ---
+    tags:
+      - Subscriptions
+    summary: Upgrade to a different subscription plan
+    description: Upgrade the current subscription to a different plan
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - plan_id
+          properties:
+            plan_id:
+              type: integer
+              description: ID of the plan to upgrade to
+    responses:
+      200:
+        description: Plan upgraded successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            subscription:
+              type: object
+      400:
+        description: Validation error or upgrade not allowed
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         from flask import request
         data = request.get_json()
@@ -127,6 +284,32 @@ def process_payment(current_user, billing_id):
 @subscriptions_bp.route('/cancel', methods=['POST'])
 @manager_required
 def cancel_subscription(current_user):
+    """
+    Cancel subscription
+    ---
+    tags:
+      - Subscriptions
+    summary: Cancel the current subscription
+    description: Cancel the active subscription. Access will continue until the end of the billing period.
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Subscription cancelled successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            subscription:
+              type: object
+      400:
+        description: No active subscription to cancel
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         result = SubscriptionsService().cancel_subscription(current_user)
         return jsonify(result), 200

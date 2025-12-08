@@ -52,7 +52,45 @@ def _get_period_start(period: str) -> datetime:
 @manager_analytics_bp.route('/', methods=['GET'])
 @manager_required
 def get_manager_analytics(current_user):
-    """Get analytics data for the current manager based on real data."""
+    """
+    Get manager analytics
+    ---
+    tags:
+      - Manager Analytics
+    summary: Get analytics data for the property manager
+    description: Retrieve analytics data for properties owned by the authenticated property manager
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: property
+        type: string
+        description: Filter by property ID or 'all'
+      - in: query
+        name: period
+        type: string
+        description: Time period (month, week, year)
+    responses:
+      200:
+        description: Analytics data retrieved successfully
+        schema:
+          type: object
+          properties:
+            totalRevenue:
+              type: number
+            totalExpenses:
+              type: number
+            netIncome:
+              type: number
+            occupancyRate:
+              type: number
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Manager access required
+      500:
+        description: Server error
+    """
     try:
         # Query params
         property_filter = request.args.get('property', 'all')

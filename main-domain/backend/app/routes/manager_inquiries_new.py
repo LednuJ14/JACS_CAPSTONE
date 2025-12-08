@@ -28,7 +28,52 @@ manager_inquiries_bp = Blueprint('manager_inquiries', __name__)
 @manager_inquiries_bp.route('/', methods=['GET'])
 @manager_required
 def get_manager_inquiries(current_user):
-    """Get all inquiries for the current manager's properties."""
+    """
+    Get manager inquiries
+    ---
+    tags:
+      - Manager Inquiries
+    summary: Get all inquiries for manager's properties
+    description: Retrieve all inquiries for properties owned by the authenticated property manager
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: status
+        type: string
+        description: Filter by inquiry status
+      - in: query
+        name: property_id
+        type: integer
+        description: Filter by property ID
+    responses:
+      200:
+        description: Inquiries retrieved successfully
+        schema:
+          type: object
+          properties:
+            inquiries:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  property_id:
+                    type: integer
+                  tenant_id:
+                    type: integer
+                  status:
+                    type: string
+                  messages:
+                    type: array
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Manager access required
+      500:
+        description: Server error
+    """
     try:
         # Get all properties owned by this manager using raw SQL to avoid model mismatches
         from sqlalchemy import text
@@ -51,9 +96,11 @@ def get_manager_inquiries(current_user):
         # Query with unit_id column (now always available)
         # Explicitly filter by property_ids and ensure property_manager_id matches current_user
         # This ensures we only get inquiries for properties owned by this manager
+        # Allow multiple inquiries per property/unit - removed the MAX(created_at) grouping
+        # Use DISTINCT to prevent duplicate rows from JOINs
         inquiries = db.session.execute(text(
             """
-            SELECT i.id, i.property_id, i.tenant_id, i.property_manager_id,
+            SELECT DISTINCT i.id, i.property_id, i.tenant_id, i.property_manager_id,
                    i.inquiry_type, i.status, i.message,
                    i.created_at, i.updated_at, i.read_at,
                    i.unit_id,
@@ -62,15 +109,6 @@ def get_manager_inquiries(current_user):
             LEFT JOIN units u ON u.id = i.unit_id
             LEFT JOIN units u2 ON u2.property_id = i.property_id AND u2.status = 'vacant' AND i.unit_id IS NULL
             LEFT JOIN users tenant ON tenant.id = i.tenant_id
-            INNER JOIN (
-              SELECT MAX(created_at) AS max_created_at, property_id
-              FROM inquiries
-              WHERE property_id IN :pids 
-                AND (is_archived IS NULL OR is_archived = 0)
-              GROUP BY property_id
-            ) latest
-            ON i.property_id = latest.property_id
-            AND i.created_at = latest.max_created_at
             WHERE i.property_id IN :pids
               AND (i.property_manager_id = :manager_id OR i.property_manager_id IS NULL)
               AND (i.is_archived IS NULL OR i.is_archived = 0)
@@ -81,8 +119,17 @@ def get_manager_inquiries(current_user):
             'manager_id': current_user.id
         }).mappings().all()
         
-        inquiry_data = []
+        # Additional deduplication by ID in case DISTINCT doesn't catch everything
+        seen_ids = set()
+        unique_inquiries = []
         for inquiry in inquiries:
+            inquiry_id = inquiry.get('id')
+            if inquiry_id and inquiry_id not in seen_ids:
+                seen_ids.add(inquiry_id)
+                unique_inquiries.append(inquiry)
+        
+        inquiry_data = []
+        for inquiry in unique_inquiries:
             # Get property info and verify ownership (extra security check)
             prop_row = db.session.execute(text(
                 "SELECT id, title, building_name, address, city, province, owner_id FROM properties WHERE id = :pid AND owner_id = :manager_id"
@@ -181,7 +228,50 @@ def get_manager_inquiries(current_user):
 @manager_inquiries_bp.route('/send-message', methods=['POST'])
 @manager_required
 def send_message(current_user):
-    """Send a response message to an inquiry (raw SQL to avoid enum coercion issues)."""
+    """
+    Send message to inquiry
+    ---
+    tags:
+      - Manager Inquiries
+    summary: Send a response message to an inquiry
+    description: Send a message response to a tenant inquiry
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - inquiry_id
+            - message
+          properties:
+            inquiry_id:
+              type: integer
+              description: The inquiry ID
+            message:
+              type: string
+              description: Message content
+    responses:
+      200:
+        description: Message sent successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            inquiry_id:
+              type: integer
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         if not data:
@@ -283,7 +373,33 @@ def send_message(current_user):
 @manager_inquiries_bp.route('/<int:inquiry_id>/mark-read', methods=['POST'])
 @manager_required
 def mark_as_read(current_user, inquiry_id):
-    """Mark an inquiry as read."""
+    """
+    Mark inquiry as read
+    ---
+    tags:
+      - Manager Inquiries
+    summary: Mark an inquiry as read
+    description: Mark an inquiry as read by the property manager
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: inquiry_id
+        type: integer
+        required: true
+        description: The inquiry ID
+    responses:
+      200:
+        description: Inquiry marked as read
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Inquiry not found
+      500:
+        description: Server error
+    """
     try:
         inquiry = Inquiry.query.get(inquiry_id)
         if not inquiry:

@@ -12,7 +12,43 @@ staff_bp = Blueprint('staff', __name__)
 @staff_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_staff():
-    """Get all staff members with their user info, filtered by property_id from subdomain."""
+    """
+    Get staff
+    ---
+    tags:
+      - Staff
+    summary: Get all staff members
+    description: Get all staff members with their user info, filtered by property_id from subdomain
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+    responses:
+      200:
+        description: Staff members retrieved successfully
+        schema:
+          type: object
+          properties:
+            staff:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         # Get property_id from request (subdomain, header, query param, or JWT)
         from routes.auth_routes import get_property_id_from_request
@@ -111,7 +147,66 @@ def get_staff():
 @staff_bp.route('/', methods=['POST'])
 # @jwt_required()  # Temporarily disabled for testing
 def create_staff():
-    """Create a new staff member."""
+    """
+    Create staff
+    ---
+    tags:
+      - Staff
+    summary: Create a new staff member
+    description: Create a new staff member. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - username
+            - password
+            - first_name
+            - last_name
+            - employee_id
+            - job_title
+          properties:
+            email:
+              type: string
+              format: email
+            username:
+              type: string
+            password:
+              type: string
+            first_name:
+              type: string
+            last_name:
+              type: string
+            employee_id:
+              type: string
+            job_title:
+              type: string
+            staff_role:
+              type: string
+    responses:
+      201:
+        description: Staff member created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            staff:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         # Get JSON data and handle case where it might be a string
         data = request.get_json()
@@ -246,7 +341,53 @@ def create_staff():
 @staff_bp.route('/<int:staff_id>', methods=['PUT'])
 @jwt_required()
 def update_staff(staff_id):
-    """Update a staff member."""
+    """
+    Update staff
+    ---
+    tags:
+      - Staff
+    summary: Update a staff member
+    description: Update a staff member. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: staff_id
+        type: integer
+        required: true
+        description: The staff ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            job_title:
+              type: string
+            staff_role:
+              type: string
+            employee_id:
+              type: string
+    responses:
+      200:
+        description: Staff member updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            staff:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Staff member not found
+      500:
+        description: Server error
+    """
     try:
         # Get JSON data and handle case where it might be a string
         data = request.get_json()
@@ -376,7 +517,38 @@ def update_staff(staff_id):
 @staff_bp.route('/<int:staff_id>', methods=['DELETE'])
 @jwt_required()
 def delete_staff(staff_id):
-    """Delete a staff member."""
+    """
+    Delete staff
+    ---
+    tags:
+      - Staff
+    summary: Delete a staff member
+    description: Delete a staff member. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: staff_id
+        type: integer
+        required: true
+        description: The staff ID
+    responses:
+      200:
+        description: Staff member deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Staff member not found
+      500:
+        description: Server error
+    """
     try:
         staff = Staff.query.get(staff_id)
         if not staff:
@@ -449,7 +621,36 @@ def delete_staff(staff_id):
 @staff_bp.route('/<int:staff_id>', methods=['GET'])
 # @jwt_required()  # Temporarily disabled for testing
 def get_staff_member(staff_id):
-    """Get a specific staff member."""
+    """
+    Get staff by ID
+    ---
+    tags:
+      - Staff
+    summary: Get a specific staff member
+    description: Retrieve a specific staff member by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: staff_id
+        type: integer
+        required: true
+        description: The staff ID
+    responses:
+      200:
+        description: Staff member retrieved successfully
+        schema:
+          type: object
+          properties:
+            staff:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: Staff member not found
+      500:
+        description: Server error
+    """
     try:
         staff = Staff.query.get(staff_id)
         if not staff:

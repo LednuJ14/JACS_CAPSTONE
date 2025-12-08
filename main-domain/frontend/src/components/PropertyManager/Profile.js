@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ApiService from '../../services/api';
+import { getImageUrl } from '../../config/api';
 import defaultProfile from '../../assets/images/default_profile.png';
 
 const Profile = ({ isOpen, onClose }) => {
@@ -55,7 +56,7 @@ const Profile = ({ isOpen, onClose }) => {
         try {
           const uploadResponse = await ApiService.uploadManagerProfileImage(selectedFile);
           if (uploadResponse?.profile_image_url) {
-            setPreviewUrl(uploadResponse.profile_image_url);
+            setPreviewUrl(getImageUrl(uploadResponse.profile_image_url));
             setProfileData(prev => ({
               ...prev,
               personalInfo: {
@@ -132,10 +133,13 @@ const Profile = ({ isOpen, onClose }) => {
       if (!profile.avatar && !profile.profile_image_url) {
         try {
           const meData = await ApiService.me();
-          profileImageUrl = meData?.user?.profile_image_url || defaultProfile;
+          const imageUrl = meData?.user?.profile_image_url;
+          profileImageUrl = imageUrl ? getImageUrl(imageUrl) : defaultProfile;
         } catch (e) {
           console.error('Failed to fetch profile image from /auth/me:', e);
         }
+      } else {
+        profileImageUrl = getImageUrl(profileImageUrl) || defaultProfile;
       }
       
       const fetchedData = {

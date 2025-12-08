@@ -20,9 +20,24 @@ const LoginPage = () => {
   const loadPropertyBySubdomain = async () => {
     try {
       const hostname = window.location.hostname || '';
-      const subdomain = hostname.split('.')[0];
       
-      if (subdomain && subdomain.toLowerCase() !== 'localhost') {
+      // First, check for subdomain in query parameters (for IP address access)
+      const urlParams = new URLSearchParams(window.location.search);
+      const subdomainParam = urlParams.get('subdomain');
+      
+      let subdomain = null;
+      if (subdomainParam) {
+        // Use subdomain from query parameter when using IP address
+        subdomain = subdomainParam.toLowerCase();
+      } else {
+        // Extract subdomain from hostname (for localhost subdomain routing)
+        const hostnameSubdomain = hostname.split('.')[0];
+        if (hostnameSubdomain && hostnameSubdomain.toLowerCase() !== 'localhost' && !hostnameSubdomain.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+          subdomain = hostnameSubdomain.toLowerCase();
+        }
+      }
+      
+      if (subdomain) {
         const property = await apiService.getPropertyBySubdomain(subdomain);
         if (property) {
           setPropertyData(property);

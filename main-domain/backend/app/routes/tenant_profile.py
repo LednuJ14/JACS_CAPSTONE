@@ -19,7 +19,34 @@ tenant_profile_bp = Blueprint('tenant_profile', __name__)
 @tenant_profile_bp.route('/', methods=['GET'])
 @tenant_required
 def get_tenant_profile(current_user):
-    """Get the current tenant's profile information."""
+    """
+    Get tenant profile
+    ---
+    tags:
+      - Tenant Profile
+    summary: Get the current tenant's profile
+    description: Retrieve profile information for the authenticated tenant
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Profile retrieved successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            email:
+              type: string
+            first_name:
+              type: string
+            last_name:
+              type: string
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         # Build a conservative, flat profile payload to avoid serialization issues
         role_value = getattr(current_user.role, 'value', current_user.role)
@@ -72,6 +99,223 @@ def get_tenant_profile(current_user):
             'active_inquiries': active_inquiries,
             'member_since': member_since
         }
+        
+        # Add tenant's current unit and property assignment information
+        unit_info = None
+        property_info = None
+        
+        try:
+            from sqlalchemy import text
+            from datetime import date
+            
+            # Get tenant's current active unit assignment
+            # First, check if user has a tenant profile in tenants table
+            current_app.logger.info(f'=== Fetching tenant profile for user_id: {current_user.id} ===')
+            tenant_profile = db.session.execute(text("""
+                SELECT id, property_id FROM tenants WHERE user_id = :user_id LIMIT 1
+            """), {'user_id': current_user.id}).first()
+            
+            if tenant_profile:
+                tenant_profile_id = tenant_profile[0]
+                tenant_property_id = tenant_profile[1] if len(tenant_profile) > 1 else None
+                current_app.logger.info(f'✓ Found tenant profile: tenant_id={tenant_profile_id}, property_id={tenant_property_id}')
+                
+                # First, let's verify tenant_units record exists
+                tenant_unit_check = db.session.execute(text("""
+                    SELECT COUNT(*) as cnt FROM tenant_units WHERE tenant_id = :tenant_id
+                """), {'tenant_id': tenant_profile_id}).scalar()
+                current_app.logger.info(f'Found {tenant_unit_check} tenant_units record(s) for tenant_id={tenant_profile_id}')
+                
+                # Strategy 1: Simple query - just get tenant_units with unit and property
+                # Start with the most basic query possible
+                assignment = None
+                
+                try:
+                    # First, test the simplest possible query
+                    test_query = db.session.execute(text("""
+                        SELECT tu.id, tu.unit_id, tu.property_id 
+                        FROM tenant_units tu 
+                        WHERE tu.tenant_id = :tenant_id 
+                        LIMIT 1
+                    """), {'tenant_id': tenant_profile_id}).first()
+                    current_app.logger.info(f'Test query result: {test_query is not None}, data: {test_query}')
+                    
+                    # Now do the full query
+                    assignment = db.session.execute(text("""
+                        SELECT 
+                            tu.id as tu_id,
+                            tu.unit_id,
+                            tu.property_id as tu_property_id,
+                            tu.move_in_date,
+                            tu.move_out_date,
+                            tu.monthly_rent,
+                            u.id as unit_db_id,
+                            u.property_id as unit_property_id,
+                            u.unit_name,
+                            u.unit_number,
+                            u.status as unit_status,
+                            u.monthly_rent as unit_monthly_rent
+                        FROM tenant_units tu
+                        INNER JOIN units u ON u.id = tu.unit_id
+                        WHERE tu.tenant_id = :tenant_id
+                        ORDER BY tu.id DESC
+                        LIMIT 1
+                    """), {'tenant_id': tenant_profile_id}).mappings().first()
+                    
+                    if assignment:
+                        current_app.logger.info(f'✓ Query 1 SUCCESS: Found assignment with unit_id={assignment.get("unit_id")}, property_id={assignment.get("tu_property_id")}')
+                        current_app.logger.info(f'Assignment keys: {list(assignment.keys())}')
+                        current_app.logger.info(f'Unit name: {assignment.get("unit_name")}, Unit number: {assignment.get("unit_number")}')
+                    else:
+                        current_app.logger.warning(f'✗ Query 1 returned no results')
+                except Exception as q1_error:
+                    current_app.logger.error(f'✗ Query 1 failed with exception: {str(q1_error)}', exc_info=True)
+                
+                # If we got unit data, now fetch property separately
+                if assignment:
+                    prop_id_to_fetch = assignment.get('tu_property_id') or assignment.get('unit_property_id') or tenant_property_id
+                    current_app.logger.info(f'Fetching property for prop_id={prop_id_to_fetch}')
+                    
+                    if prop_id_to_fetch:
+                        try:
+                            prop_row = db.session.execute(text("""
+                                SELECT 
+                                    p.id as property_db_id,
+                                    p.building_name,
+                                    p.title as property_title,
+                                    p.address as property_address,
+                                    p.city as property_city,
+                                    p.province as property_province
+                                FROM properties p
+                                WHERE p.id = :property_id
+                                LIMIT 1
+                            """), {'property_id': prop_id_to_fetch}).mappings().first()
+                            
+                            if prop_row:
+                                # Merge property data into assignment
+                                for key, value in prop_row.items():
+                                    assignment[key] = value
+                                current_app.logger.info(f'Property fetched: {prop_row.get("property_title") or prop_row.get("building_name")}')
+                            else:
+                                current_app.logger.warning(f'Property {prop_id_to_fetch} not found in properties table')
+                        except Exception as prop_error:
+                            current_app.logger.error(f'Property query failed: {prop_error}')
+                else:
+                    current_app.logger.warning(f'No tenant_units record found for tenant_id={tenant_profile_id}')
+                
+                if assignment:
+                    # Get property_id from various possible sources
+                    prop_id = assignment.get('tu_property_id') or assignment.get('unit_property_id') or assignment.get('property_db_id') or assignment.get('property_id') or tenant_property_id
+                    
+                    current_app.logger.info(f'Found tenant_units record: tu_id={assignment.get("tu_id")}, unit_id={assignment.get("unit_id")}, prop_id={prop_id}')
+                    current_app.logger.info(f'Assignment keys: {list(assignment.keys())}')
+                    
+                    # Build unit info - ensure all fields are populated
+                    unit_id_val = assignment.get('unit_id') or assignment.get('unit_db_id')
+                    unit_name_val = assignment.get('unit_name') or assignment.get('unit_number') or f"Unit {assignment.get('unit_number', '')}"
+                    unit_number_val = assignment.get('unit_number') or assignment.get('unit_name')
+                    
+                    unit_info = {
+                        'id': unit_id_val,
+                        'unit_name': unit_name_val,
+                        'unit_number': unit_number_val,
+                        'status': assignment.get('unit_status'),
+                        'monthly_rent': float(assignment.get('monthly_rent') or assignment.get('unit_monthly_rent') or 0),
+                        'move_in_date': safe_iso(assignment.get('move_in_date')),
+                        'move_out_date': safe_iso(assignment.get('move_out_date'))
+                    }
+                    
+                    # Build property info - always try to build it if we have property data
+                    prop_title = assignment.get('property_title')
+                    prop_building = assignment.get('building_name')
+                    
+                    if prop_id or prop_title or prop_building:
+                        property_info = {
+                            'id': prop_id,
+                            'building_name': prop_building,
+                            'title': prop_title or prop_building,
+                            'address': assignment.get('property_address'),
+                            'city': assignment.get('property_city'),
+                            'province': assignment.get('property_province')
+                        }
+                        current_app.logger.info(f'Built property info: id={property_info.get("id")}, title={property_info.get("title")}, building={property_info.get("building_name")}')
+                    else:
+                        # If we still don't have property info, try fetching from property_id directly
+                        if prop_id:
+                            try:
+                                prop_fetch = db.session.execute(text("""
+                                    SELECT 
+                                        p.id as property_id,
+                                        p.building_name,
+                                        p.title as property_title,
+                                        p.address as property_address,
+                                        p.city as property_city,
+                                        p.province as property_province
+                                    FROM properties p
+                                    WHERE p.id = :property_id
+                                    LIMIT 1
+                                """), {'property_id': prop_id}).mappings().first()
+                                
+                                if prop_fetch:
+                                    property_info = {
+                                        'id': prop_fetch.get('property_id'),
+                                        'building_name': prop_fetch.get('building_name'),
+                                        'title': prop_fetch.get('property_title') or prop_fetch.get('building_name'),
+                                        'address': prop_fetch.get('property_address'),
+                                        'city': prop_fetch.get('property_city'),
+                                        'province': prop_fetch.get('property_province')
+                                    }
+                                    current_app.logger.info(f'Fetched property info separately: {property_info.get("title")}')
+                            except Exception as prop_fetch_error:
+                                current_app.logger.error(f'Error fetching property separately: {prop_fetch_error}')
+                    
+                    current_app.logger.info(f'Final assignment data - unit_id={unit_info.get("id")}, unit_name={unit_info.get("unit_name")}, property_id={prop_id}, has_property_info={property_info is not None}')
+                
+                # Strategy 2: If no tenant_units found, get property from tenants.property_id
+                if not assignment and tenant_property_id:
+                    current_app.logger.info(f'No tenant_units record found, falling back to property_id from tenants table: {tenant_property_id}')
+                    property_only = db.session.execute(text("""
+                        SELECT 
+                            p.id as property_id,
+                            p.building_name,
+                            p.title as property_title,
+                            p.address as property_address,
+                            p.city as property_city,
+                            p.province as property_province
+                        FROM properties p
+                        WHERE p.id = :property_id
+                        LIMIT 1
+                    """), {'property_id': tenant_property_id}).mappings().first()
+                    
+                    if property_only:
+                        property_info = {
+                            'id': property_only.get('property_id'),
+                            'building_name': property_only.get('building_name'),
+                            'title': property_only.get('property_title') or property_only.get('building_name'),
+                            'address': property_only.get('property_address'),
+                            'city': property_only.get('property_city'),
+                            'province': property_only.get('property_province')
+                        }
+                        current_app.logger.info(f'Found property from tenants table: {property_info.get("title")}')
+            else:
+                current_app.logger.warning(f'No tenant profile found for user_id: {current_user.id}')
+                
+        except Exception as unit_error:
+            current_app.logger.error(f'Failed to fetch tenant unit/property info: {str(unit_error)}', exc_info=True)
+            # Don't fail the entire request if unit/property lookup fails
+            unit_info = None
+            property_info = None
+        
+        # Always set these fields, even if None (don't omit them)
+        profile_data['current_unit'] = unit_info
+        profile_data['current_property'] = property_info
+        
+        # Log what we're returning for debugging
+        current_app.logger.info(f'Profile response - current_unit: {unit_info is not None}, current_property: {property_info is not None}')
+        if unit_info:
+            current_app.logger.info(f'Unit info details: id={unit_info.get("id")}, name={unit_info.get("unit_name")}, number={unit_info.get("unit_number")}')
+        if property_info:
+            current_app.logger.info(f'Property info details: id={property_info.get("id")}, title={property_info.get("title")}, building={property_info.get("building_name")}')
         
         return jsonify({
             'profile': profile_data

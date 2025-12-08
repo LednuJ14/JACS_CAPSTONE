@@ -10,10 +10,30 @@ from app.models.blacklisted_token import BlacklistedToken
 def auth_required(f):
     """
     Decorator that requires valid JWT authentication.
+    Allows OPTIONS requests to pass through for CORS preflight.
     """
     @wraps(f)
-    @jwt_required()
+    @jwt_required(optional=True)
     def decorated_function(*args, **kwargs):
+        from flask import request
+        
+        # Allow OPTIONS requests to pass through for CORS preflight
+        if request.method == 'OPTIONS':
+            return f(None, *args, **kwargs)
+        
+        # For non-OPTIONS requests, require authentication
+        try:
+            current_user_id = get_jwt_identity()
+        except Exception:
+            current_user_id = None
+        
+        # If no token provided for non-OPTIONS request, require authentication
+        if not current_user_id:
+            return jsonify({
+                'error': 'Authentication required',
+                'message': 'Please provide a valid authentication token'
+            }), 401
+        
         # Check if token is blacklisted (if blacklist functionality is implemented)
         try:
             from app.models.blacklist import BlacklistedToken
@@ -28,7 +48,6 @@ def auth_required(f):
             pass
         
         # Get current user
-        current_user_id = get_jwt_identity()
         # Convert identity to integer if it's a string
         try:
             user_id = int(current_user_id) if isinstance(current_user_id, str) else current_user_id
@@ -69,10 +88,17 @@ def auth_required(f):
 def admin_required(f):
     """
     Decorator that requires admin role.
+    Allows OPTIONS requests to pass through for CORS preflight.
     """
     @wraps(f)
     @auth_required
     def decorated_function(current_user, *args, **kwargs):
+        from flask import request
+        
+        # Allow OPTIONS requests to pass through for CORS preflight
+        if request.method == 'OPTIONS' or current_user is None:
+            return f(current_user, *args, **kwargs)
+        
         if not current_user.is_admin():
             return jsonify({
                 'error': 'Insufficient permissions',

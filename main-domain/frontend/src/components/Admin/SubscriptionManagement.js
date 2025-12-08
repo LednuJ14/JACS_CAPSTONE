@@ -25,8 +25,10 @@ const SubscriptionManagement = () => {
   const [showAddBillingModal, setShowAddBillingModal] = useState(false);
   const [showViewSubscriberModal, setShowViewSubscriberModal] = useState(false);
   const [showEditSubscriberModal, setShowEditSubscriberModal] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedSubscriber, setSelectedSubscriber] = useState(null);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
   
   // Form states
   const [planForm, setPlanForm] = useState({
@@ -155,12 +157,16 @@ const SubscriptionManagement = () => {
   const fetchBillingHistory = async () => {
     try {
       setError('');
+      setLoading(true);
       const response = await ApiService.getAdminBillingHistory();
       const bills = response.data || response || [];
+      // Use the real status from the database - no local state manipulation
       setBillingHistory(Array.isArray(bills) ? bills : []);
     } catch (error) {
       console.error('Error fetching billing history:', error);
       setBillingHistory([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -245,6 +251,17 @@ const SubscriptionManagement = () => {
     } else if (activeTab === 'billing') {
       fetchBillingHistory();
       fetchPaymentTransactions();
+    }
+  }, [activeTab]);
+
+  // Refresh billing history periodically when on billing tab to get real-time status updates
+  useEffect(() => {
+    if (activeTab === 'billing') {
+      const interval = setInterval(() => {
+        fetchBillingHistory();
+      }, 10000); // Refresh every 10 seconds when on billing tab
+
+      return () => clearInterval(interval);
     }
   }, [activeTab]);
 
@@ -384,6 +401,40 @@ const SubscriptionManagement = () => {
       setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
       setError(error.message || 'Failed to create billing entry');
+      setTimeout(() => setError(''), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleViewInvoice = (bill) => {
+    setSelectedInvoice(bill);
+    setShowInvoiceModal(true);
+  };
+
+  const handleResendInvoice = async (bill) => {
+    if (!window.confirm(`Resend invoice ${bill.invoice_number || `INV-${bill.id}`} to ${bill.email || bill.customer_name || 'customer'}?`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError('');
+      
+      // Call API to resend invoice email
+      const url = API_ENDPOINTS.ADMIN.RESEND_INVOICE(bill.id);
+      await ApiService.request(url, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      
+      setSuccess(`Invoice ${bill.invoice_number || `INV-${bill.id}`} resent successfully to ${bill.email || bill.customer_name || 'customer'}!`);
+      
+      // Auto-dismiss success message
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (error) {
+      console.error('Error resending invoice:', error);
+      setError(error.message || 'Failed to resend invoice. The endpoint may not be implemented yet.');
       setTimeout(() => setError(''), 5000);
     } finally {
       setLoading(false);
@@ -1242,6 +1293,16 @@ const SubscriptionManagement = () => {
           <h3 className="text-xl font-semibold text-black">Billing History</h3>
           <div className="flex items-center space-x-4">
             <button 
+              onClick={() => {
+                fetchBillingHistory();
+                fetchPaymentTransactions();
+              }}
+              className="bg-white text-black border-2 border-black px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+              title="Refresh billing history"
+            >
+              Refresh
+            </button>
+            <button 
               onClick={openAddBillingModal}
               className="bg-white text-black border-2 border-black px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
             >
@@ -1318,8 +1379,19 @@ const SubscriptionManagement = () => {
                           {bill.payment_method || 'N/A'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button className="text-black hover:text-gray-600 mr-3">View Invoice</button>
-                          <button className="text-black hover:text-gray-600">Resend</button>
+                          <button 
+                            onClick={() => handleViewInvoice(bill)}
+                            className="text-black hover:text-gray-600 mr-3"
+                          >
+                            View Invoice
+                          </button>
+                          <button 
+                            onClick={() => handleResendInvoice(bill)}
+                            className="text-black hover:text-gray-600"
+                            disabled={loading}
+                          >
+                            Resend
+                          </button>
                         </td>
                       </tr>
                     );
@@ -2290,6 +2362,159 @@ const SubscriptionManagement = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Invoice Modal */}
+      {showInvoiceModal && selectedInvoice && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-2xl font-bold text-black">Invoice Details</h3>
+              <button 
+                onClick={() => { setShowInvoiceModal(false); setSelectedInvoice(null); }} 
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              {/* Invoice Header */}
+              <div className="bg-gray-50 rounded-xl p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h4 className="text-lg font-bold text-black">Invoice #{selectedInvoice.invoice_number || `INV-${selectedInvoice.id}`}</h4>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Date: {selectedInvoice.billing_date 
+                        ? new Date(selectedInvoice.billing_date).toLocaleDateString('en-US', { 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })
+                        : selectedInvoice.created_at
+                        ? new Date(selectedInvoice.created_at).toLocaleDateString('en-US', { 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })
+                        : 'N/A'}
+                    </p>
+                  </div>
+                  <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full border-2 ${
+                    (selectedInvoice.status || 'pending').toLowerCase() === 'paid' 
+                      ? 'bg-white border-green-600 text-green-600'
+                      : (selectedInvoice.status || 'pending').toLowerCase() === 'pending'
+                      ? 'bg-white border-yellow-600 text-yellow-600'
+                      : 'bg-white border-red-600 text-red-600'
+                  }`}>
+                    {(selectedInvoice.status || 'pending').toUpperCase()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Customer Information */}
+              <div className="bg-gray-50 rounded-xl p-6">
+                <h4 className="text-lg font-bold text-black mb-4">Bill To</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-600">Customer Name</label>
+                    <p className="text-black font-medium">{selectedInvoice.customer_name || 'Unknown'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-600">Email</label>
+                    <p className="text-black">{selectedInvoice.email || selectedInvoice.user_email || 'N/A'}</p>
+                  </div>
+                  {selectedInvoice.phone && (
+                    <div>
+                      <label className="text-sm font-medium text-gray-600">Phone</label>
+                      <p className="text-black">{selectedInvoice.phone}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Invoice Details */}
+              <div className="bg-gray-50 rounded-xl p-6">
+                <h4 className="text-lg font-bold text-black mb-4">Invoice Details</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                    <span className="text-gray-700">Plan</span>
+                    <span className="text-black font-medium">{selectedInvoice.plan_name || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                    <span className="text-gray-700">Amount</span>
+                    <span className="text-black font-medium text-lg">₱{Number(selectedInvoice.amount || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                    <span className="text-gray-700">Payment Method</span>
+                    <span className="text-black">{selectedInvoice.payment_method || 'N/A'}</span>
+                  </div>
+                  {selectedInvoice.due_date && (
+                    <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                      <span className="text-gray-700">Due Date</span>
+                      <span className="text-black">
+                        {new Date(selectedInvoice.due_date).toLocaleDateString('en-US', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        })}
+                      </span>
+                    </div>
+                  )}
+                  {selectedInvoice.payment_date && (
+                    <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                      <span className="text-gray-700">Payment Date</span>
+                      <span className="text-black">
+                        {new Date(selectedInvoice.payment_date).toLocaleDateString('en-US', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        })}
+                      </span>
+                    </div>
+                  )}
+                  {selectedInvoice.billing_period_start && selectedInvoice.billing_period_end && (
+                    <div className="flex justify-between items-center pb-3 border-b border-gray-200">
+                      <span className="text-gray-700">Billing Period</span>
+                      <span className="text-black text-sm">
+                        {new Date(selectedInvoice.billing_period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
+                        {' '}{new Date(selectedInvoice.billing_period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center pt-3">
+                    <span className="text-lg font-bold text-black">Total</span>
+                    <span className="text-lg font-bold text-black">₱{Number(selectedInvoice.amount || 0).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Notes/Remarks */}
+              {(selectedInvoice.notes || selectedInvoice.remarks) && (
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h4 className="text-lg font-bold text-black mb-2">Notes</h4>
+                  <p className="text-gray-700 text-sm">{selectedInvoice.notes || selectedInvoice.remarks}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6 pt-4 border-t-2 border-black">
+              <button
+                onClick={() => { setShowInvoiceModal(false); setSelectedInvoice(null); }}
+                className="px-6 py-2 border-2 border-black text-black rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => handleResendInvoice(selectedInvoice)}
+                className="px-6 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
+                disabled={loading}
+              >
+                {loading ? 'Sending...' : 'Resend Invoice'}
+              </button>
+            </div>
           </div>
         </div>
       )}

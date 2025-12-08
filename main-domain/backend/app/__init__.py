@@ -52,85 +52,60 @@ def create_app(config_name=None):
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
-    # Configure CORS to allow all required localhost and subdomain origins
-    raw_origins = app.config.get('CORS_ORIGINS') or [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://*.localhost:3000",
-        "http://*.localhost:8080",
-    ]
-    def format_origins(origins):
-        formatted = []
-        for origin in origins:
-            if isinstance(origin, str) and '*' in origin:
-                pattern = re.escape(origin).replace(r'\*', r'.*')
-                formatted.append(re.compile(f"^{pattern}$"))
-            else:
-                formatted.append(origin)
-        return formatted
-    allowed_origins = format_origins(raw_origins)
+    # Configure CORS with environment-based origins
+    raw_origins = app.config.get('CORS_ORIGINS', [])
     
-    # Configure CORS - use simpler configuration for better compatibility
-    # In development, allow all localhost origins explicitly
-    if app.config.get('FLASK_ENV') == 'development':
-        # For development, allow all localhost variants
-        dev_origins = [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-        ]
-        cors.init_app(
-            app,
-            supports_credentials=True,
-            resources={r"/api/*": {
-                "origins": dev_origins,
+    if not raw_origins:
+        app.logger.warning("No CORS origins configured. CORS will be disabled.")
+        cors_origins = []
+    else:
+        # Validate and format origins
+        cors_origins = []
+        for origin in raw_origins:
+            if isinstance(origin, str):
+                # Validate origin format
+                if not origin.startswith(('http://', 'https://')):
+                    app.logger.warning(f"Invalid CORS origin format (must start with http:// or https://): {origin}")
+                    continue
+                # Only allow wildcards in development
+                if '*' in origin and app.config.get('FLASK_ENV') == 'production':
+                    app.logger.warning(f"Wildcard CORS origins not allowed in production: {origin}")
+                    continue
+                # Convert wildcard patterns to regex in development only
+                if '*' in origin and app.config.get('FLASK_ENV') == 'development':
+                    pattern = re.escape(origin).replace(r'\*', r'.*')
+                    cors_origins.append(re.compile(f"^{pattern}$"))
+                else:
+                    cors_origins.append(origin)
+            else:
+                cors_origins.append(origin)
+    
+    # Configure CORS with stricter settings
+    cors_config = {
+        "supports_credentials": True,
+        "resources": {
+            r"/api/*": {
+                "origins": cors_origins if cors_origins else ["*"],  # Fallback to * only if no origins configured
                 "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
                 "expose_headers": ["Content-Type", "Authorization"],
                 "max_age": 3600,
-            }},
-        )
-    else:
-        # Production: use restricted origins
-        cors.init_app(
-            app,
-            supports_credentials=True,
-            resources={
-                r"/api/*": {
-                    "origins": allowed_origins,
-                    "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-                    "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-                    "expose_headers": ["Content-Type", "Authorization"],
-                    "max_age": 3600,
-                }
-            },
-        )
+            }
+        },
+    }
+    
+    # In development, allow dev tunnels if explicitly enabled
+    if app.config.get('FLASK_ENV') == 'development' and os.environ.get('ALLOW_DEV_TUNNELS', 'false').lower() == 'true':
+        dev_tunnel_pattern = re.compile(r'^https?://.*\.devtunnels\.ms.*$')
+        if dev_tunnel_pattern not in cors_origins:
+            cors_origins.append(dev_tunnel_pattern)
+            cors_config["resources"][r"/api/*"]["origins"] = cors_origins
+    
+    cors.init_app(app, **cors_config)
     jwt.init_app(app)
     bcrypt.init_app(app)
     limiter.init_app(app)
     mail.init_app(app)
-    
-    # Handle CORS preflight requests explicitly to avoid redirect issues
-    # This must come before any route handlers to prevent redirects during preflight
-    @app.before_request
-    def handle_cors_preflight():
-        from flask import request, make_response
-        if request.method == 'OPTIONS':
-            # Return CORS headers immediately without any redirects
-            response = make_response()
-            origin = request.headers.get('Origin')
-            if origin and origin in ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8080', 'http://127.0.0.1:8080']:
-                response.headers.add('Access-Control-Allow-Origin', origin)
-            else:
-                response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin')
-            response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Max-Age', '3600')
-            return response
     
     # Register blueprints
     register_blueprints(app)
@@ -140,6 +115,10 @@ def create_app(config_name=None):
     
     # Register JWT handlers
     register_jwt_handlers(app)
+    
+    # Initialize request/response logging middleware
+    from app.middleware import init_request_logging
+    init_request_logging(app)
 
     # Configure Swagger / OpenAPI documentation
     # This is scoped to /api routes only and should not affect existing behavior.
@@ -148,12 +127,205 @@ def create_app(config_name=None):
         "info": {
             "title": "JACS Property Platform API",
             "description": "Interactive API documentation for the main-domain backend.\n\n"
-                           "Note: This documentation is generated automatically from the existing Flask routes "
-                           "and may not include every detail of request/response payloads.",
+                           "## Authentication\n"
+                           "Most endpoints require JWT authentication. Include the token in the Authorization header:\n"
+                           "```\n"
+                           "Authorization: Bearer <your-access-token>\n"
+                           "```\n\n"
+                           "## Response Format\n"
+                           "All responses follow a standardized format:\n"
+                           "- **Success**: `{success: true, data: {...}, error: null}`\n"
+                           "- **Error**: `{success: false, data: null, error: {message, code, status_code, details}}`\n\n"
+                           "## Error Codes\n"
+                           "- `BAD_REQUEST` (400): Invalid request data\n"
+                           "- `UNAUTHORIZED` (401): Authentication required\n"
+                           "- `FORBIDDEN` (403): Insufficient permissions\n"
+                           "- `NOT_FOUND` (404): Resource not found\n"
+                           "- `CONFLICT` (409): Resource conflict\n"
+                           "- `VALIDATION_ERROR` (422): Validation failed\n"
+                           "- `INTERNAL_ERROR` (500): Server error\n\n"
+                           "## Rate Limiting\n"
+                           "API requests are rate-limited. Default: 100 requests/hour (production), 200 requests/hour (development).\n"
+                           "Rate limit information is included in response headers.",
             "version": "1.0.0",
+            "contact": {
+                "name": "JACS Support",
+                "email": "support@jacs-cebu.com"
+            }
         },
         "basePath": "/",
         "schemes": ["http", "https"],
+        "consumes": ["application/json"],
+        "produces": ["application/json"],
+        "securityDefinitions": {
+            "Bearer": {
+                "type": "apiKey",
+                "name": "Authorization",
+                "in": "header",
+                "description": "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"\n\n"
+                               "To obtain a token:\n"
+                               "1. Register: POST /api/auth/register\n"
+                               "2. Login: POST /api/auth/login\n"
+                               "3. Use the returned access_token in subsequent requests"
+            }
+        },
+        "security": [
+            {
+                "Bearer": []
+            }
+        ],
+        "definitions": {
+            "ErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": False
+                    },
+                    "data": {
+                        "type": "null"
+                    },
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "example": "Error message"
+                            },
+                            "code": {
+                                "type": "string",
+                                "example": "ERROR_CODE"
+                            },
+                            "status_code": {
+                                "type": "integer",
+                                "example": 400
+                            },
+                            "details": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            },
+            "SuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": True
+                    },
+                    "data": {
+                        "type": "object"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Operation successful"
+                    },
+                    "error": {
+                        "type": "null"
+                    },
+                    "meta": {
+                        "type": "object",
+                        "properties": {
+                            "pagination": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "responses": {
+            "UnauthorizedError": {
+                "description": "Authentication required",
+                "schema": {
+                    "$ref": "#/definitions/ErrorResponse"
+                },
+                "examples": {
+                    "application/json": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "message": "Authentication required",
+                            "code": "UNAUTHORIZED",
+                            "status_code": 401
+                        }
+                    }
+                }
+            },
+            "ForbiddenError": {
+                "description": "Insufficient permissions",
+                "schema": {
+                    "$ref": "#/definitions/ErrorResponse"
+                },
+                "examples": {
+                    "application/json": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "message": "Access forbidden",
+                            "code": "FORBIDDEN",
+                            "status_code": 403
+                        }
+                    }
+                }
+            },
+            "ValidationError": {
+                "description": "Validation failed",
+                "schema": {
+                    "$ref": "#/definitions/ErrorResponse"
+                },
+                "examples": {
+                    "application/json": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "message": "Validation failed",
+                            "code": "VALIDATION_ERROR",
+                            "status_code": 422,
+                            "details": {
+                                "email": ["Invalid email format"],
+                                "password": ["Password too short"]
+                            }
+                        }
+                    }
+                }
+            },
+            "NotFoundError": {
+                "description": "Resource not found",
+                "schema": {
+                    "$ref": "#/definitions/ErrorResponse"
+                },
+                "examples": {
+                    "application/json": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "message": "Resource not found",
+                            "code": "NOT_FOUND",
+                            "status_code": 404
+                        }
+                    }
+                }
+            },
+            "InternalServerError": {
+                "description": "Internal server error",
+                "schema": {
+                    "$ref": "#/definitions/ErrorResponse"
+                },
+                "examples": {
+                    "application/json": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "message": "Internal server error",
+                            "code": "INTERNAL_ERROR",
+                            "status_code": 500
+                        }
+                    }
+                }
+            }
+        }
     }
 
     swagger_config = {
@@ -211,6 +383,7 @@ def register_blueprints(app):
     from app.routes.admin_notifications import admin_notifications_bp
     from app.routes.public_units import public_units_bp
     from app.routes.inquiry_attachments import inquiry_attachments_bp
+    from app.routes.health import health_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(users_bp, url_prefix='/api/users')
@@ -231,19 +404,21 @@ def register_blueprints(app):
     
     # Inquiry attachments
     from app.routes.inquiry_attachments import inquiry_attachments_bp
+    from app.routes.health import health_bp
     app.register_blueprint(inquiry_attachments_bp, url_prefix='/api/inquiries')
     # Note: password_reset_bp removed - all routes now handled by auth_controller_v2.py
     app.register_blueprint(public_units_bp, url_prefix='/api/units')
+    app.register_blueprint(health_bp, url_prefix='/api')
 
-    # Relax rate limits for high-churn dev endpoints to avoid 429s in UI
-    try:
-        limiter.exempt(auth_bp)
-        limiter.exempt(manager_properties_bp)
-        limiter.exempt(manager_inquiries_bp)
-        limiter.exempt(admin_properties_bp)
-    except Exception as e:
-        app.logger.warning(f"Could not exempt blueprints from rate limiting: {e}")
-        pass
+    # Configure rate limiting - removed broad exemptions, use default limits
+    # Rate limits are now enforced on all endpoints (was exempted before)
+    # Default limits are set in config.py: 100/hour (production) or 200/hour (development)
+    # Individual routes can override with @limiter.limit() decorator if needed
+    
+    # Note: OPTIONS requests (CORS preflight) are automatically exempted by Flask-Limiter
+    # No need to manually exempt them
+    
+    app.logger.info(f"Rate limiting enabled: {app.config.get('RATELIMIT_DEFAULT', '100 per hour')}")
 
 def register_error_handlers(app):
     """Register application error handlers."""

@@ -31,7 +31,53 @@ def allowed_file(filename):
 @document_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_documents():
-    """Get documents filtered by user's role and permissions."""
+    """
+    Get documents
+    ---
+    tags:
+      - Documents
+    summary: Get documents filtered by user's role and permissions
+    description: Retrieve documents based on the authenticated user's role and property context
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        description: Page number for pagination
+      - in: query
+        name: per_page
+        type: integer
+        description: Number of items per page
+      - in: query
+        name: search
+        type: string
+        description: Search term
+      - in: query
+        name: type
+        type: string
+        description: Document type filter
+      - in: query
+        name: property_id
+        type: integer
+        description: Filter by property ID
+    responses:
+      200:
+        description: Documents retrieved successfully
+        schema:
+          type: object
+          properties:
+            documents:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -184,7 +230,38 @@ def get_documents():
 @document_bp.route('/<int:document_id>', methods=['GET'])
 @jwt_required()
 def get_document(document_id):
-    """Get a specific document by ID."""
+    """
+    Get document by ID
+    ---
+    tags:
+      - Documents
+    summary: Get a specific document
+    description: Retrieve document information by ID. Tenants can only access public documents or their own.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: document_id
+        type: integer
+        required: true
+        description: The document ID
+    responses:
+      200:
+        description: Document retrieved successfully
+        schema:
+          type: object
+          properties:
+            document:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Document not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -215,7 +292,52 @@ def get_document(document_id):
 @document_bp.route('/', methods=['POST'])
 @jwt_required()
 def upload_document():
-    """Upload a new document."""
+    """
+    Upload document
+    ---
+    tags:
+      - Documents
+    summary: Upload a new document
+    description: Upload a document file. Allowed for tenants, staff, and property managers.
+    security:
+      - Bearer: []
+    parameters:
+      - in: formData
+        name: file
+        type: file
+        required: true
+        description: Document file to upload
+      - in: formData
+        name: title
+        type: string
+        description: Document title
+      - in: formData
+        name: document_type
+        type: string
+        description: Type of document
+      - in: formData
+        name: property_id
+        type: integer
+        description: Associated property ID
+    responses:
+      201:
+        description: Document uploaded successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            document:
+              type: object
+      400:
+        description: Validation error or no file provided
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Role not allowed
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -431,7 +553,41 @@ def upload_document():
 
 @document_bp.route('/<int:document_id>/download', methods=['GET'])
 def download_document(document_id):
-    """Download a document file (JWT optional for main domain access)."""
+    """
+    Download document
+    ---
+    tags:
+      - Documents
+    summary: Download a document file
+    description: Download a document file. JWT optional for main domain cross-domain access via API key.
+    parameters:
+      - in: path
+        name: document_id
+        type: integer
+        required: true
+        description: The document ID
+      - in: header
+        name: X-API-Key
+        type: string
+        description: API key for cross-domain access (optional)
+      - in: query
+        name: api_key
+        type: string
+        description: API key as query parameter (optional)
+    responses:
+      200:
+        description: Document file
+        schema:
+          type: file
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Document not found
+      500:
+        description: Server error
+    """
     try:
         # Check for API key from main domain (for cross-domain access)
         api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
@@ -513,7 +669,58 @@ def download_document(document_id):
 @document_bp.route('/<int:document_id>', methods=['PUT'])
 @jwt_required()
 def update_document(document_id):
-    """Update document metadata."""
+    """
+    Update document
+    ---
+    tags:
+      - Documents
+    summary: Update document metadata
+    description: Update document information. Users can update their own documents, managers/staff can update any.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: document_id
+        type: integer
+        required: true
+        description: The document ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+            description:
+              type: string
+            document_type:
+              type: string
+            visibility:
+              type: string
+              enum: [public, tenants_only, staff_only, private]
+            property_id:
+              type: integer
+    responses:
+      200:
+        description: Document updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            document:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Document not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -599,7 +806,38 @@ def update_document(document_id):
 @document_bp.route('/<int:document_id>', methods=['DELETE'])
 @jwt_required()
 def delete_document(document_id):
-    """Delete a document."""
+    """
+    Delete document
+    ---
+    tags:
+      - Documents
+    summary: Delete a document
+    description: Delete a document. Users can delete their own documents, managers/staff can delete any.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: document_id
+        type: integer
+        required: true
+        description: The document ID
+    responses:
+      200:
+        description: Document deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Document not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -657,7 +895,32 @@ def delete_document(document_id):
 @document_bp.route('/types', methods=['GET'])
 @jwt_required()
 def get_document_types():
-    """Get available document types."""
+    """
+    Get document types
+    ---
+    tags:
+      - Documents
+    summary: Get available document types
+    description: Retrieve list of available document types
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Document types retrieved successfully
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              label:
+                type: string
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         # Return document types as strings (matching database enum as string)
         types = [
@@ -676,7 +939,58 @@ def get_document_types():
 @document_bp.route('/by-property/<int:property_id>', methods=['GET'])
 @jwt_required()
 def get_documents_by_property(property_id):
-    """Get all documents for a specific property (for property managers)."""
+    """
+    Get documents by property
+    ---
+    tags:
+      - Documents
+    summary: Get all documents for a specific property
+    description: Get all documents for a specific property. For property managers.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: search
+        type: string
+      - in: query
+        name: type
+        type: string
+    responses:
+      200:
+        description: Documents retrieved successfully
+        schema:
+          type: object
+          properties:
+            documents:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -781,7 +1095,52 @@ def get_documents_by_property(property_id):
 
 @document_bp.route('/all', methods=['GET'])
 def get_all_documents():
-    """Get all documents across all properties (for main domain access - accessible without JWT for cross-domain access)."""
+    """
+    Get all documents
+    ---
+    tags:
+      - Documents
+    summary: Get all documents across all properties
+    description: Get all documents across all properties. For main domain access - accessible without JWT for cross-domain access.
+    parameters:
+      - in: header
+        name: X-API-Key
+        type: string
+        description: API key for cross-domain access (optional)
+      - in: query
+        name: api_key
+        type: string
+        description: API key as query parameter (optional)
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: property_id
+        type: integer
+    responses:
+      200:
+        description: Documents retrieved successfully
+        schema:
+          type: object
+          properties:
+            documents:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      400:
+        description: Validation error
+      500:
+        description: Server error
+    """
     try:
         # Optional: Add API key check for security (can be configured via environment variable)
         # For now, allow access from localhost (main domain backend)

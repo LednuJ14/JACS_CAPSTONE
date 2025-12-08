@@ -8,20 +8,97 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+def validate_required_config(flask_env):
+    """
+    Validate that required configuration variables are set.
+    Raises ValueError if critical variables are missing in production.
+    Returns validation report.
+    """
+    required_in_production = [
+        'SECRET_KEY',
+        'JWT_SECRET_KEY',
+        'MYSQL_USER',
+        'MYSQL_PASSWORD',
+        'MYSQL_HOST',
+        'MYSQL_DATABASE'
+    ]
+    
+    recommended_vars = [
+        'CORS_ORIGINS',
+        'MAIL_USERNAME',
+        'MAIL_PASSWORD',
+        'STRIPE_SECRET_KEY'
+    ]
+    
+    missing_required = []
+    missing_recommended = []
+    
+    for var in required_in_production:
+        if not os.environ.get(var):
+            missing_required.append(var)
+    
+    for var in recommended_vars:
+        if not os.environ.get(var):
+            missing_recommended.append(var)
+    
+    # Production: fail if required vars are missing
+    if missing_required and flask_env == 'production':
+        raise ValueError(
+            f"Missing required environment variables for production: {', '.join(missing_required)}. "
+            f"Please set these in your .env file or environment."
+        )
+    
+    # Development: warn about missing vars
+    if (missing_required or missing_recommended) and flask_env == 'development':
+        import warnings
+        if missing_required:
+            warnings.warn(
+                f"Missing recommended environment variables: {', '.join(missing_required)}. "
+                f"Using defaults for development only.",
+                UserWarning
+            )
+        if missing_recommended:
+            warnings.warn(
+                f"Missing optional environment variables: {', '.join(missing_recommended)}. "
+                f"Some features may not work correctly.",
+                UserWarning
+            )
+    
+    # Return validation report
+    return {
+        'required_missing': missing_required,
+        'recommended_missing': missing_recommended,
+        'is_valid': len(missing_required) == 0 if flask_env == 'production' else True
+    }
+
 class Config:
     """Base configuration class."""
     
     # Flask Configuration
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     FLASK_ENV = os.environ.get('FLASK_ENV') or 'development'
     
+    # Validate configuration on class creation
+    validate_required_config(FLASK_ENV)
+    
+    # SECRET_KEY - Required in production, allow default only in development/testing
+    _secret_key = os.environ.get('SECRET_KEY')
+    if not _secret_key:
+        if FLASK_ENV == 'production':
+            raise ValueError("SECRET_KEY must be set in production environment")
+        _secret_key = 'dev-secret-key-change-in-production'
+    SECRET_KEY = _secret_key
+    
     # Database Configuration
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-        f"mysql+pymysql://{os.environ.get('MYSQL_USER', 'root')}:" \
-        f"{os.environ.get('MYSQL_PASSWORD', 'password')}@" \
-        f"{os.environ.get('MYSQL_HOST', 'localhost')}:" \
-        f"{os.environ.get('MYSQL_PORT', '3306')}/" \
-        f"{os.environ.get('MYSQL_DATABASE', 'jacs_property_platform')}"
+    _db_url = os.environ.get('DATABASE_URL')
+    if not _db_url:
+        # Build from components
+        db_user = os.environ.get('MYSQL_USER', 'root')
+        db_password = os.environ.get('MYSQL_PASSWORD', 'password')
+        db_host = os.environ.get('MYSQL_HOST', 'localhost')
+        db_port = os.environ.get('MYSQL_PORT', '3306')
+        db_name = os.environ.get('MYSQL_DATABASE', 'jacs_property_platform')
+        _db_url = f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    SQLALCHEMY_DATABASE_URI = _db_url
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -31,8 +108,13 @@ class Config:
         'max_overflow': 0,
     }
     
-    # JWT Configuration
-    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-change-in-production'
+    # JWT Configuration - Required in production, allow default only in development/testing
+    _jwt_secret = os.environ.get('JWT_SECRET_KEY')
+    if not _jwt_secret:
+        if FLASK_ENV == 'production':
+            raise ValueError("JWT_SECRET_KEY must be set in production environment")
+        _jwt_secret = 'jwt-secret-change-in-production'
+    JWT_SECRET_KEY = _jwt_secret
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(seconds=int(os.environ.get('JWT_ACCESS_TOKEN_EXPIRES', 3600)))
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(seconds=int(os.environ.get('JWT_REFRESH_TOKEN_EXPIRES', 2592000)))
     JWT_BLACKLIST_ENABLED = True
@@ -66,17 +148,27 @@ class Config:
     DEFAULT_PAGE_SIZE = int(os.environ.get('DEFAULT_PAGE_SIZE', 10))
     MAX_PAGE_SIZE = int(os.environ.get('MAX_PAGE_SIZE', 100))
     
-    # CORS Configuration - Allow all localhost subdomains
-    CORS_ORIGINS = [
-        'http://localhost:3000', 
-        'http://127.0.0.1:3000',
-        # Allow all subdomains of localhost (main-domain frontend)
-        'http://*.localhost:3000',
-        # Sub-domain frontend (Vite dev server)
-        'http://localhost:8080',
-        'http://127.0.0.1:8080',
-        'http://*.localhost:8080'
-    ]
+    # CORS Configuration - Environment-based origins
+    # In production, CORS_ORIGINS must be set via environment variable
+    # Format: comma-separated list of origins, e.g., "https://app.example.com,https://www.example.com"
+    _cors_origins_env = os.environ.get('CORS_ORIGINS')
+    if _cors_origins_env:
+        # Parse comma-separated origins from environment
+        CORS_ORIGINS = [origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()]
+    else:
+        # Default development origins (only used if CORS_ORIGINS not set)
+        if FLASK_ENV == 'production':
+            raise ValueError(
+                "CORS_ORIGINS must be set in production environment. "
+                "Set it as a comma-separated list of allowed origins."
+            )
+        # Development defaults
+        CORS_ORIGINS = [
+            'http://localhost:3000', 
+            'http://127.0.0.1:3000',
+            'http://localhost:8080',
+            'http://127.0.0.1:8080',
+        ]
     
     # Subscription Configuration
     STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')

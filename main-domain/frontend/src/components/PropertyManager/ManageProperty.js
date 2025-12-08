@@ -13,7 +13,22 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Always use HTTP for localhost backend connections
+// The backend doesn't support HTTPS, so we must use HTTP even if the page is HTTPS
+const getBackendProtocol = () => {
+  if (process.env.REACT_APP_API_URL) {
+    try {
+      const url = new URL(process.env.REACT_APP_API_URL);
+      return url.protocol;
+    } catch (e) {
+      return 'http:';
+    }
+  }
+  return 'http:';
+};
+
+const BACKEND_PROTOCOL = getBackendProtocol();
+const API_BASE_URL = process.env.REACT_APP_API_URL || `${BACKEND_PROTOCOL}//localhost:5000/api`;
 const MEDIA_BASE_URL = (process.env.REACT_APP_MEDIA_BASE_URL || API_BASE_URL.replace(/\/api$/, '')).replace(/\/$/, '');
 
 const getImageSrc = (path) => {
@@ -330,9 +345,8 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
       // Ensure we read the same key that login writes
       const currentUserIdRaw = localStorage.getItem('user_id') || localStorage.getItem('owner_id');
       const currentUserId = currentUserIdRaw ? parseInt(currentUserIdRaw, 10) : null;
-      console.log('Fetching properties for user ID:', currentUserId);
+      // Fetching properties for user ID (logging disabled in production)
       const res = await api.getMyProperties(currentUserId ? { owner_id: currentUserId } : {});
-      console.log('API Response:', res); // Debug log
       
       // Handle different response formats
       let properties = [];
@@ -384,7 +398,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
         setBuildings(propertiesWithUnits);
         return;
       } else {
-        console.log('No properties found in API response');
+        // No properties found in API response
       }
     } catch (error) {
       console.error('Error fetching properties from API:', error);
@@ -570,12 +584,25 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
     // Build a correct portal URL for both local dev and production
     const host = window.location.hostname || '';
     const clean = normalizeSubdomain(subdomain);
-    // For localhost we want to open the dedicated sub-domain app (default 8080)
-    if (host.includes('localhost')) {
+    
+    if (!clean || clean === 'no-subdomain') {
+      // No subdomain - return base portal URL
+      if (host.includes('localhost') || host === '127.0.0.1') {
+        const devPort = process.env.REACT_APP_SUBDOMAIN_PORT || '8080';
+        return `http://localhost:${devPort}`;
+      }
+      const baseDomain = process.env.REACT_APP_PORTAL_BASE_DOMAIN || 'jacs.com';
+      const protocol = process.env.REACT_APP_PORTAL_PROTOCOL || 'https';
+      return `${protocol}://${baseDomain}`;
+    }
+    
+    // For localhost, use actual subdomain (e.g., pat.localhost:8080)
+    if (host.includes('localhost') || host === '127.0.0.1') {
       const devPort = process.env.REACT_APP_SUBDOMAIN_PORT || '8080';
       return `http://${clean}.localhost:${devPort}`;
     }
-    // Production: use configurable base domain and protocol
+    
+    // Production: use actual subdomain (e.g., pat.jacs.com)
     const baseDomain = process.env.REACT_APP_PORTAL_BASE_DOMAIN || 'jacs.com';
     const protocol = process.env.REACT_APP_PORTAL_PROTOCOL || 'https';
     return `${protocol}://${clean}.${baseDomain}`;
@@ -587,10 +614,13 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
     }
     const host = window.location.hostname || '';
     const clean = normalizeSubdomain(subdomain);
-    if (host.includes('localhost')) {
+    
+    if (host.includes('localhost') || host === '127.0.0.1') {
       const devPort = process.env.REACT_APP_SUBDOMAIN_PORT || '8080';
       return `${clean}.localhost:${devPort}`;
     }
+    
+    // Production: show actual subdomain
     const baseDomain = process.env.REACT_APP_PORTAL_BASE_DOMAIN || 'jacs.com';
     return `${clean}.${baseDomain}`;
   };
@@ -610,7 +640,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
       if (response.ok) {
         const responseData = await response.json();
         const propertyData = responseData.property || responseData;
-        console.log('Fetched property data for editing:', propertyData);
+        // Fetched property data for editing (logging disabled in production)
         
         // Parse address from property data
         const addressObj = parseAddress(propertyData.address);
@@ -728,7 +758,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
         amenities: JSON.stringify(editingBuilding.amenities || [])
       };
       
-      console.log('Updating property with data:', updateData);
+      // Updating property with data (logging disabled in production)
       
       // Make API call to update property
       const response = await fetch(`/api/manager/properties/property/${editingBuilding.id}`, {
@@ -746,7 +776,7 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
       }
       
       const result = await response.json();
-      console.log('Property updated successfully:', result);
+      // Property updated successfully (logging disabled in production)
       
       // Update local state with the updated property
     const original = buildings.find(b => b.id === editingBuilding.id);
@@ -1290,11 +1320,11 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
           legal_documents: JSON.stringify(validLegalDocs), // Use filtered valid documents
           owner_id: currentUserIdRawCreate ? parseInt(currentUserIdRawCreate, 10) : undefined
         };
-        console.log('Sending payload:', payload);
+        // Sending payload (logging disabled in production)
         const res = await api.addProperty(payload);
-        console.log('API response:', res);
+        // API response (logging disabled in production)
               if (res && res.item && res.item.id) {
-                console.log('Property created successfully with ID:', res.item.id);
+                // Property created successfully (logging disabled in production)
                 // Refresh the entire list from API
                 const refreshRes = await api.getMyProperties({ owner_id: currentUserIdRawCreate ? parseInt(currentUserIdRawCreate, 10) : null });
                 let refreshedList = [];
@@ -1708,8 +1738,6 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
                       ) : (
                       <a 
                         href={getSubdomainUrl(building.subdomain)}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="text-sm font-medium text-blue-600 hover:text-blue-800"
                       >
                         {getSubdomainDisplay(building.subdomain)}
@@ -3220,8 +3248,6 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
                     ) : (
                       <a 
                         href={getSubdomainUrl(detailsBuilding.subdomain)} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
                         className="text-blue-600 hover:text-blue-800 font-medium text-sm"
                       >
                         {getSubdomainDisplay(detailsBuilding.subdomain)} →
@@ -3415,3 +3441,4 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
 };
 
 export default ManageProperty;
+

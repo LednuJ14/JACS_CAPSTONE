@@ -1,4 +1,38 @@
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Always use HTTP for localhost backend connections
+// The backend doesn't support HTTPS, so we must use HTTP even if the page is HTTPS
+// This is safe for localhost development
+const getBackendProtocol = () => {
+  // If environment variable is set, use it (allows override)
+  if (process.env.REACT_APP_API_URL) {
+    const url = new URL(process.env.REACT_APP_API_URL);
+    return url.protocol;
+  }
+  // Always use HTTP for localhost backend
+  return 'http:';
+};
+
+const BACKEND_PROTOCOL = getBackendProtocol();
+const API_BASE_URL = process.env.REACT_APP_API_URL || `${BACKEND_PROTOCOL}//localhost:5000/api`;
+const BACKEND_BASE_URL = process.env.REACT_APP_BACKEND_URL || `${BACKEND_PROTOCOL}//localhost:5000`;
+
+// Helper function to get full image URL
+export const getImageUrl = (imagePath) => {
+  if (!imagePath) return null;
+  // If it's already a full URL, return as is
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    return imagePath;
+  }
+  // If it starts with /uploads, prepend backend base URL
+  if (imagePath.startsWith('/uploads/')) {
+    return `${BACKEND_BASE_URL}${imagePath}`;
+  }
+  // If it's a relative path, assume it's an upload
+  if (imagePath.startsWith('/')) {
+    return `${BACKEND_BASE_URL}${imagePath}`;
+  }
+  // Otherwise return as is (might be a data URL or default image)
+  return imagePath;
+};
 
 export const API_ENDPOINTS = {
   AUTH: {
@@ -59,6 +93,7 @@ export const API_ENDPOINTS = {
     BILLING_HISTORY: `${API_BASE_URL}/admin/billing-history`,
     CREATE_BILLING: `${API_BASE_URL}/admin/billing`,
     UPDATE_BILLING_STATUS: (id) => `${API_BASE_URL}/admin/billing/${id}/status`,
+    RESEND_INVOICE: (id) => `${API_BASE_URL}/admin/billing/${id}/resend`,
     PAYMENT_TRANSACTIONS: `${API_BASE_URL}/admin/payment-transactions`,
     VERIFY_PAYMENT: (id) => `${API_BASE_URL}/admin/payment-transactions/${id}/verify`,
     DOCUMENTS: `${API_BASE_URL}/admin/documents`,

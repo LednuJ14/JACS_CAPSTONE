@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ApiService from '../../services/api';
+import { getImageUrl } from '../../config/api';
 import defaultProfile from '../../assets/images/default_profile.png';
 
 const Profile = ({ onClose }) => {
@@ -23,6 +24,11 @@ const Profile = ({ onClose }) => {
     totalInquiries: 0,
     activeInquiries: 0,
     memberSince: ''
+  });
+
+  const [unitAssignment, setUnitAssignment] = useState({
+    unit: null,
+    property: null
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -78,7 +84,7 @@ const Profile = ({ onClose }) => {
         try {
           const up = await ApiService.uploadTenantProfileImage(selectedFile);
           if (up?.profile_image_url) {
-            setPreviewUrl(up.profile_image_url);
+            setPreviewUrl(getImageUrl(up.profile_image_url));
           }
         } catch (e) {
           console.error('Profile image upload error:', e);
@@ -148,6 +154,11 @@ const Profile = ({ onClose }) => {
             memberSince: p.statistics.member_since || ''
           });
         }
+        // Update unit and property assignment information
+        setUnitAssignment({
+          unit: p.current_unit || null,
+          property: p.current_property || null
+        });
       } catch (_) {}
       setIsEditing(false);
       setSelectedFile(null);
@@ -197,9 +208,16 @@ const Profile = ({ onClose }) => {
             bio: p.bio || '',
           };
           setProfileData(fetchedData);
-          setOriginalProfileData({ ...fetchedData, profileImageUrl: p.profile_image_url || defaultProfile });
-          if (p.profile_image_url) setPreviewUrl(p.profile_image_url);
-          else setPreviewUrl(defaultProfile);
+          const imageUrl = p.profile_image_url;
+          setOriginalProfileData({ 
+            ...fetchedData, 
+            profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile 
+          });
+          if (imageUrl) {
+            setPreviewUrl(getImageUrl(imageUrl));
+          } else {
+            setPreviewUrl(defaultProfile);
+          }
           if (p.statistics) {
             setStats({
               totalInquiries: p.statistics.total_inquiries || 0,
@@ -207,6 +225,15 @@ const Profile = ({ onClose }) => {
               memberSince: p.statistics.member_since || ''
             });
           }
+          // Set unit and property assignment information
+          // Ensure we properly handle the assignment data
+          const unitData = p.current_unit && typeof p.current_unit === 'object' && Object.keys(p.current_unit).length > 0 ? p.current_unit : null;
+          const propertyData = p.current_property && typeof p.current_property === 'object' && Object.keys(p.current_property).length > 0 ? p.current_property : null;
+          
+          setUnitAssignment({
+            unit: unitData,
+            property: propertyData
+          });
           setLoading(false);
           return;
         }
@@ -234,9 +261,18 @@ const Profile = ({ onClose }) => {
           bio: u.bio || '',
         };
         setProfileData(fallbackData);
-        setOriginalProfileData({ ...fallbackData, profileImageUrl: u.profile_image_url || defaultProfile });
-        if (u.profile_image_url) setPreviewUrl(u.profile_image_url);
-        else setPreviewUrl(defaultProfile);
+        const imageUrl = u.profile_image_url;
+        setOriginalProfileData({ 
+          ...fallbackData, 
+          profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile 
+        });
+        if (imageUrl) {
+          setPreviewUrl(getImageUrl(imageUrl));
+        } else {
+          setPreviewUrl(defaultProfile);
+        }
+        // Note: /auth/me doesn't include unit/property info, so unitAssignment stays as null
+        // This is fine - it will be empty if not available
       } catch (e) {
         console.error('Fallback /auth/me fetch error:', e);
       } finally {
@@ -470,6 +506,79 @@ const Profile = ({ onClose }) => {
                         />
                       </div>
                     </div>
+                  </div>
+
+                  {/* Property & Unit Assignment */}
+                  <div className="bg-gradient-to-br from-white to-gray-50/50 rounded-3xl p-8 border border-gray-200/60 shadow-sm hover:shadow-md transition-all duration-300">
+                    <div className="flex items-center space-x-3 mb-6">
+                      <div className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center">
+                        <svg className="w-5 h-5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-black">Current Assignment</h3>
+                        <p className="text-sm text-black">Your property and unit assignment</p>
+                      </div>
+                    </div>
+                    {(() => {
+                      const hasProperty = unitAssignment.property && typeof unitAssignment.property === 'object' && (unitAssignment.property.title || unitAssignment.property.building_name || unitAssignment.property.id);
+                      const hasUnit = unitAssignment.unit && typeof unitAssignment.unit === 'object' && (unitAssignment.unit.unit_name || unitAssignment.unit.unit_number || unitAssignment.unit.id);
+                      const hasAssignment = hasProperty || hasUnit;
+                      
+                      if (hasAssignment) {
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {hasProperty && (
+                              <div className="space-y-2">
+                                <label className="block text-sm font-semibold text-black">Property</label>
+                                <div className="px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50">
+                                  <p className="text-black font-medium">
+                                    {unitAssignment.property.building_name || unitAssignment.property.title || unitAssignment.property.address || 'N/A'}
+                                  </p>
+                                  {(unitAssignment.property.address || unitAssignment.property.city || unitAssignment.property.province) && (
+                                    <p className="text-sm text-gray-600 mt-1">
+                                      {[
+                                        unitAssignment.property.address,
+                                        unitAssignment.property.city,
+                                        unitAssignment.property.province
+                                      ].filter(Boolean).join(', ')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {hasUnit && (
+                              <div className="space-y-2">
+                                <label className="block text-sm font-semibold text-black">Unit</label>
+                                <div className="px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50">
+                                  <p className="text-black font-medium">
+                                    {unitAssignment.unit.unit_name || unitAssignment.unit.unit_number || 'N/A'}
+                                  </p>
+                                  {unitAssignment.unit.monthly_rent && unitAssignment.unit.monthly_rent > 0 && (
+                                    <p className="text-sm text-gray-600 mt-1">
+                                      Monthly Rent: ₱{Number(unitAssignment.unit.monthly_rent).toLocaleString()}
+                                    </p>
+                                  )}
+                                  {unitAssignment.unit.move_in_date && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      Move-in: {new Date(unitAssignment.unit.move_in_date).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50 text-center">
+                            <p className="text-gray-600 text-sm">No current assignment</p>
+                            <p className="text-xs text-gray-500 mt-1">You are not currently assigned to any property or unit.</p>
+                          </div>
+                        );
+                      }
+                    })()}
                   </div>
 
                   {/* Address Information */}

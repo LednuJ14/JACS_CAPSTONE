@@ -480,7 +480,46 @@ def validate_password(password):
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    """User login endpoint."""
+    """
+    User login
+    ---
+    tags:
+      - Authentication
+    summary: Authenticate user and get access token
+    description: Login with email/username and password to receive JWT tokens
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - password
+          properties:
+            email:
+              type: string
+              description: Email or username
+            password:
+              type: string
+              format: password
+    responses:
+      200:
+        description: Login successful
+        schema:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            user:
+              type: object
+      401:
+        description: Invalid credentials
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         
@@ -1052,7 +1091,28 @@ def login():
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)
 def refresh():
-    """Refresh access token."""
+    """
+    Refresh access token
+    ---
+    tags:
+      - Authentication
+    summary: Get a new access token using refresh token
+    description: Use a valid refresh token to obtain a new access token
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Token refreshed successfully
+        schema:
+          type: object
+          properties:
+            access_token:
+              type: string
+      401:
+        description: Invalid or expired refresh token
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         # Convert string back to integer for database lookup
@@ -1081,7 +1141,59 @@ def refresh():
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    """User registration endpoint."""
+    """
+    User registration
+    ---
+    tags:
+      - Authentication
+    summary: Register a new user account
+    description: Create a new user account with email, username, password, and user details
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - username
+            - password
+            - first_name
+            - last_name
+            - role
+          properties:
+            email:
+              type: string
+              format: email
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+            first_name:
+              type: string
+            last_name:
+              type: string
+            role:
+              type: string
+              enum: [tenant, staff, property_manager]
+    responses:
+      201:
+        description: User registered successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            user:
+              type: object
+      400:
+        description: Validation error
+      409:
+        description: Email or username already exists
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         
@@ -1175,7 +1287,38 @@ def register():
 
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    """Request password reset."""
+    """
+    Request password reset
+    ---
+    tags:
+      - Authentication
+    summary: Request password reset email
+    description: Send a password reset link to the user's email address
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+          properties:
+            email:
+              type: string
+              format: email
+    responses:
+      200:
+        description: Reset email sent (if email exists)
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      400:
+        description: Validation error
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         
@@ -1218,7 +1361,42 @@ def forgot_password():
 
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
-    """Reset password with token."""
+    """
+    Reset password
+    ---
+    tags:
+      - Authentication
+    summary: Reset password using token
+    description: Reset user password using a valid reset token from email
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - token
+            - password
+          properties:
+            token:
+              type: string
+              description: Password reset token from email
+            password:
+              type: string
+              format: password
+    responses:
+      200:
+        description: Password reset successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      400:
+        description: Invalid token, expired token, or validation error
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         
@@ -1270,7 +1448,46 @@ def reset_password():
 @auth_bp.route('/change-password', methods=['POST'])
 @jwt_required()
 def change_password():
-    """Change password for authenticated user."""
+    """
+    Change password
+    ---
+    tags:
+      - Authentication
+    summary: Change the authenticated user's password
+    description: Update password for the currently authenticated user
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - current_password
+            - new_password
+          properties:
+            current_password:
+              type: string
+              format: password
+            new_password:
+              type: string
+              format: password
+    responses:
+      200:
+        description: Password changed successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      400:
+        description: Validation error or incorrect current password
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -1311,7 +1528,50 @@ def change_password():
 
 @auth_bp.route('/verify-2fa', methods=['POST'])
 def verify_two_factor():
-    """Verify 2FA code sent via email (like main domain)."""
+    """
+    Verify two-factor authentication
+    ---
+    tags:
+      - Authentication
+    summary: Verify 2FA code sent via email
+    description: Verify the two-factor authentication code after initial login
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - code
+          properties:
+            email:
+              type: string
+              format: email
+            code:
+              type: string
+              description: 2FA verification code from email
+    responses:
+      200:
+        description: 2FA verified successfully
+        schema:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            user:
+              type: object
+      400:
+        description: Invalid code or validation error
+      403:
+        description: Access denied (admin/staff restrictions)
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         
@@ -1475,7 +1735,38 @@ def logout():
 @auth_bp.route('/me', methods=['GET'])
 @jwt_required()
 def get_current_user():
-    """Get current user information."""
+    """
+    Get current user
+    ---
+    tags:
+      - Authentication
+    summary: Get authenticated user information
+    description: Returns the currently authenticated user's profile information based on their role
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: User information retrieved successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            email:
+              type: string
+            username:
+              type: string
+            role:
+              type: string
+            profile:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -1525,7 +1816,30 @@ def get_current_user():
 @auth_bp.route('/2fa/status', methods=['GET'])
 @jwt_required()
 def get_two_factor_status():
-    """Get 2FA status for the current user (email-based, like main domain)."""
+    """
+    Get 2FA status
+    ---
+    tags:
+      - Authentication
+    summary: Get 2FA status for the current user
+    description: Check if two-factor authentication is enabled for the authenticated user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: 2FA status retrieved successfully
+        schema:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -1544,7 +1858,34 @@ def get_two_factor_status():
 @auth_bp.route('/2fa/enable', methods=['POST'])
 @jwt_required()
 def enable_two_factor():
-    """Enable 2FA for the current user (email-based)."""
+    """
+    Enable 2FA
+    ---
+    tags:
+      - Authentication
+    summary: Enable two-factor authentication
+    description: Enable email-based two-factor authentication for the authenticated user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: 2FA enabled successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            enabled:
+              type: boolean
+      400:
+        description: 2FA already enabled
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)

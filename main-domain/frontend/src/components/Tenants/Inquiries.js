@@ -40,6 +40,13 @@ const Inquiries = ({ onClose, initialChat = null }) => {
   const loadingAttachmentsRef = useRef(new Set()); // Track loading attachments
   const attachmentPromisesRef = useRef(new Map()); // Track ongoing attachment requests
   const processedInitialChatRef = useRef(null); // Track processed initial chat
+  const creatingInquiryRef = useRef(false); // Track if we're currently creating an inquiry
+  const chatsRef = useRef([]); // Track latest chats to avoid stale closures
+  const pollingIntervalRef = useRef(null);
+  const isPollingRef = useRef(false);
+  const messagesEndRef = useRef(null);
+  const selectedChatIdRef = useRef(selectedChatId);
+  const deduplicatingRef = useRef(false);
   
   // Initialize component
   useEffect(() => {
@@ -50,6 +57,12 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     return () => {
       mountedRef.current = false;
       processedInitialChatRef.current = null; // Reset on unmount
+      // Clear polling
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      isPollingRef.current = false;
       // Cleanup all blob URLs to prevent memory leaks
       blobUrlCleanupRef.current.forEach(url => {
         try {
@@ -61,6 +74,40 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       blobUrlCleanupRef.current.clear();
     };
   }, []);
+
+  // Update ref when selectedChatId changes
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+  }, [selectedChatId]);
+
+  // Final safeguard: Ensure chats state never has duplicates
+  useEffect(() => {
+    if (chats.length > 0 && !deduplicatingRef.current) {
+      const seenIds = new Set();
+      let hasDuplicates = false;
+      const unique = chats.filter(chat => {
+        if (!chat.id) return false;
+        if (seenIds.has(chat.id)) {
+          hasDuplicates = true;
+          console.warn(`Duplicate chat detected and removed: ${chat.id}`);
+          return false;
+        }
+        seenIds.add(chat.id);
+        return true;
+      });
+      
+      // Only update if we actually found duplicates to prevent infinite loops
+      if (hasDuplicates && unique.length !== chats.length) {
+        deduplicatingRef.current = true;
+        // Removed duplicate chats (logging disabled in production)
+        setChats(unique);
+        // Reset flag after state update
+        setTimeout(() => {
+          deduplicatingRef.current = false;
+        }, 100);
+      }
+    }
+  }, [chats]);
 
   // Handle initial chat selection
   useEffect(() => {
@@ -77,14 +124,22 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       return;
     }
     
+    // Skip if we're currently creating an inquiry
+    if (creatingInquiryRef.current) {
+      return;
+    }
+    
     const handleInitialChat = async () => {
       // If still loading, wait for it to complete
       if (loading) {
         return; // Will retry when loading becomes false
       }
       
+      // Use ref to get latest chats to avoid stale closure
+      const currentChats = chatsRef.current.length > 0 ? chatsRef.current : chats;
+      
       // Find matching chat
-      const matchingChat = chats.find(c => Number(c.propertyId) === Number(initialChat.propertyId));
+      const matchingChat = currentChats.find(c => Number(c.propertyId) === Number(initialChat.propertyId));
       
       if (matchingChat) {
         // Chat exists - select it and pre-fill message
@@ -103,16 +158,21 @@ const Inquiries = ({ onClose, initialChat = null }) => {
             messageInputRef.current.focus();
           }
         }, 100);
-      } else if (!loading) {
+      } else if (!loading && !creatingInquiryRef.current) {
         // Chat doesn't exist and we've finished loading - create it
         processedInitialChatRef.current = initialChatKey;
-        await createInquiry(initialChat);
+        creatingInquiryRef.current = true;
+        try {
+          await createInquiry(initialChat);
+        } finally {
+          creatingInquiryRef.current = false;
+        }
       }
     };
     
     handleInitialChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChat?.propertyId, initialChat?.unitId, chats, loading]);
+  }, [initialChat?.propertyId, initialChat?.unitId]); // Removed chats and loading from dependencies
 
   /**
    * Load inquiries from the backend
@@ -139,6 +199,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       if (response && response.inquiries) {
         const processedChats = processInquiries(response.inquiries);
         setChats(processedChats);
+        chatsRef.current = processedChats; // Update ref with latest chats
         
         // Load attachments for all inquiries (non-blocking)
         loadAttachmentsForInquiries(processedChats).catch(err => {
@@ -149,6 +210,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
         return processedChats;
       } else {
         setChats([]);
+        chatsRef.current = []; // Update ref
         return [];
       }
     } catch (err) {
@@ -191,16 +253,25 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       };
     });
     
-    // Deduplicate by propertyId (keep most recent)
-    const seen = new Map();
+    // Aggressive deduplication by inquiry ID to prevent same inquiry appearing multiple times
+    // But allow multiple different inquiries for the same property/unit
+    const uniqueById = [];
+    const seenIds = new Set();
+    const seenKeys = new Set(); // Also check for duplicate keys
+    
     processed.forEach(chat => {
-      const key = String(chat.propertyId);
-      if (!seen.has(key) || seen.get(key).id < chat.id) {
-        seen.set(key, chat);
+      const id = chat.id;
+      const key = `chat-${id}`;
+      
+      // Only add if we haven't seen this ID before
+      if (id && !seenIds.has(id) && !seenKeys.has(key)) {
+        seenIds.add(id);
+        seenKeys.add(key);
+        uniqueById.push(chat);
       }
     });
     
-    return Array.from(seen.values());
+    return uniqueById;
   }, []);
 
   /**
@@ -471,6 +542,26 @@ const Inquiries = ({ onClose, initialChat = null }) => {
       setLoading(true);
       setError(null);
       
+      // Check if inquiry already exists before creating (use ref to get latest)
+      const currentChats = chatsRef.current.length > 0 ? chatsRef.current : chats;
+      const existingChat = currentChats.find(c => Number(c.propertyId) === Number(chatData.propertyId));
+      if (existingChat) {
+        // Chat already exists - select it instead of creating
+        setSelectedChatId(existingChat.id);
+        if (existingChat.messages && existingChat.messages.length > 0) {
+          setMessage(`Hello! I'm still interested in ${chatData.unitName || chatData.property || 'this unit'}. Could you please provide an update?`);
+        } else {
+          setMessage(`Hello! I'm interested in ${chatData.unitName || chatData.property || 'this unit'}. Please provide more information about availability, viewing options, and pricing details. Thank you!`);
+        }
+        setTimeout(() => {
+          if (messageInputRef.current) {
+            messageInputRef.current.focus();
+          }
+        }, 100);
+        setLoading(false);
+        return;
+      }
+      
       // Use a placeholder message to create the inquiry
       const placeholderMessage = "Inquiry started";
       const response = await api.startTenantInquiry(
@@ -539,7 +630,7 @@ const Inquiries = ({ onClose, initialChat = null }) => {
         setLoading(false);
       }
     }
-  }, [loadInquiries]);
+  }, [loadInquiries, chats]);
 
   /**
    * Send message
@@ -733,6 +824,195 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     return chats.find(c => c.id === selectedChatId) || null;
   }, [chats, selectedChatId]);
 
+  // Real-time polling for new messages and attachments
+  useEffect(() => {
+    if (!mountedRef.current) return;
+    
+    const pollInterval = 2000; // Poll every 2 seconds for better real-time feel
+    
+    const pollForUpdates = async () => {
+      // Prevent concurrent polling
+      if (isPollingRef.current) {
+        return;
+      }
+      isPollingRef.current = true;
+      
+      try {
+        // Get fresh inquiry data
+        const response = await api.getTenantInquiries();
+        
+        if (!mountedRef.current) return;
+        
+        if (response && response.inquiries) {
+          const processedChats = processInquiries(response.inquiries);
+          
+          // Update chats state only if there are actual changes
+          setChats(prevChats => {
+            // Check if there are actual changes
+            let hasChanges = false;
+            let shouldScroll = false;
+            
+            // Compare all chats and messages
+            for (const newChat of processedChats) {
+              const oldChat = prevChats.find(c => c.id === newChat.id);
+              
+              if (!oldChat) {
+                hasChanges = true;
+                break; // New chat found
+              }
+              
+              // Check if message count changed
+              const oldMsgCount = oldChat.messages?.length || 0;
+              const newMsgCount = newChat.messages?.length || 0;
+              if (oldMsgCount !== newMsgCount) {
+                hasChanges = true;
+                // If this is the selected chat and we have new messages, scroll to bottom
+                if (newChat.id === selectedChatIdRef.current && newMsgCount > oldMsgCount) {
+                  shouldScroll = true;
+                }
+                break;
+              }
+              
+              // Check all message IDs to detect new messages (more thorough than just last message)
+              if (oldMsgCount > 0 && newMsgCount > 0) {
+                const oldMsgIds = new Set((oldChat.messages || []).map(m => String(m.id)));
+                const newMsgIds = new Set((newChat.messages || []).map(m => String(m.id)));
+                
+                // Check if any new message IDs don't exist in old messages
+                for (const newId of newMsgIds) {
+                  if (!oldMsgIds.has(newId)) {
+                    hasChanges = true;
+                    // If this is the selected chat, scroll to bottom
+                    if (newChat.id === selectedChatIdRef.current) {
+                      shouldScroll = true;
+                    }
+                    break;
+                  }
+                }
+                
+                if (hasChanges) break;
+              }
+              
+              // Check if status changed
+              if (oldChat.status !== newChat.status) {
+                hasChanges = true;
+                break;
+              }
+            }
+            
+            // Also check if any old chats are missing (deleted)
+            if (!hasChanges && prevChats.length !== processedChats.length) {
+              hasChanges = true;
+            }
+            
+            // Update state if there are changes
+            if (hasChanges) {
+              // Aggressive deduplication by chat ID to prevent same chat appearing multiple times
+              const uniqueById = [];
+              const seenIds = new Set();
+              const seenKeys = new Set(); // Also check for duplicate keys
+              
+              processedChats.forEach(chat => {
+                const id = chat.id;
+                const key = `chat-${id}`;
+                
+                // Only add if we haven't seen this ID before
+                if (id && !seenIds.has(id) && !seenKeys.has(key)) {
+                  seenIds.add(id);
+                  seenKeys.add(key);
+                  uniqueById.push(chat);
+                }
+              });
+              
+              // Update ref with latest chats
+              chatsRef.current = uniqueById;
+              
+              // Schedule scroll after state update if needed
+              if (shouldScroll) {
+                // Use requestAnimationFrame to ensure DOM is updated
+                requestAnimationFrame(() => {
+                  setTimeout(() => {
+                    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  }, 50);
+                });
+              }
+              return uniqueById;
+            }
+            
+            return prevChats; // No changes
+          });
+          
+          // Update attachments for selected chat only
+          const currentSelectedId = selectedChatIdRef.current;
+          if (currentSelectedId) {
+            const selectedChat = processedChats.find(c => c.id === currentSelectedId);
+            if (selectedChat) {
+              try {
+                const attData = await api.getInquiryAttachments(selectedChat.id);
+                if (attData && attData.attachments && Array.isArray(attData.attachments)) {
+                  setAttachments(prev => {
+                    const currentAtts = prev[selectedChat.id] || [];
+                    const newAtts = attData.attachments || [];
+                    
+                    // Check if attachments changed
+                    if (currentAtts.length !== newAtts.length) {
+                      return { ...prev, [selectedChat.id]: newAtts };
+                    }
+                    
+                    // Check if any attachment IDs are different
+                    const currentIds = new Set(currentAtts.map(a => String(a.id)));
+                    const newIds = new Set(newAtts.map(a => String(a.id)));
+                    if (currentIds.size !== newIds.size || 
+                        [...currentIds].some(id => !newIds.has(id))) {
+                      return { ...prev, [selectedChat.id]: newAtts };
+                    }
+                    
+                    return prev; // No changes
+                  });
+                }
+              } catch (err) {
+                // Silently fail for attachment polling errors
+                console.debug(`Failed to poll attachments for inquiry ${selectedChat.id}:`, err);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Log errors but don't spam console
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Polling error:', err);
+        }
+      } finally {
+        isPollingRef.current = false;
+      }
+    };
+    
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    
+    // Poll immediately, then set up interval
+    const startPolling = () => {
+      pollForUpdates();
+      pollingIntervalRef.current = setInterval(pollForUpdates, pollInterval);
+    };
+    
+    // Start polling after a small delay to avoid immediate duplicate requests
+    const timeoutId = setTimeout(startPolling, 500);
+    
+    // Cleanup interval on unmount
+    return () => {
+      clearTimeout(timeoutId);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      isPollingRef.current = false;
+    };
+  }, [processInquiries]);
+
   // Media Display Component
   const MediaDisplay = memo(({ attachment, type, getMediaUrl, onImageClick, failedAttachmentsRef }) => {
     const [url, setUrl] = useState(null);
@@ -868,6 +1148,16 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     return items;
   }, [selectedChat, getUnmatchedAttachments]);
 
+  // Auto-scroll to bottom when chat is selected or messages change
+  useEffect(() => {
+    if (selectedChatId && messagesEndRef.current) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [selectedChatId, chatItems.length]);
+
   return (
     <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-3 z-50">
       <div className="bg-white rounded-xl w-full max-w-6xl h-[90vh] max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
@@ -946,9 +1236,12 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                 <div className="p-4 text-sm text-gray-500">No conversations yet. Start an inquiry from a unit to chat with a manager.</div>
               ) : (
                 <div className="space-y-1 px-2">
-                  {chats.map((chat) => (
+                  {chats.filter((chat, index, self) => 
+                    // Additional deduplication: ensure each ID appears only once
+                    index === self.findIndex(c => c.id === chat.id)
+                  ).map((chat) => (
                     <div
-                      key={chat.id}
+                      key={`chat-${chat.id}`}
                       onClick={() => setSelectedChatId(chat.id)}
                       className={`p-3 rounded-lg cursor-pointer transition-colors ${
                         selectedChatId === chat.id ? 'bg-gray-200' : 'hover:bg-gray-100'
@@ -1004,7 +1297,8 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                       <p>No messages yet. Start the conversation!</p>
                     </div>
                   ) : (
-                    chatItems.map((item, idx) => {
+                    <>
+                      {chatItems.map((item, idx) => {
                       if (item.type === 'attachment') {
                         const att = item.data;
                         const currentChat = chats.find(c => c.id === selectedChat.id);
@@ -1130,7 +1424,10 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                           </div>
                         );
                       }
-                    })
+                      })}
+                      {/* Scroll anchor for auto-scroll to bottom */}
+                      <div ref={messagesEndRef} />
+                    </>
                   )}
                 </div>
 

@@ -17,8 +17,75 @@ const Inquiries = ({ isOpen, onClose }) => {
   const [attachments, setAttachments] = useState({}); // {inquiryId: [attachments]}
   const hydratedRef = useRef(false);
   const fileInputRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
+  const isPollingRef = useRef(false);
+  const messagesEndRef = useRef(null);
+  const selectedChatIdRef = useRef(selectedChatId);
+  const deduplicatingRef = useRef(false);
   const [mediaUrls, setMediaUrls] = useState({}); // Cache for blob URLs
   const [lightboxImage, setLightboxImage] = useState(null); // {url, fileName} for lightbox modal
+  const [copiedLink, setCopiedLink] = useState(false); // Track if link was copied
+
+  // Helper to generate subdomain URL for a property
+  const getSubdomainUrl = (property) => {
+    if (!property) return null;
+    
+    // Get subdomain from property - check portal_subdomain first, then try title/building_name
+    const subdomain = property.portal_subdomain || 
+                     property.subdomain || 
+                     (property.title ? property.title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : null) ||
+                     (property.building_name ? property.building_name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : null);
+    
+    if (!subdomain || subdomain === 'no-subdomain') {
+      return null;
+    }
+    
+    // Build URL based on environment
+    const host = window.location.hostname || '';
+    const cleanSubdomain = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    
+    if (host.includes('localhost') || host === '127.0.0.1') {
+      const devPort = process.env.REACT_APP_SUBDOMAIN_PORT || '8080';
+      return `http://${cleanSubdomain}.localhost:${devPort}`;
+    }
+    
+    // Production
+    const baseDomain = process.env.REACT_APP_PORTAL_BASE_DOMAIN || 'jacs.com';
+    const protocol = process.env.REACT_APP_PORTAL_PROTOCOL || 'https';
+    return `${protocol}://${cleanSubdomain}.${baseDomain}`;
+  };
+
+  // Helper to copy subdomain link to clipboard
+  const handleCopySubdomainLink = async (property) => {
+    const url = getSubdomainUrl(property);
+    if (!url) {
+      setError('Subdomain URL not available for this property');
+      return;
+    }
+    
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 3000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+      // Fallback: create a temporary textarea
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 3000);
+      } catch (e) {
+        setError('Failed to copy link. Please copy manually: ' + url);
+      }
+      document.body.removeChild(textarea);
+    }
+  };
 
   // Helper to get attachment URL (for download)
   const getAttachmentUrl = (attachmentId) => {
@@ -221,12 +288,13 @@ const Inquiries = ({ isOpen, onClose }) => {
             : inquiry.tenant?.name || 'Tenant',
           tenantEmail: inquiry.tenant?.email || '',
           tenantPhone: inquiry.tenant?.phone || inquiry.tenant?.phone_number || null,
-          tenant: inquiry.tenant || {},
-          property: inquiry.property?.title || inquiry.property?.building_name || 'Property',
-          propertyId: inquiry.property_id,
-          unitId: inquiry.unit_id || null,
-          unitName: inquiry.unit_name,
-          status: inquiry.status ? inquiry.status.toLowerCase() : inquiry.status,
+            tenant: inquiry.tenant || {},
+            property: inquiry.property?.title || inquiry.property?.building_name || 'Property',
+            propertyObj: inquiry.property || {}, // Store full property object for subdomain access
+            propertyId: inquiry.property_id,
+            unitId: inquiry.unit_id || null,
+            unitName: inquiry.unit_name,
+            status: inquiry.status ? inquiry.status.toLowerCase() : inquiry.status,
           messages: (function(){
             // Use new messages array from inquiry_messages table if available
             if (inquiry.messages && Array.isArray(inquiry.messages) && inquiry.messages.length > 0) {
@@ -269,19 +337,29 @@ const Inquiries = ({ isOpen, onClose }) => {
           })(),
           inquiry: inquiry
         }));
-        // Deduplicate by propertyId to ensure a single row per property
-        const dedup = [];
-        const seen = new Set();
-        for (const c of mapped) {
-          const key = String(c.propertyId);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          dedup.push(c);
-        }
-        setInquiries(dedup);
         
-        // Load attachments for all inquiries
-        for (const inquiry of dedup) {
+        // Aggressive deduplication by inquiry ID to prevent same inquiry appearing multiple times
+        // But allow multiple different inquiries for the same property/unit
+        const uniqueById = [];
+        const seenIds = new Set();
+        const seenKeys = new Set(); // Also check for duplicate keys
+        
+        mapped.forEach(inquiry => {
+          const id = inquiry.id;
+          const key = `inquiry-${id}`;
+          
+          // Only add if we haven't seen this ID before
+          if (id && !seenIds.has(id) && !seenKeys.has(key)) {
+            seenIds.add(id);
+            seenKeys.add(key);
+            uniqueById.push(inquiry);
+          }
+        });
+        
+        setInquiries(uniqueById);
+        
+        // Load attachments for all inquiries (use deduplicated list)
+        for (const inquiry of uniqueById) {
           try {
             const attData = await api.getInquiryAttachments(inquiry.id);
             if (attData && attData.attachments) {
@@ -306,6 +384,289 @@ const Inquiries = ({ isOpen, onClose }) => {
     hydratedRef.current = true;
   }, []);
 
+  // Real-time polling for new messages and attachments
+  useEffect(() => {
+    if (!isOpen) {
+      // Clear polling when modal closes
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      isPollingRef.current = false;
+      return;
+    }
+    
+    const pollInterval = 2000; // Poll every 2 seconds for better real-time feel
+    
+    // Update ref when selectedChatId changes
+    selectedChatIdRef.current = selectedChatId;
+    
+    const pollForUpdates = async () => {
+      // Prevent concurrent polling
+      if (isPollingRef.current) {
+        console.debug('Poll already in progress, skipping...');
+        return;
+      }
+      isPollingRef.current = true;
+      
+      try {
+        // Get fresh inquiry data
+        const response = await api.getManagerInquiries();
+        if (response && response.inquiries) {
+          // Map the new data same way as loadInquiries
+          const mapped = response.inquiries.map(inquiry => ({
+            id: inquiry.id,
+            tenantName: inquiry.tenant?.first_name && inquiry.tenant?.last_name 
+              ? `${inquiry.tenant.first_name} ${inquiry.tenant.last_name}` 
+              : inquiry.tenant?.name || 'Tenant',
+            tenantEmail: inquiry.tenant?.email || '',
+            tenantPhone: inquiry.tenant?.phone || inquiry.tenant?.phone_number || null,
+            tenant: inquiry.tenant || {},
+            property: inquiry.property?.title || inquiry.property?.building_name || 'Property',
+            propertyObj: inquiry.property || {}, // Store full property object for subdomain access
+            propertyId: inquiry.property_id,
+            unitId: inquiry.unit_id || null,
+            unitName: inquiry.unit_name,
+            status: inquiry.status ? inquiry.status.toLowerCase() : inquiry.status,
+            messages: (function(){
+              // Use new messages array from inquiry_messages table if available
+              if (inquiry.messages && Array.isArray(inquiry.messages) && inquiry.messages.length > 0) {
+                return inquiry.messages.map((msg, idx) => ({
+                  id: msg.id || `${inquiry.id}-${msg.sender}-${idx}`,
+                  sender: msg.sender || (msg.sender_id === inquiry.property_manager_id ? 'manager' : 'tenant'),
+                  text: msg.message || msg.text || '',
+                  time: formatMessageTime(msg.created_at),
+                  created_at: msg.created_at
+                }));
+              }
+              
+              // Fallback to old format parsing for backward compatibility
+              const regex = /\n\n--- New Message(?: \[(\d{10,})\])? ---\n/g;
+              const src = String(inquiry.message || '');
+              const chunks = []; let last = 0; let m;
+              while ((m = regex.exec(src)) !== null) {
+                const txt = src.slice(last, m.index);
+                if (txt) chunks.push({ text: txt, ts: null });
+                chunks.push({ text: null, ts: m[1] ? Number(m[1]) : null });
+                last = m.index + m[0].length;
+              }
+              const tail = src.slice(last); if (tail) chunks.push({ text: tail, ts: null });
+              const out = []; let pending = null; const now = Date.now();
+              for (const c of chunks) {
+                if (c.text === null) { pending = c.ts; continue; }
+                let cleanText = c.text.trim();
+                cleanText = cleanText.replace(/^---\s*New\s*Message\s*\[?\d*\]?\s*---\s*/i, '').trim();
+                if (!cleanText) continue;
+                out.push({ 
+                  id: `${inquiry.id}-t-${out.length}`, 
+                  sender: 'tenant', 
+                  text: cleanText, 
+                  time: formatMessageTime(pending ? new Date(pending) : new Date(now)),
+                  created_at: pending ? new Date(pending).toISOString() : new Date(now).toISOString()
+                });
+                pending = null;
+              }
+              return out;
+            })(),
+            inquiry: inquiry
+          }));
+          
+          // Update inquiries state - always update to ensure we have latest data
+          setInquiries(prevInquiries => {
+            // Check if there are actual changes
+            let hasChanges = false;
+            let shouldScroll = false;
+            
+            // Compare all inquiries and messages
+            for (const newInquiry of mapped) {
+              const oldInquiry = prevInquiries.find(i => i.id === newInquiry.id);
+              
+              if (!oldInquiry) {
+                hasChanges = true;
+                break; // New inquiry found
+              }
+              
+              // Check if message count changed
+              const oldMsgCount = oldInquiry.messages?.length || 0;
+              const newMsgCount = newInquiry.messages?.length || 0;
+              if (oldMsgCount !== newMsgCount) {
+                hasChanges = true;
+                // If this is the selected chat and we have new messages, scroll to bottom
+                if (newInquiry.id === selectedChatIdRef.current && newMsgCount > oldMsgCount) {
+                  shouldScroll = true;
+                }
+                break;
+              }
+              
+              // Check all message IDs to detect new messages (more thorough than just last message)
+              if (oldMsgCount > 0 && newMsgCount > 0) {
+                const oldMsgIds = new Set((oldInquiry.messages || []).map(m => String(m.id)));
+                const newMsgIds = new Set((newInquiry.messages || []).map(m => String(m.id)));
+                
+                // Check if any new message IDs don't exist in old messages
+                for (const newId of newMsgIds) {
+                  if (!oldMsgIds.has(newId)) {
+                    hasChanges = true;
+                    // If this is the selected chat, scroll to bottom
+                    if (newInquiry.id === selectedChatIdRef.current) {
+                      shouldScroll = true;
+                    }
+                    break;
+                  }
+                }
+                
+                if (hasChanges) break;
+              }
+              
+              // Check if status changed
+              if (oldInquiry.status !== newInquiry.status) {
+                hasChanges = true;
+                break;
+              }
+            }
+            
+            // Also check if any old inquiries are missing (deleted)
+            if (!hasChanges && prevInquiries.length !== mapped.length) {
+              hasChanges = true;
+            }
+            
+            // Update state if there are changes
+            if (hasChanges) {
+              // Aggressive deduplication by inquiry ID to prevent same inquiry appearing multiple times
+              const uniqueById = [];
+              const seenIds = new Set();
+              const seenKeys = new Set(); // Also check for duplicate keys
+              
+              mapped.forEach(inquiry => {
+                const id = inquiry.id;
+                const key = `inquiry-${id}`;
+                
+                // Only add if we haven't seen this ID before
+                if (id && !seenIds.has(id) && !seenKeys.has(key)) {
+                  seenIds.add(id);
+                  seenKeys.add(key);
+                  uniqueById.push(inquiry);
+                }
+              });
+              
+              // Schedule scroll after state update if needed
+              if (shouldScroll) {
+                // Use requestAnimationFrame to ensure DOM is updated
+                requestAnimationFrame(() => {
+                  setTimeout(() => {
+                    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  }, 50);
+                });
+              }
+              return uniqueById;
+            }
+            
+            return prevInquiries; // No changes
+          });
+          
+          // Update attachments for selected chat only
+          const currentSelectedId = selectedChatIdRef.current;
+          if (currentSelectedId) {
+            const selectedInquiry = mapped.find(i => i.id === currentSelectedId);
+            if (selectedInquiry) {
+              try {
+                const attData = await api.getInquiryAttachments(selectedInquiry.id);
+                if (attData && attData.attachments) {
+                  setAttachments(prev => {
+                    const currentAtts = prev[selectedInquiry.id] || [];
+                    const newAtts = attData.attachments || [];
+                    
+                    // Check if attachments changed
+                    if (currentAtts.length !== newAtts.length) {
+                      return { ...prev, [selectedInquiry.id]: newAtts };
+                    }
+                    
+                    // Check if any attachment IDs are different
+                    const currentIds = new Set(currentAtts.map(a => String(a.id)));
+                    const newIds = new Set(newAtts.map(a => String(a.id)));
+                    if (currentIds.size !== newIds.size || 
+                        [...currentIds].some(id => !newIds.has(id))) {
+                      return { ...prev, [selectedInquiry.id]: newAtts };
+                    }
+                    
+                    return prev; // No changes
+                  });
+                }
+              } catch (err) {
+                // Silently fail for attachment polling errors
+                console.debug(`Failed to poll attachments for inquiry ${selectedInquiry.id}:`, err);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Log errors but don't spam console
+        console.error('Polling error:', err);
+      } finally {
+        isPollingRef.current = false;
+      }
+    };
+    
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    
+    // Poll immediately, then set up interval
+    const startPolling = () => {
+      pollForUpdates();
+      pollingIntervalRef.current = setInterval(pollForUpdates, pollInterval);
+    };
+    
+    // Start polling after a small delay to avoid immediate duplicate requests
+    const timeoutId = setTimeout(startPolling, 500);
+    
+    // Cleanup interval on unmount or when modal closes
+    return () => {
+      clearTimeout(timeoutId);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      isPollingRef.current = false;
+    };
+  }, [isOpen, selectedChatId]); // Only depend on isOpen and selectedChatId
+
+  // Update ref when selectedChatId changes
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+  }, [selectedChatId]);
+
+  // Final safeguard: Ensure inquiries state never has duplicates
+  useEffect(() => {
+    if (inquiries.length > 0 && !deduplicatingRef.current) {
+      const seenIds = new Set();
+      let hasDuplicates = false;
+      const unique = inquiries.filter(inquiry => {
+        if (!inquiry.id) return false;
+        if (seenIds.has(inquiry.id)) {
+          hasDuplicates = true;
+          console.warn(`Duplicate inquiry detected and removed: ${inquiry.id}`);
+          return false;
+        }
+        seenIds.add(inquiry.id);
+        return true;
+      });
+      
+      // Only update if we actually found duplicates to prevent infinite loops
+      if (hasDuplicates && unique.length !== inquiries.length) {
+        deduplicatingRef.current = true;
+        // Removed duplicate inquiries (logging disabled in production)
+        setInquiries(unique);
+        // Reset flag after state update
+        setTimeout(() => {
+          deduplicatingRef.current = false;
+        }, 100);
+      }
+    }
+  }, [inquiries]);
+
   // Persist PM selection back so it opens same thread again
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -314,7 +675,7 @@ const Inquiries = ({ isOpen, onClose }) => {
 
   // Debug modal state
   useEffect(() => {
-    console.log('showAssignModal state changed:', showAssignModal);
+    // showAssignModal state changed (logging disabled in production)
   }, [showAssignModal]);
 
   const selectedChat = useMemo(() => inquiries.find(c => c.id === selectedChatId) || null, [inquiries, selectedChatId]);
@@ -345,6 +706,16 @@ const Inquiries = ({ isOpen, onClose }) => {
     
     return allItems;
   }, [selectedChat?.id, selectedChat?.messages, attachments, inquiries, getUnmatchedAttachments]);
+
+  // Auto-scroll to bottom when chat is selected or messages change
+  useEffect(() => {
+    if (selectedChatId && messagesEndRef.current) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [selectedChatId, chatMessagesWithAttachments.length]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedChat) return;
@@ -403,14 +774,14 @@ const Inquiries = ({ isOpen, onClose }) => {
       const response = await api.uploadInquiryAttachments(selectedChat.id, selectedFiles);
       
       if (response && response.attachments) {
-        console.log('Uploaded attachments:', response.attachments);
+        // Uploaded attachments (logging disabled in production)
         // Update attachments for this inquiry immediately
         setAttachments(prev => {
           const updated = {
             ...prev,
             [selectedChat.id]: [...(prev[selectedChat.id] || []), ...response.attachments]
           };
-          console.log('Updated attachments state:', updated);
+          // Updated attachments state (logging disabled in production)
           return updated;
         });
         setSelectedFiles([]);
@@ -637,11 +1008,15 @@ const Inquiries = ({ isOpen, onClose }) => {
                   <p className="text-sm mt-1">Inquiries will appear here when tenants contact you about your properties.</p>
                 </div>
                 ) : (
-                inquiries.map((inquiry) => (
+                inquiries.filter((inquiry, index, self) => 
+                  // Additional deduplication: ensure each ID appears only once
+                  index === self.findIndex(i => i.id === inquiry.id)
+                ).map((inquiry) => (
                   <div
-                    key={inquiry.id}
+                    key={`inquiry-${inquiry.id}`}
                     onClick={() => {
                       setSelectedChatId(inquiry.id);
+                      setCopiedLink(false); // Reset copied state when switching inquiries
                       if (inquiry.unread_count > 0) {
                         markAsRead(inquiry.id);
                       }
@@ -724,9 +1099,44 @@ const Inquiries = ({ isOpen, onClose }) => {
                           </button>
                         )}
                         {selectedChat.status?.toLowerCase() === 'assigned' && (
-                          <span className="bg-green-500 text-white px-3 py-2 rounded-lg text-sm font-semibold">
-                            ✓ ASSIGNED
-                          </span>
+                          <div className="flex items-center space-x-2">
+                            <span className="bg-green-500 text-white px-3 py-2 rounded-lg text-sm font-semibold">
+                              ✓ ASSIGNED
+                            </span>
+                            {(() => {
+                              // Try multiple paths to get property object
+                              const property = selectedChat.propertyObj || 
+                                             selectedChat.inquiry?.property || 
+                                             (selectedChat.inquiry?.property_id ? { id: selectedChat.inquiry.property_id } : null);
+                              const subdomainUrl = getSubdomainUrl(property);
+                              
+                              if (!subdomainUrl) return null;
+                              
+                              return (
+                                <button
+                                  onClick={() => handleCopySubdomainLink(property)}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+                                  title="Copy subdomain link to send to tenant"
+                                >
+                                  {copiedLink ? (
+                                    <>
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                      </svg>
+                                      <span>Copied!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                                      </svg>
+                                      <span>Copy Link</span>
+                                    </>
+                                  )}
+                                </button>
+                              );
+                            })()}
+                          </div>
                         )}
                         {selectedChat.status?.toLowerCase() === 'closed' && (
                           <span className="bg-gray-400 text-white px-3 py-2 rounded-lg text-sm font-semibold">
@@ -941,6 +1351,8 @@ const Inquiries = ({ isOpen, onClose }) => {
                         <p>No messages yet. The tenant is waiting for your response!</p>
                       </div>
                     )}
+                    {/* Scroll anchor for auto-scroll to bottom */}
+                    <div ref={messagesEndRef} />
                   </div>
 
 
@@ -1033,8 +1445,13 @@ const Inquiries = ({ isOpen, onClose }) => {
                   <p className="text-sm mt-1">New tenant inquiries will appear here.</p>
                 </div>
               ) : (
-                inquiries.filter(i => i.status === 'new' || i.status === 'pending').map((inquiry) => (
-                  <div key={inquiry.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                inquiries.filter(i => i.status === 'new' || i.status === 'pending')
+                  .filter((inquiry, index, self) => 
+                    // Additional deduplication: ensure each ID appears only once
+                    index === self.findIndex(i => i.id === inquiry.id)
+                  )
+                  .map((inquiry) => (
+                  <div key={`new-inquiry-${inquiry.id}`} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start space-x-4">
                       {inquiry.property?.images?.[0] ? (
                         <img

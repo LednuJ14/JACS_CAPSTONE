@@ -45,11 +45,10 @@ const DocumentManagement = () => {
       setLoading(true);
       setError('');
       const response = await apiService.adminDocuments();
-      console.log('Raw documents response:', response);
+      // Raw documents response (logging disabled in production)
       
       const documents = response.documents || [];
-      console.log('Documents count:', documents.length);
-      console.log('Documents data:', documents);
+      // Documents count and data (logging disabled in production)
       
       // Remove duplicates based on document ID, property ID, and file name combination
       // Use a Map to track unique documents more efficiently
@@ -81,7 +80,7 @@ const DocumentManagement = () => {
       const uniqueDocuments = Array.from(documentMap.values());
       
       if (duplicateCount.count > 0) {
-        console.log(`Removed ${duplicateCount.count} duplicate document(s). Unique documents: ${uniqueDocuments.length}`);
+        // Removed duplicate documents (logging disabled in production)
       }
       
       // Mark documents with blob URLs as not downloadable
@@ -97,7 +96,7 @@ const DocumentManagement = () => {
         };
       });
       
-      console.log('Unique documents count:', documentsWithFlags.length);
+      // Unique documents count (logging disabled in production)
       setDocuments(documentsWithFlags);
     } catch (error) {
       console.error('Error fetching documents:', error);
@@ -498,7 +497,7 @@ const DocumentManagement = () => {
                         <div className="text-sm font-medium text-black">{document.property_title || document.propertyTitle || 'Unknown Property'}</div>
                         <div className="text-sm text-gray-500">
                           ID: {document.property_id || document.propertyId || 'N/A'}
-                          {document.property_subdomain && ` • ${document.property_subdomain}.localhost`}
+                          {document.property_subdomain && ` • ${document.property_subdomain} (localhost:8080)`}
                         </div>
                       </div>
                     </td>
@@ -834,7 +833,7 @@ const DocumentManagement = () => {
                               }
                             } catch (e) {
                               // Cross-origin or other iframe access error - this is normal for PDFs
-                              console.log('PDF iframe loaded (cross-origin check skipped)');
+                              // PDF iframe loaded (logging disabled in production)
                             }
                           }}
                         />

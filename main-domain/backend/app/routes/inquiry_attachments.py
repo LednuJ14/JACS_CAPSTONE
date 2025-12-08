@@ -55,7 +55,49 @@ def ensure_upload_directory(inquiry_id):
 @inquiry_attachments_bp.route('/<int:inquiry_id>/attachments', methods=['POST'])
 @auth_required
 def upload_attachment(current_user, inquiry_id):
-    """Upload one or more files to an inquiry."""
+    """
+    Upload inquiry attachments
+    ---
+    tags:
+      - Inquiry Attachments
+    summary: Upload files to an inquiry
+    description: Upload one or more files (images, videos, documents) to an inquiry. Both tenant and manager can upload.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: inquiry_id
+        type: integer
+        required: true
+        description: The inquiry ID
+      - in: formData
+        name: files
+        type: file
+        required: true
+        description: One or more files to upload (max 50MB per file)
+    responses:
+      201:
+        description: Files uploaded successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            attachments:
+              type: array
+              items:
+                type: object
+      400:
+        description: Validation error or no files provided
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - No access to this inquiry
+      404:
+        description: Inquiry not found
+      500:
+        description: Server error
+    """
     try:
         # Verify inquiry exists and user has access using raw SQL to avoid relationship issues
         from sqlalchemy import text
@@ -215,7 +257,49 @@ def upload_attachment(current_user, inquiry_id):
 @inquiry_attachments_bp.route('/<int:inquiry_id>/attachments', methods=['GET'])
 @auth_required
 def get_attachments(current_user, inquiry_id):
-    """Get all attachments for an inquiry."""
+    """
+    Get inquiry attachments
+    ---
+    tags:
+      - Inquiry Attachments
+    summary: Get all attachments for an inquiry
+    description: Retrieve all attachments (files) associated with an inquiry
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: inquiry_id
+        type: integer
+        required: true
+        description: The inquiry ID
+    responses:
+      200:
+        description: Attachments retrieved successfully
+        schema:
+          type: object
+          properties:
+            attachments:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  file_name:
+                    type: string
+                  file_type:
+                    type: string
+                  file_size:
+                    type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Inquiry not found
+      500:
+        description: Server error
+    """
     try:
         # Verify inquiry exists and user has access using raw SQL to avoid relationship issues
         from sqlalchemy import text
@@ -297,7 +381,35 @@ def get_attachments(current_user, inquiry_id):
 @inquiry_attachments_bp.route('/attachments/<int:attachment_id>', methods=['GET'])
 @auth_required
 def download_attachment(current_user, attachment_id):
-    """Download a specific attachment."""
+    """
+    Download inquiry attachment
+    ---
+    tags:
+      - Inquiry Attachments
+    summary: Download a specific attachment file
+    description: Download a specific attachment file from an inquiry
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: attachment_id
+        type: integer
+        required: true
+        description: The attachment ID
+    responses:
+      200:
+        description: File downloaded successfully
+        schema:
+          type: file
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Attachment not found
+      500:
+        description: Server error
+    """
     try:
         from sqlalchemy import text
         
@@ -393,7 +505,38 @@ def download_attachment(current_user, attachment_id):
 @inquiry_attachments_bp.route('/attachments/<int:attachment_id>', methods=['DELETE'])
 @auth_required
 def delete_attachment(current_user, attachment_id):
-    """Delete (soft delete) an attachment."""
+    """
+    Delete inquiry attachment
+    ---
+    tags:
+      - Inquiry Attachments
+    summary: Delete an attachment (soft delete)
+    description: Soft delete an attachment. Only uploader, tenant, or manager can delete.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: attachment_id
+        type: integer
+        required: true
+        description: The attachment ID
+    responses:
+      200:
+        description: Attachment deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      404:
+        description: Attachment not found
+      500:
+        description: Server error
+    """
     try:
         attachment = InquiryAttachment.query.get(attachment_id)
         if not attachment:

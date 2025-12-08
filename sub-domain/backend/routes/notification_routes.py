@@ -42,7 +42,46 @@ def get_current_tenant():
 @notification_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_notifications():
-    """Get notifications for the current user (tenant or property manager)."""
+    """
+    Get notifications
+    ---
+    tags:
+      - Notifications
+    summary: Get notifications for the current user
+    description: Retrieve notifications for the current user (tenant or property manager)
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: unread_only
+        type: boolean
+    responses:
+      200:
+        description: Notifications retrieved successfully
+        schema:
+          type: object
+          properties:
+            notifications:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -171,7 +210,28 @@ def get_notifications():
 @notification_bp.route('/unread-count', methods=['GET'])
 @jwt_required()
 def get_unread_count():
-    """Get count of unread notifications for the current user (tenant or property manager)."""
+    """
+    Get unread count
+    ---
+    tags:
+      - Notifications
+    summary: Get count of unread notifications
+    description: Get count of unread notifications for the current user (tenant or property manager)
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Unread count retrieved successfully
+        schema:
+          type: object
+          properties:
+            unread_count:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -224,7 +284,38 @@ def get_unread_count():
 @notification_bp.route('/<int:notification_id>', methods=['GET'])
 @jwt_required()
 def get_notification(notification_id):
-    """Get a specific notification."""
+    """
+    Get notification by ID
+    ---
+    tags:
+      - Notifications
+    summary: Get a specific notification
+    description: Retrieve a specific notification by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: notification_id
+        type: integer
+        required: true
+        description: The notification ID
+    responses:
+      200:
+        description: Notification retrieved successfully
+        schema:
+          type: object
+          properties:
+            notification:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Notification not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -247,7 +338,38 @@ def get_notification(notification_id):
 @notification_bp.route('/<int:notification_id>/read', methods=['PUT'])
 @jwt_required()
 def mark_as_read(notification_id):
-    """Mark a notification as read."""
+    """
+    Mark notification as read
+    ---
+    tags:
+      - Notifications
+    summary: Mark a notification as read
+    description: Mark a notification as read
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: notification_id
+        type: integer
+        required: true
+        description: The notification ID
+    responses:
+      200:
+        description: Notification marked as read successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            notification:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: Notification not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -276,7 +398,38 @@ def mark_as_read(notification_id):
 @notification_bp.route('/<int:notification_id>/unread', methods=['PUT'])
 @jwt_required()
 def mark_as_unread(notification_id):
-    """Mark a notification as unread."""
+    """
+    Mark notification as unread
+    ---
+    tags:
+      - Notifications
+    summary: Mark a notification as unread
+    description: Mark a notification as unread
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: notification_id
+        type: integer
+        required: true
+        description: The notification ID
+    responses:
+      200:
+        description: Notification marked as unread successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            notification:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: Notification not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -305,7 +458,30 @@ def mark_as_unread(notification_id):
 @notification_bp.route('/mark-all-read', methods=['PUT'])
 @jwt_required()
 def mark_all_as_read():
-    """Mark all notifications as read for the current user."""
+    """
+    Mark all notifications as read
+    ---
+    tags:
+      - Notifications
+    summary: Mark all notifications as read
+    description: Mark all notifications as read for the current user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: All notifications marked as read successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            count:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -370,7 +546,36 @@ def mark_all_as_read():
 @notification_bp.route('/<int:notification_id>', methods=['DELETE'])
 @jwt_required()
 def delete_notification(notification_id):
-    """Delete a notification."""
+    """
+    Delete notification
+    ---
+    tags:
+      - Notifications
+    summary: Delete a notification
+    description: Delete a notification
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: notification_id
+        type: integer
+        required: true
+        description: The notification ID
+    responses:
+      200:
+        description: Notification deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      404:
+        description: Notification not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -397,7 +602,30 @@ def delete_notification(notification_id):
 @notification_bp.route('/delete-all-read', methods=['DELETE'])
 @jwt_required()
 def delete_all_read():
-    """Delete all read notifications for the current user."""
+    """
+    Delete all read notifications
+    ---
+    tags:
+      - Notifications
+    summary: Delete all read notifications
+    description: Delete all read notifications for the current user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: All read notifications deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            count:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:

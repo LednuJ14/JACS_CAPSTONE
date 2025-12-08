@@ -59,7 +59,7 @@ def create_app(config_name=None):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8080",
-        "http://127.0.0.1:8081"
+        "http://127.0.0.1:8081",
     ]
     
     # Regex pattern for localhost subdomains (for manual validation)
@@ -202,6 +202,19 @@ def create_app(config_name=None):
         },
         "basePath": "/",
         "schemes": ["http", "https"],
+        "securityDefinitions": {
+            "Bearer": {
+                "type": "apiKey",
+                "name": "Authorization",
+                "in": "header",
+                "description": "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\""
+            }
+        },
+        "security": [
+            {
+                "Bearer": []
+            }
+        ]
     }
 
     swagger_config = {

@@ -122,7 +122,49 @@ def require_role(allowed_roles):
 @billing_bp.route('/bills', methods=['GET'])
 @jwt_required()
 def get_bills():
-    """Get all bills for the current property context."""
+    """
+    Get bills
+    ---
+    tags:
+      - Billing
+    summary: Get all bills for the current property context
+    description: Retrieve bills filtered by user's role and property context
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+      - in: query
+        name: tenant_id
+        type: integer
+    responses:
+      200:
+        description: Bills retrieved successfully
+        schema:
+          type: object
+          properties:
+            bills:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -253,7 +295,57 @@ def get_bills():
 @billing_bp.route('/bills', methods=['POST'])
 @require_role(['MANAGER'])
 def create_bill(current_user):
-    """Create a new bill (Property Manager only)."""
+    """
+    Create bill
+    ---
+    tags:
+      - Billing
+    summary: Create a new bill
+    description: Create a new bill. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - tenant_id
+            - amount
+            - due_date
+            - bill_type
+          properties:
+            tenant_id:
+              type: integer
+            amount:
+              type: number
+            due_date:
+              type: string
+              format: date
+            bill_type:
+              type: string
+            description:
+              type: string
+    responses:
+      201:
+        description: Bill created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            bill:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         if not data:
@@ -429,7 +521,58 @@ def create_bill(current_user):
 @billing_bp.route('/bills/<int:bill_id>', methods=['PUT'])
 @require_role(['MANAGER'])
 def update_bill(current_user, bill_id):
-    """Update a bill (Property Manager only)."""
+    """
+    Update bill
+    ---
+    tags:
+      - Billing
+    summary: Update a bill
+    description: Update bill information. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: bill_id
+        type: integer
+        required: true
+        description: The bill ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            amount:
+              type: number
+            due_date:
+              type: string
+              format: date
+            bill_type:
+              type: string
+            description:
+              type: string
+            status:
+              type: string
+    responses:
+      200:
+        description: Bill updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            bill:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Bill not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         if not data:
@@ -552,7 +695,38 @@ def update_bill(current_user, bill_id):
 @billing_bp.route('/bills/<int:bill_id>', methods=['DELETE'])
 @require_role(['MANAGER'])
 def delete_bill(current_user, bill_id):
-    """Delete a bill (Property Manager only)."""
+    """
+    Delete bill
+    ---
+    tags:
+      - Billing
+    summary: Delete a bill
+    description: Delete a bill. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: bill_id
+        type: integer
+        required: true
+        description: The bill ID
+    responses:
+      200:
+        description: Bill deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Bill not found
+      500:
+        description: Server error
+    """
     try:
         # Get bill
         bill = Bill.query.get(bill_id)
@@ -622,7 +796,51 @@ def delete_bill(current_user, bill_id):
 @billing_bp.route('/bills/<int:bill_id>/submit-payment', methods=['POST'])
 @jwt_required()
 def submit_payment_proof(bill_id):
-    """Submit proof of payment for a bill (Tenant)."""
+    """
+    Submit payment proof
+    ---
+    tags:
+      - Billing
+    summary: Submit proof of payment for a bill
+    description: Submit proof of payment for a bill. Tenant only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: bill_id
+        type: integer
+        required: true
+        description: The bill ID
+      - in: formData
+        name: proof_file
+        type: file
+        required: true
+        description: Payment proof file (image or PDF)
+      - in: formData
+        name: notes
+        type: string
+        description: Additional notes
+    responses:
+      200:
+        description: Payment proof submitted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            payment:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Tenant access required
+      404:
+        description: Bill not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -740,7 +958,40 @@ def submit_payment_proof(bill_id):
 @billing_bp.route('/payments/<int:payment_id>/approve', methods=['POST'])
 @require_role(['MANAGER'])
 def approve_payment(current_user, payment_id):
-    """Approve a payment proof (Property Manager only)."""
+    """
+    Approve payment
+    ---
+    tags:
+      - Billing
+    summary: Approve a payment proof
+    description: Approve a payment proof. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: payment_id
+        type: integer
+        required: true
+        description: The payment ID
+    responses:
+      200:
+        description: Payment approved successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            payment:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Payment not found
+      500:
+        description: Server error
+    """
     try:
         payment = Payment.query.get(payment_id)
         if not payment:
@@ -831,7 +1082,48 @@ def approve_payment(current_user, payment_id):
 @billing_bp.route('/payments/<int:payment_id>/reject', methods=['POST'])
 @require_role(['MANAGER'])
 def reject_payment(current_user, payment_id):
-    """Reject a payment proof (Property Manager only)."""
+    """
+    Reject payment
+    ---
+    tags:
+      - Billing
+    summary: Reject a payment proof
+    description: Reject a payment proof. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: payment_id
+        type: integer
+        required: true
+        description: The payment ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            reason:
+              type: string
+              description: Reason for rejection
+    responses:
+      200:
+        description: Payment rejected successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            payment:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Payment not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json() or {}
         payment = Payment.query.get(payment_id)
@@ -905,7 +1197,49 @@ def reject_payment(current_user, payment_id):
 @billing_bp.route('/payments', methods=['GET'])
 @jwt_required()
 def get_payments():
-    """Get payments for bills (filtered by user role)."""
+    """
+    Get payments
+    ---
+    tags:
+      - Billing
+    summary: Get payments for bills
+    description: Retrieve payments filtered by user's role
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+      - in: query
+        name: bill_id
+        type: integer
+    responses:
+      200:
+        description: Payments retrieved successfully
+        schema:
+          type: object
+          properties:
+            payments:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -983,7 +1317,38 @@ def get_payments():
 @billing_bp.route('/payments/<int:payment_id>', methods=['GET'])
 @jwt_required()
 def get_payment(payment_id):
-    """Get a specific payment."""
+    """
+    Get payment by ID
+    ---
+    tags:
+      - Billing
+    summary: Get a specific payment
+    description: Retrieve a specific payment by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: payment_id
+        type: integer
+        required: true
+        description: The payment ID
+    responses:
+      200:
+        description: Payment retrieved successfully
+        schema:
+          type: object
+          properties:
+            payment:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Payment not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -1014,7 +1379,40 @@ def get_payment(payment_id):
 @billing_bp.route('/dashboard', methods=['GET'])
 @jwt_required()
 def get_bills_dashboard():
-    """Get bills dashboard statistics."""
+    """
+    Get bills dashboard
+    ---
+    tags:
+      - Billing
+    summary: Get bills dashboard statistics
+    description: Retrieve billing dashboard statistics filtered by user's role
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Dashboard statistics retrieved successfully
+        schema:
+          type: object
+          properties:
+            total_bills:
+              type: integer
+            paid_bills:
+              type: integer
+            pending_bills:
+              type: integer
+            overdue_bills:
+              type: integer
+            total_amount:
+              type: number
+            paid_amount:
+              type: number
+            pending_amount:
+              type: number
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:

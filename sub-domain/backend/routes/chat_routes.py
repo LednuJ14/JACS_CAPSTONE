@@ -78,7 +78,46 @@ def get_property_id_from_request(data=None):
 @chat_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_chats():
-    """Get all chats for the current user (tenant or property manager)."""
+    """
+    Get chats
+    ---
+    tags:
+      - Chat
+    summary: Get all chats for the current user
+    description: Retrieve all chats for the current user (tenant or property manager)
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+    responses:
+      200:
+        description: Chats retrieved successfully
+        schema:
+          type: object
+          properties:
+            chats:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -301,7 +340,47 @@ def get_chats():
 @chat_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_chat():
-    """Create a new chat (tenant only)."""
+    """
+    Create chat
+    ---
+    tags:
+      - Chat
+    summary: Create a new chat
+    description: Create a new chat. Tenant only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - subject
+          properties:
+            subject:
+              type: string
+            message:
+              type: string
+    responses:
+      201:
+        description: Chat created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            chat:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Tenant access required
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -482,7 +561,42 @@ def create_chat():
 @chat_bp.route('/<int:chat_id>', methods=['GET'])
 @jwt_required()
 def get_chat(chat_id):
-    """Get a specific chat with messages."""
+    """
+    Get chat by ID
+    ---
+    tags:
+      - Chat
+    summary: Get a specific chat with messages
+    description: Retrieve a specific chat with its messages
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: chat_id
+        type: integer
+        required: true
+        description: The chat ID
+    responses:
+      200:
+        description: Chat retrieved successfully
+        schema:
+          type: object
+          properties:
+            chat:
+              type: object
+            messages:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Chat not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -665,7 +779,52 @@ def get_chat(chat_id):
 @chat_bp.route('/<int:chat_id>/messages', methods=['GET'])
 @jwt_required()
 def get_messages(chat_id):
-    """Get messages for a specific chat."""
+    """
+    Get chat messages
+    ---
+    tags:
+      - Chat
+    summary: Get messages for a specific chat
+    description: Retrieve messages for a specific chat with pagination
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: chat_id
+        type: integer
+        required: true
+        description: The chat ID
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 50
+    responses:
+      200:
+        description: Messages retrieved successfully
+        schema:
+          type: object
+          properties:
+            messages:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Chat not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -741,7 +900,52 @@ def get_messages(chat_id):
 @chat_bp.route('/<int:chat_id>/messages', methods=['POST'])
 @jwt_required()
 def send_message(chat_id):
-    """Send a message in a chat."""
+    """
+    Send message
+    ---
+    tags:
+      - Chat
+    summary: Send a message in a chat
+    description: Send a message in a chat
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: chat_id
+        type: integer
+        required: true
+        description: The chat ID
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+    responses:
+      201:
+        description: Message sent successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            chat_message:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Chat not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -814,7 +1018,38 @@ def send_message(chat_id):
 @chat_bp.route('/<int:chat_id>/read', methods=['PUT'])
 @jwt_required()
 def mark_chat_as_read(chat_id):
-    """Mark all messages in a chat as read."""
+    """
+    Mark chat as read
+    ---
+    tags:
+      - Chat
+    summary: Mark all messages in a chat as read
+    description: Mark all unread messages in a chat as read
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: chat_id
+        type: integer
+        required: true
+        description: The chat ID
+    responses:
+      200:
+        description: Chat marked as read successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Chat not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -873,7 +1108,51 @@ def mark_chat_as_read(chat_id):
 @chat_bp.route('/<int:chat_id>', methods=['PUT'])
 @jwt_required()
 def update_chat(chat_id):
-    """Update chat (status, subject, etc.)."""
+    """
+    Update chat
+    ---
+    tags:
+      - Chat
+    summary: Update chat information
+    description: Update chat status, subject, etc.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: chat_id
+        type: integer
+        required: true
+        description: The chat ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            subject:
+              type: string
+            status:
+              type: string
+    responses:
+      200:
+        description: Chat updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            chat:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Chat not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -930,7 +1209,28 @@ def update_chat(chat_id):
 @chat_bp.route('/unread-count', methods=['GET'])
 @jwt_required()
 def get_unread_count():
-    """Get total unread message count for current user."""
+    """
+    Get unread count
+    ---
+    tags:
+      - Chat
+    summary: Get total unread message count
+    description: Get total unread message count for current user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Unread count retrieved successfully
+        schema:
+          type: object
+          properties:
+            unread_count:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:

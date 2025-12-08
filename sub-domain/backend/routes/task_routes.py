@@ -22,7 +22,46 @@ def get_current_user():
 @task_bp.route('/my-tasks', methods=['GET'])
 @jwt_required()
 def get_my_tasks():
-    """Get tasks assigned to the current staff member."""
+    """
+    Get my tasks
+    ---
+    tags:
+      - Tasks
+    summary: Get tasks assigned to the current staff member
+    description: Retrieve tasks assigned to the current staff member
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+    responses:
+      200:
+        description: Tasks retrieved successfully
+        schema:
+          type: object
+          properties:
+            tasks:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -54,7 +93,52 @@ def get_my_tasks():
 @task_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_tasks():
-    """Get tasks filtered by user's role and permissions, and property_id from subdomain."""
+    """
+    Get tasks
+    ---
+    tags:
+      - Tasks
+    summary: Get tasks filtered by user's role
+    description: Get tasks filtered by user's role and permissions, and property_id from subdomain
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+      - in: query
+        name: priority
+        type: string
+      - in: query
+        name: assigned_to
+        type: integer
+    responses:
+      200:
+        description: Tasks retrieved successfully
+        schema:
+          type: object
+          properties:
+            tasks:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -264,7 +348,38 @@ def get_tasks():
 @task_bp.route('/<int:task_id>', methods=['GET'])
 @jwt_required()
 def get_task(task_id):
-    """Get a specific task by ID."""
+    """
+    Get task by ID
+    ---
+    tags:
+      - Tasks
+    summary: Get a specific task by ID
+    description: Retrieve a specific task by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: task_id
+        type: integer
+        required: true
+        description: The task ID
+    responses:
+      200:
+        description: Task retrieved successfully
+        schema:
+          type: object
+          properties:
+            task:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Task not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -320,7 +435,57 @@ def get_task(task_id):
 @task_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_task():
-    """Create a new task."""
+    """
+    Create task
+    ---
+    tags:
+      - Tasks
+    summary: Create a new task
+    description: Create a new task. Property Manager or Staff can create tasks.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - title
+            - description
+          properties:
+            title:
+              type: string
+            description:
+              type: string
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+            status:
+              type: string
+              enum: [pending, in_progress, completed, cancelled]
+            assigned_to:
+              type: integer
+            due_date:
+              type: string
+              format: date
+    responses:
+      201:
+        description: Task created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            task:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -427,7 +592,62 @@ def create_task():
 @task_bp.route('/<int:task_id>', methods=['PUT'])
 @jwt_required()
 def update_task(task_id):
-    """Update a task."""
+    """
+    Update task
+    ---
+    tags:
+      - Tasks
+    summary: Update a task
+    description: Update a task. Property Manager or assigned Staff can update tasks.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: task_id
+        type: integer
+        required: true
+        description: The task ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            title:
+              type: string
+            description:
+              type: string
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+            status:
+              type: string
+              enum: [pending, in_progress, completed, cancelled]
+            assigned_to:
+              type: integer
+            due_date:
+              type: string
+              format: date
+    responses:
+      200:
+        description: Task updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            task:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Task not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -572,7 +792,38 @@ def update_task(task_id):
 @task_bp.route('/<int:task_id>', methods=['DELETE'])
 @jwt_required()
 def delete_task(task_id):
-    """Delete a task."""
+    """
+    Delete task
+    ---
+    tags:
+      - Tasks
+    summary: Delete a task
+    description: Delete a task. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: task_id
+        type: integer
+        required: true
+        description: The task ID
+    responses:
+      200:
+        description: Task deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Task not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -635,7 +886,32 @@ def delete_task(task_id):
 @task_bp.route('/stats', methods=['GET'])
 @jwt_required()
 def get_task_stats():
-    """Get task statistics."""
+    """
+    Get task statistics
+    ---
+    tags:
+      - Tasks
+    summary: Get task statistics
+    description: Retrieve task statistics filtered by user's role and property
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Task statistics retrieved successfully
+        schema:
+          type: object
+          properties:
+            total:
+              type: integer
+            by_status:
+              type: object
+            by_priority:
+              type: object
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -710,7 +986,34 @@ def get_task_stats():
 @task_bp.route('/enums', methods=['GET'])
 @jwt_required()
 def get_task_enums():
-    """Get available task statuses and priorities."""
+    """
+    Get task enums
+    ---
+    tags:
+      - Tasks
+    summary: Get available task statuses and priorities
+    description: Retrieve available task statuses and priorities
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Task enums retrieved successfully
+        schema:
+          type: object
+          properties:
+            statuses:
+              type: array
+              items:
+                type: string
+            priorities:
+              type: array
+              items:
+                type: string
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         return jsonify({
             'statuses': [{'value': status.value, 'label': status.value.replace('_', ' ').title()} for status in TaskStatus],

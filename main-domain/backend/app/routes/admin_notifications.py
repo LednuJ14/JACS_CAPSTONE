@@ -14,7 +14,32 @@ admin_notifications_bp = Blueprint('admin_notifications', __name__)
 @admin_notifications_bp.route('/', methods=['GET'])
 @admin_required
 def get_admin_notifications(current_user):
-    """Get all notifications for the current admin user."""
+    """
+    Get admin notifications
+    ---
+    tags:
+      - Admin Notifications
+    summary: Get all notifications for the admin
+    description: Retrieve all notifications for the authenticated admin user
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Notifications retrieved successfully
+        schema:
+          type: object
+          properties:
+            notifications:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         # For now, admins see system notifications and activity logs
         # In the future, this could be expanded to show notifications about actions they've taken

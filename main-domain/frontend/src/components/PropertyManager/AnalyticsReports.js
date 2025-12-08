@@ -360,7 +360,7 @@ const AnalyticsReports = () => {
                               </td>
                               <td className="px-6 py-6 whitespace-nowrap text-sm text-gray-600">
                                 {property.portal_subdomain ? (
-                                  <span className="font-medium text-gray-900">{property.portal_subdomain}.localhost:3000</span>
+                                  <span className="font-medium text-gray-900">{property.portal_subdomain ? `localhost:8080` : 'N/A'}</span>
                                 ) : (
                                   <span className="text-gray-400">Not configured</span>
                                 )}

@@ -25,6 +25,8 @@ import DocumentManagement from './components/Admin/DocumentManagement';
 import ManagerDashboard from './components/PropertyManager/Dashboard';
 import UpgradePlanModal from './components/PropertyManager/UpgradePlanModal';
 import ApiService from './services/api';
+import logger from './utils/logger';
+import ErrorBoundary from './components/ErrorBoundary';
   
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -94,7 +96,7 @@ function App() {
             // For manager and tenant, 'dashboard' is correct, so don't change it
           }
           
-          console.log('Session restored:', { role: savedRole, userId, currentPage });
+          logger.debug('Session restored:', { role: savedRole, userId, currentPage });
           
           // Check subscription for property managers after session restore
           // Show modal on every page load/refresh if on Free Plan
@@ -107,7 +109,7 @@ function App() {
                 const planName = subscription?.plan?.name || '';
                 const monthlyPrice = subscription?.plan?.monthly_price || 0;
                 
-                console.log('Subscription check on session restore:', { 
+                logger.debug('Subscription check on session restore:', { 
                   planName, 
                   monthlyPrice, 
                   subscription: subscription?.plan 
@@ -119,22 +121,22 @@ function App() {
                                   (Number(monthlyPrice) === 0);
                 
                 if (isFreePlan) {
-                  console.log('User is on Free Plan, showing upgrade modal');
+                  logger.debug('User is on Free Plan, showing upgrade modal');
                   // Always show modal on page load/refresh for Free Plan users
                   // Clear any previous dismissal to ensure it shows
                   const dismissedKey = `upgrade_modal_dismissed_${subscription?.id || 'none'}`;
                   sessionStorage.removeItem(dismissedKey);
                   setShowUpgradeModal(true);
                 } else {
-                  console.log('User is not on Free Plan, plan:', planName);
+                  logger.debug('User is not on Free Plan, plan:', planName);
                 }
               } catch (error) {
-                console.error('Error checking subscription on session restore:', error);
+                logger.error('Error checking subscription on session restore:', error);
               }
             }, 2000);
           }
         } else {
-          console.log('No existing session found');
+          logger.debug('No existing session found');
         }
       } catch (error) {
         console.error('Error checking session:', error);
@@ -183,7 +185,7 @@ function App() {
           const planName = subscription?.plan?.name || '';
           const monthlyPrice = subscription?.plan?.monthly_price || 0;
           
-          console.log('Subscription check:', { 
+          logger.debug('Subscription check:', { 
             planName, 
             monthlyPrice, 
             subscription: subscription?.plan,
@@ -199,7 +201,7 @@ function App() {
           
           // Show modal if user is on Free Plan
           if (isFreePlan) {
-            console.log('User is on Free Plan, showing upgrade modal');
+            logger.debug('User is on Free Plan, showing upgrade modal');
             // Check if this is a new login (was not authenticated before, or role changed)
             const isNewLogin = !prevAuthenticated || (prevUserRole !== 'manager');
             
@@ -207,7 +209,7 @@ function App() {
               // New login detected - show modal and clear any previous dismissal
               const dismissedKey = `upgrade_modal_dismissed_${subscription?.id || 'none'}`;
               sessionStorage.removeItem(dismissedKey);
-              console.log('New login detected, showing modal');
+              logger.debug('New login detected, showing modal');
               setShowUpgradeModal(true);
             } else {
               // Same session - check if modal was dismissed
@@ -215,15 +217,15 @@ function App() {
               const wasDismissed = sessionStorage.getItem(dismissedKey);
               
               if (!wasDismissed) {
-                console.log('Modal not dismissed, showing modal');
+                logger.debug('Modal not dismissed, showing modal');
                 setShowUpgradeModal(true);
               } else {
-                console.log('Modal was dismissed in this session');
+                logger.debug('Modal was dismissed in this session');
               }
             }
           } else {
             // User has upgraded, hide modal and clear dismissal flag
-            console.log('User is not on Free Plan, hiding modal');
+            logger.debug('User is not on Free Plan, hiding modal');
             setShowUpgradeModal(false);
             if (subscription?.id) {
               sessionStorage.removeItem(`upgrade_modal_dismissed_${subscription.id}`);
@@ -278,7 +280,7 @@ function App() {
       setPrevAuthenticated(false);
       setPrevUserRole('');
       
-      console.log('User logged out, session cleared');
+      logger.debug('User logged out, session cleared');
       return;
     }
     setCurrentPage(nextPage);
@@ -524,26 +526,28 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      <Header
-        currentPage={currentPage}
-        onPageChange={handlePageChange}
-        isAuthenticated={isAuthenticated}
-        userRole={userRole}
-      />
-      <main className="flex-1 container mx-auto px-4 py-6 max-w-7xl">
-        {renderContent()}
-      </main>
-      <Footer />
-      {/* Upgrade Plan Modal - only show for property managers */}
-      {isAuthenticated && userRole === 'manager' && (
-        <UpgradePlanModal
-          isOpen={showUpgradeModal}
-          onClose={handleCloseUpgradeModal}
-          onUpgrade={handleUpgradeClick}
+    <ErrorBoundary>
+      <div className="min-h-screen bg-white flex flex-col">
+        <Header
+          currentPage={currentPage}
+          onPageChange={handlePageChange}
+          isAuthenticated={isAuthenticated}
+          userRole={userRole}
         />
-      )}
-    </div>
+        <main className="flex-1 container mx-auto px-4 py-6 max-w-7xl">
+          {renderContent()}
+        </main>
+        <Footer />
+        {/* Upgrade Plan Modal - only show for property managers */}
+        {isAuthenticated && userRole === 'manager' && (
+          <UpgradePlanModal
+            isOpen={showUpgradeModal}
+            onClose={handleCloseUpgradeModal}
+            onUpgrade={handleUpgradeClick}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 

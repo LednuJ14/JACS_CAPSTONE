@@ -17,7 +17,30 @@ def allowed_file(filename):
 @property_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_properties():
-    """Get the current property for the subdomain context."""
+    """
+    Get property
+    ---
+    tags:
+      - Properties
+    summary: Get the current property for the subdomain context
+    description: Retrieve the current property based on subdomain context
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Property retrieved successfully
+        schema:
+          type: object
+          properties:
+            property:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         
@@ -87,7 +110,36 @@ def get_properties():
 @property_bp.route('/<int:property_id>/display-settings', methods=['GET'])
 @jwt_required()
 def get_display_settings(property_id):
-    """Get display settings for a property."""
+    """
+    Get display settings
+    ---
+    tags:
+      - Properties
+    summary: Get display settings for a property
+    description: Retrieve display settings for a property
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+    responses:
+      200:
+        description: Display settings retrieved successfully
+        schema:
+          type: object
+          properties:
+            display_settings:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         
@@ -150,7 +202,53 @@ def get_display_settings(property_id):
 @property_bp.route('/<int:property_id>/display-settings', methods=['PUT'])
 @jwt_required()
 def update_display_settings(property_id):
-    """Update display settings for a property."""
+    """
+    Update display settings
+    ---
+    tags:
+      - Properties
+    summary: Update display settings for a property
+    description: Update display settings for a property. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            primary_color:
+              type: string
+            secondary_color:
+              type: string
+            logo_url:
+              type: string
+    responses:
+      200:
+        description: Display settings updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            display_settings:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         
@@ -226,7 +324,47 @@ def update_display_settings(property_id):
 @property_bp.route('/<int:property_id>/logo', methods=['POST'])
 @jwt_required()
 def upload_logo(property_id):
-    """Upload logo for a property."""
+    """
+    Upload logo
+    ---
+    tags:
+      - Properties
+    summary: Upload logo for a property
+    description: Upload logo for a property. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: formData
+        name: logo
+        type: file
+        required: true
+        description: Logo image file
+    responses:
+      200:
+        description: Logo uploaded successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            logo_url:
+              type: string
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         property_obj = Property.query.get(property_id)
@@ -345,7 +483,34 @@ def upload_logo(property_id):
 
 @property_bp.route('/<int:property_id>/logo/<filename>', methods=['GET'])
 def get_logo(property_id, filename):
-    """Serve logo file."""
+    """
+    Get logo
+    ---
+    tags:
+      - Properties
+    summary: Serve logo file
+    description: Serve logo file for a property (public endpoint)
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: path
+        name: filename
+        type: string
+        required: true
+        description: The logo filename
+    responses:
+      200:
+        description: Logo file
+        schema:
+          type: file
+      404:
+        description: Logo not found
+      500:
+        description: Server error
+    """
     try:
         property_obj = Property.query.get(property_id)
         if not property_obj:
@@ -360,7 +525,53 @@ def get_logo(property_id, filename):
 @property_bp.route('/<int:property_id>/units', methods=['GET'])
 @jwt_required()
 def get_property_units(property_id):
-    """Get all units for a property."""
+    """
+    Get property units
+    ---
+    tags:
+      - Properties
+    summary: Get all units for a property
+    description: Retrieve all units for a property
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: property_id
+        type: integer
+        required: true
+        description: The property ID
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+    responses:
+      200:
+        description: Units retrieved successfully
+        schema:
+          type: object
+          properties:
+            units:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         
@@ -442,7 +653,31 @@ def get_property_units(property_id):
 
 @property_bp.route('/public/by-subdomain', methods=['GET'])
 def get_property_by_subdomain():
-    """Get property data by subdomain (public endpoint for login page)."""
+    """
+    Get property by subdomain
+    ---
+    tags:
+      - Properties
+    summary: Get property data by subdomain
+    description: Get property data by subdomain (public endpoint for login page)
+    parameters:
+      - in: query
+        name: subdomain
+        type: string
+        description: Property subdomain
+    responses:
+      200:
+        description: Property retrieved successfully
+        schema:
+          type: object
+          properties:
+            property:
+              type: object
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         # Get subdomain from request headers or query params
         subdomain = request.headers.get('X-Subdomain') or request.args.get('subdomain')

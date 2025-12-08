@@ -27,37 +27,67 @@ tenant_inquiries_bp = Blueprint('tenant_inquiries', __name__)
 @tenant_inquiries_bp.route('/', methods=['GET'])
 @tenant_required
 def get_tenant_inquiries(current_user):
-    """Get all inquiries created by the current tenant."""
+    """
+    Get tenant inquiries
+    ---
+    tags:
+      - Tenant Inquiries
+    summary: Get all inquiries created by the tenant
+    description: Retrieve all inquiries created by the authenticated tenant
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Inquiries retrieved successfully
+        schema:
+          type: object
+          properties:
+            inquiries:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  property_id:
+                    type: integer
+                  status:
+                    type: string
+                  messages:
+                    type: array
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         from sqlalchemy import text
         rows = db.session.execute(text(
             """
-            SELECT i.id, i.property_id, i.unit_id, i.tenant_id, i.property_manager_id,
+            SELECT DISTINCT i.id, i.property_id, i.unit_id, i.tenant_id, i.property_manager_id,
                    i.inquiry_type, i.status, i.message,
                    i.created_at, i.updated_at, i.read_at,
                    COALESCE(u.unit_name, p.title, p.building_name) AS unit_name
             FROM inquiries i
             LEFT JOIN units u ON u.id = i.unit_id
             LEFT JOIN properties p ON p.id = i.property_id
-            LEFT JOIN users tenant ON tenant.id = i.tenant_id
-            INNER JOIN (
-              SELECT MAX(created_at) AS max_created_at, property_id
-              FROM inquiries
-              WHERE tenant_id = :tid AND (is_archived IS NULL OR is_archived = 0)
-              GROUP BY property_id
-            ) latest
-            ON i.property_id = latest.property_id AND i.created_at = latest.max_created_at
             WHERE i.tenant_id = :tid
+              AND (i.is_archived IS NULL OR i.is_archived = 0)
             ORDER BY i.created_at DESC
             """
         ), { 'tid': current_user.id }).mappings().all()
         
+        # Additional deduplication by ID in case DISTINCT doesn't catch everything
+        seen_ids = set()
+        unique_rows = []
+        for row in rows:
+            row_id = row.get('id')
+            if row_id and row_id not in seen_ids:
+                seen_ids.add(row_id)
+                unique_rows.append(row)
+        
         inquiry_data = []
-        seen_props = set()
-        for inquiry in rows:
-            if inquiry.get('property_id') in seen_props:
-                continue
-            seen_props.add(inquiry.get('property_id'))
+        for inquiry in unique_rows:
             # Get property info
             prop_row = db.session.execute(text(
                 "SELECT id, title, building_name, address, city, province FROM properties WHERE id = :pid"
@@ -158,7 +188,51 @@ def get_tenant_inquiries(current_user):
 @tenant_inquiries_bp.route('/start', methods=['POST'])
 @tenant_required
 def start_inquiry(current_user):
-    """Start a new inquiry for a property."""
+    """
+    Start new inquiry
+    ---
+    tags:
+      - Tenant Inquiries
+    summary: Start a new inquiry for a property
+    description: Create a new inquiry for a property or specific unit
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - property_id
+            - message
+          properties:
+            property_id:
+              type: integer
+            unit_id:
+              type: integer
+              description: Optional specific unit ID
+            message:
+              type: string
+    responses:
+      200:
+        description: Inquiry created or existing inquiry returned
+        schema:
+          type: object
+          properties:
+            inquiry:
+              type: object
+      201:
+        description: New inquiry created
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      404:
+        description: Property not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         if not data:
@@ -350,7 +424,50 @@ def start_inquiry(current_user):
 @tenant_inquiries_bp.route('/send-message', methods=['POST'])
 @tenant_required
 def send_message(current_user):
-    """Send a message in an existing inquiry."""
+    """
+    Send message in inquiry
+    ---
+    tags:
+      - Tenant Inquiries
+    summary: Send a message in an existing inquiry
+    description: Send a message response in an existing inquiry conversation
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - inquiry_id
+            - message
+          properties:
+            inquiry_id:
+              type: integer
+            message:
+              type: string
+    responses:
+      200:
+        description: Message sent successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            success:
+              type: boolean
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Not your inquiry
+      404:
+        description: Inquiry not found
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json()
         if not data:
@@ -406,7 +523,44 @@ def send_message(current_user):
 @tenant_inquiries_bp.route('/<int:inquiry_id>', methods=['GET'])
 @tenant_required
 def get_inquiry_details(current_user, inquiry_id):
-    """Get detailed information about a specific inquiry."""
+    """
+    Get inquiry details
+    ---
+    tags:
+      - Tenant Inquiries
+    summary: Get detailed information about a specific inquiry
+    description: Retrieve detailed information about a specific inquiry including all messages and property details
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: inquiry_id
+        type: integer
+        required: true
+        description: The inquiry ID
+    responses:
+      200:
+        description: Inquiry details retrieved successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            property_id:
+              type: integer
+            status:
+              type: string
+            messages:
+              type: array
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Not your inquiry
+      404:
+        description: Inquiry not found
+      500:
+        description: Server error
+    """
     try:
         inquiry = Inquiry.query.get(inquiry_id)
         if not inquiry:

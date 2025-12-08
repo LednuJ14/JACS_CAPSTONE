@@ -16,10 +16,36 @@ manager_properties_bp = Blueprint('manager_properties', __name__)
 @manager_properties_bp.route('/companies', methods=['GET'])
 @manager_required
 def list_properties(current_user):
-    """List properties (building-level).
-
-    Optional query params:
-      - owner_id: filter by owner/manager user id
+    """
+    List properties (Manager)
+    ---
+    tags:
+      - Manager Properties
+    summary: List all properties owned by the manager
+    description: Retrieve all properties (building-level) owned by the authenticated property manager
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: owner_id
+        type: integer
+        description: Filter by owner/manager user ID
+    responses:
+      200:
+        description: Properties retrieved successfully
+        schema:
+          type: object
+          properties:
+            properties:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Manager access required
+      500:
+        description: Server error
     """
     try:
         from sqlalchemy import text
@@ -76,7 +102,57 @@ def list_properties(current_user):
 @manager_properties_bp.route('/companies', methods=['POST'])
 @manager_required
 def create_property(current_user):
-    """Create a Property from modal submission."""
+    """
+    Create property (Manager)
+    ---
+    tags:
+      - Manager Properties
+    summary: Create a new property
+    description: Create a new property listing. Subject to subscription plan property limits.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - building_name
+            - address
+            - contact_person
+            - contact_email
+            - contact_phone
+          properties:
+            building_name:
+              type: string
+            address:
+              type: string
+            contact_person:
+              type: string
+            contact_email:
+              type: string
+            contact_phone:
+              type: string
+    responses:
+      201:
+        description: Property created successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            message:
+              type: string
+      400:
+        description: Validation error or property limit reached
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden
+      500:
+        description: Server error
+    """
     try:
         data = request.get_json(force=True)
         required = ['building_name', 'address', 'contact_person', 'contact_email', 'contact_phone']
@@ -411,11 +487,14 @@ def get_my_properties(current_user):
             for row in rows:
                 try:
                     unit_counts = unit_counts_map.get(row.id, {})
+                    # computed_total_units is the actual count of units created
                     computed_total_units = unit_counts.get('total_units')
                     occupied_units = unit_counts.get('occupied_units', 0)
                     vacant_units = unit_counts.get('vacant_units')
+                    # row.total_units is the property's unit limit (set when property was created)
+                    property_unit_limit = row.total_units or 0
                     if computed_total_units is None:
-                        computed_total_units = row.total_units or 0
+                        computed_total_units = 0  # No units created yet
                     if vacant_units is None:
                         vacant_units = max(0, computed_total_units - occupied_units)
                     
@@ -468,7 +547,8 @@ def get_my_properties(current_user):
                         },
                         'city': row.city or '',  # Keep for backward compatibility
                         'province': row.province or '',  # Keep for backward compatibility
-                        'total_units': computed_total_units or 0,
+                        'total_units': property_unit_limit,  # Property's unit limit from database (set when property was created)
+                        'actual_units': computed_total_units,  # Actual count of units created
                         'occupied_units': occupied_units,
                         'vacant_units': vacant_units,
                         'owner_id': row.owner_id,
@@ -491,12 +571,13 @@ def get_my_properties(current_user):
                         'amenities': amenities
                     }
                     prop_dict['unit_counts'] = unit_counts if unit_counts else {
-                        'total_units': prop_dict['total_units'],
+                        'total_units': property_unit_limit,  # Property limit
+                        'actual_units': computed_total_units,  # Actual count
                         'occupied_units': occupied_units,
                         'vacant_units': vacant_units
                     }
                     properties_data.append(prop_dict)
-                    current_app.logger.info(f"Successfully converted property {row.id} (status: {row.status}) units: {computed_total_units}/{occupied_units}/{vacant_units}")
+                    current_app.logger.info(f"Successfully converted property {row.id} (status: {row.status}) limit: {property_unit_limit}, actual: {computed_total_units}, occupied: {occupied_units}, vacant: {vacant_units}")
                 except Exception as e:
                     current_app.logger.error(f"Error converting row {row.id}: {e}")
                     import traceback
@@ -641,7 +722,7 @@ def add_property(current_user):
         if preferred_subdomain:
             response_data['subdomain_info'] = {
                 'subdomain': preferred_subdomain,
-                'future_url': f"{preferred_subdomain}.localhost:8080",
+                'future_url': f"localhost:8080",
                 'note': "Subdomain will be active after admin approval"
             }
         
@@ -699,7 +780,7 @@ def set_property_subdomain(current_user, property_id):
         return jsonify({
             'message': 'Subdomain set successfully',
             'subdomain': subdomain,
-            'portal_url': f'{subdomain}.localhost:8080'
+            'portal_url': f'localhost:8080'
         }), 200
         
     except Exception as e:
@@ -876,15 +957,22 @@ def update_property(current_user, property_id):
         if not update_fields:
             return jsonify({'message': 'No fields to update'}), 400
         
-        # Build and execute update query
+        # Build and execute update query - update_fields are safe (whitelisted column names)
+        # Using parameterized query for values
+        set_clause = ', '.join(update_fields)  # Safe - only whitelisted columns
         update_sql = text(f"""
             UPDATE properties 
-            SET {', '.join(update_fields)}
+            SET {set_clause}
             WHERE id = :property_id
         """)
         
-        db.session.execute(update_sql, update_values)
-        db.session.commit()
+        try:
+            db.session.execute(update_sql, update_values)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f'Error updating property: {str(e)}', exc_info=True)
+            raise
         
         # Get updated property data
         select_sql = text("""

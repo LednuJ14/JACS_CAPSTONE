@@ -63,17 +63,18 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
       return status === 'occupied' || status === 'rented';
     }).length;
     
-    setProperties(prev => prev.map(p => {
-      if (p.id === propertyId) {
-        return {
-          ...p,
-          vacantUnits: vacant,
-          occupiedUnits: occupied,
-          totalUnits: propertyUnits.length // Total units = actual count of units added to this property
-        };
-      }
-      return p;
-    }));
+        setProperties(prev => prev.map(p => {
+          if (p.id === propertyId) {
+            return {
+              ...p,
+              maxUnits: p.maxUnits || 0, // Preserve the property's unit limit from database
+              vacantUnits: vacant,
+              occupiedUnits: occupied,
+              totalUnits: propertyUnits.length // Actual count of units currently added
+            };
+          }
+          return p;
+        }));
   }, [listings]);
 
   const fetchUnitsForProperty = async (property) => {
@@ -197,9 +198,10 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             if (p.id === property.id) {
               return {
                 ...p,
+                maxUnits: p.maxUnits || 0, // Preserve the property's unit limit from database
                 vacantUnits: vacant,
                 occupiedUnits: occupied,
-                totalUnits: propertyUnits.length // Total units = actual count of units added to this property
+                totalUnits: propertyUnits.length // Actual count of units currently added
               };
             }
             return p;
@@ -243,6 +245,7 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
     if (value.startsWith('http://') || value.startsWith('https://')) return value;
     
     // Our backend uploads directory (serve directly from backend instance root)
+    // Always use HTTP for localhost backend (backend doesn't support HTTPS)
     if (value.startsWith('/uploads/')) return `http://localhost:5000${value}`;
     
     // Backend relative path for API
@@ -326,7 +329,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
             id: it.id,
             name: it.building_name || it.title || `Property ${it.id}`,
             address: addressStr,
-            totalUnits: 0, // Will be calculated from actual units
+            maxUnits: it.total_units || 0, // Property's unit limit from database (set when property was created)
+            totalUnits: 0, // Actual count of units (will be calculated from actual units)
             occupiedUnits: 0, // Will be calculated from actual units
             vacantUnits: 0, // Will be calculated from actual units
             monthlyRevenue: 0, // Can be calculated from units if needed
@@ -357,7 +361,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
               
               return {
                 ...property,
-                totalUnits: totalUnits, // Use actual count of units
+                maxUnits: property.maxUnits || 0, // Preserve the property's unit limit from database
+                totalUnits: totalUnits, // Actual count of units currently added
                 vacantUnits: vacant,
                 occupiedUnits: occupied
               };
@@ -677,7 +682,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
     // Check if adding another unit would exceed the property's total units limit
     const currentUnitsForProperty = listings.filter(l => l.propertyId === selectedProperty.id);
     const currentUnitCount = currentUnitsForProperty.length;
-    const maxUnits = selectedProperty.totalUnits || 0;
+    // Use maxUnits (the limit set when property was created) instead of totalUnits (actual count)
+    const maxUnits = selectedProperty.maxUnits || selectedProperty.totalUnits || 0;
     
     if (maxUnits > 0 && currentUnitCount >= maxUnits) {
       alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);
@@ -1014,7 +1020,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
               onClick={() => {
                 const currentUnitsForProperty = listings.filter(l => l.propertyId === selectedProperty.id);
                 const currentUnitCount = currentUnitsForProperty.length;
-                const maxUnits = selectedProperty.totalUnits || 0;
+                // Use maxUnits (the limit set when property was created) instead of totalUnits (actual count)
+                const maxUnits = selectedProperty.maxUnits || selectedProperty.totalUnits || 0;
                 
                 if (maxUnits > 0 && currentUnitCount >= maxUnits) {
                   alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);
@@ -1371,7 +1378,8 @@ const ManagerRentSpace = ({ onPageChange = () => {} }) => {
                   }
                   const currentUnitsForProperty = listings.filter(l => l.propertyId === selectedProperty.id);
                   const currentUnitCount = currentUnitsForProperty.length;
-                  const maxUnits = selectedProperty.totalUnits || 0;
+                  // Use maxUnits (the limit set when property was created) instead of totalUnits (actual count)
+                  const maxUnits = selectedProperty.maxUnits || selectedProperty.totalUnits || 0;
                   
                   if (maxUnits > 0 && currentUnitCount >= maxUnits) {
                     alert(`Cannot add more units. This property is limited to ${maxUnits} unit${maxUnits !== 1 ? 's' : ''}. You currently have ${currentUnitCount} unit${currentUnitCount !== 1 ? 's' : ''}.`);

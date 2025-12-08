@@ -17,7 +17,48 @@ def allowed_file(filename):
 @user_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_users():
-    """Get list of users for the current property (property manager only)."""
+    """
+    Get users
+    ---
+    tags:
+      - Users
+    summary: Get list of users for the current property
+    description: Get list of users for the current property. Property manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: role
+        type: string
+    responses:
+      200:
+        description: Users retrieved successfully
+        schema:
+          type: object
+          properties:
+            users:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         claims = get_jwt()
         if claims.get('role') != 'property_manager':
@@ -114,7 +155,32 @@ def get_users():
 @user_bp.route('/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
-    """Get current user profile."""
+    """
+    Get profile
+    ---
+    tags:
+      - Users
+    summary: Get current user profile
+    description: Retrieve the current authenticated user's profile
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Profile retrieved successfully
+        schema:
+          type: object
+          properties:
+            user:
+              type: object
+            profile:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -131,7 +197,48 @@ def get_profile():
 @user_bp.route('/profile', methods=['PUT'])
 @jwt_required()
 def update_profile():
-    """Update current user profile."""
+    """
+    Update profile
+    ---
+    tags:
+      - Users
+    summary: Update current user profile
+    description: Update the current authenticated user's profile
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            first_name:
+              type: string
+            last_name:
+              type: string
+            phone_number:
+              type: string
+            address:
+              type: string
+    responses:
+      200:
+        description: Profile updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            user:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -175,7 +282,38 @@ def update_profile():
 @user_bp.route('/profile/image', methods=['POST'])
 @jwt_required()
 def upload_profile_image():
-    """Upload profile image for current user."""
+    """
+    Upload profile image
+    ---
+    tags:
+      - Users
+    summary: Upload profile image for current user
+    description: Upload profile image for the current authenticated user
+    security:
+      - Bearer: []
+    parameters:
+      - in: formData
+        name: image
+        type: file
+        required: true
+        description: Profile image file
+    responses:
+      200:
+        description: Profile image uploaded successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            image_url:
+              type: string
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -236,7 +374,29 @@ def upload_profile_image():
 
 @user_bp.route('/profile/image/<filename>', methods=['GET'])
 def get_profile_image(filename):
-    """Serve profile image file."""
+    """
+    Get profile image
+    ---
+    tags:
+      - Users
+    summary: Serve profile image file
+    description: Serve profile image file (public endpoint)
+    parameters:
+      - in: path
+        name: filename
+        type: string
+        required: true
+        description: The image filename
+    responses:
+      200:
+        description: Profile image file
+        schema:
+          type: file
+      404:
+        description: Image not found
+      500:
+        description: Server error
+    """
     try:
         upload_dir = os.path.join(current_app.instance_path, 'uploads', 'profile_images')
         return send_from_directory(upload_dir, filename)

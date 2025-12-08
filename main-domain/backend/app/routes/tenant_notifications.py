@@ -14,7 +14,45 @@ tenant_notifications_bp = Blueprint('tenant_notifications', __name__)
 @tenant_notifications_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
 def get_tenant_notifications(current_user):
-    """Get all notifications for the current tenant."""
+    """
+    Get tenant notifications
+    ---
+    tags:
+      - Tenant Notifications
+    summary: Get all notifications for the tenant
+    description: Retrieve all notifications for the authenticated tenant
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: limit
+        type: integer
+        description: Maximum number of notifications to return
+      - in: query
+        name: offset
+        type: integer
+        description: Number of notifications to skip
+      - in: query
+        name: unread_only
+        type: boolean
+        description: Return only unread notifications
+    responses:
+      200:
+        description: Notifications retrieved successfully
+        schema:
+          type: object
+          properties:
+            notifications:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         # Get query parameters
         limit = request.args.get('limit', type=int, default=50)
@@ -24,14 +62,21 @@ def get_tenant_notifications(current_user):
         # Use raw SQL to avoid enum conversion issues
         from sqlalchemy import text
         
-        # Build WHERE clause
-        where_clauses = ["user_id = :user_id", "is_deleted = 0"]
+        # Build WHERE clause using parameterized queries (safe - no user input in WHERE clause)
+        # All conditions are hardcoded or use parameters
+        where_conditions = ["user_id = :user_id", "is_deleted = 0"]
+        query_params = {
+            'user_id': current_user.id,
+            'limit': limit,
+            'offset': offset
+        }
+        
         if unread_only:
-            where_clauses.append("is_read = 0")
+            where_conditions.append("is_read = 0")
         
-        where_sql = " AND ".join(where_clauses)
+        where_sql = " AND ".join(where_conditions)
         
-        # Get notifications
+        # Get notifications - using parameterized query (where_sql is safe - only hardcoded conditions)
         notifications_query = text(f"""
             SELECT id, user_id, notification_type, title, message, is_read, 
                    related_entity_id, related_entity_type, created_at, read_at
@@ -41,21 +86,15 @@ def get_tenant_notifications(current_user):
             LIMIT :limit OFFSET :offset
         """)
         
-        notifications_rows = db.session.execute(notifications_query, {
-            'user_id': current_user.id,
-            'limit': limit,
-            'offset': offset
-        }).mappings().all()
+        notifications_rows = db.session.execute(notifications_query, query_params).mappings().all()
         
-        # Get total count
+        # Get total count - using parameterized query
         count_query = text(f"""
             SELECT COUNT(*) as total
             FROM notifications
             WHERE {where_sql}
         """)
-        total = db.session.execute(count_query, {
-            'user_id': current_user.id
-        }).scalar()
+        total = db.session.execute(count_query, {'user_id': current_user.id}).scalar()
         
         # Get unread count
         unread_query = text("""

@@ -12,6 +12,34 @@ admin_bp = Blueprint('admin', __name__)
 @admin_bp.route('/dashboard', methods=['GET'])
 @admin_required
 def get_dashboard_stats(current_user):
+    """
+    Get admin dashboard statistics
+    ---
+    tags:
+      - Admin
+    summary: Get dashboard statistics (Admin only)
+    description: Retrieve comprehensive statistics for the admin dashboard
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Dashboard statistics retrieved successfully
+        schema:
+          type: object
+          properties:
+            total_users:
+              type: integer
+            total_properties:
+              type: integer
+            total_subscriptions:
+              type: integer
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         data = AdminService().dashboard_stats(admin_user_id=current_user.id)
         return jsonify(data), 200
@@ -22,6 +50,24 @@ def get_dashboard_stats(current_user):
 
 @admin_bp.route('/health', methods=['GET'])
 def health_check():
+    """
+    Admin service health check
+    ---
+    tags:
+      - Admin
+    summary: Check admin service health
+    description: Returns the health status of the admin service
+    responses:
+      200:
+        description: Service is healthy
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+            service:
+              type: string
+    """
     return jsonify({'status': 'healthy', 'service': 'admin'}), 200
 
 
@@ -29,6 +75,41 @@ def health_check():
 @admin_bp.route('/subscription-plans', methods=['GET'])
 @admin_required
 def get_subscription_plans(current_user):
+    """
+    Get all subscription plans (Admin)
+    ---
+    tags:
+      - Admin
+    summary: List all subscription plans (Admin only)
+    description: Retrieve all subscription plans with statistics. Admin access required.
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Subscription plans retrieved successfully
+        schema:
+          type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  monthly_price:
+                    type: number
+                  is_active:
+                    type: boolean
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         current_app.logger.info('Fetching subscription plans...')
         
@@ -70,6 +151,52 @@ def get_subscription_plans(current_user):
 @admin_bp.route('/subscription-plans', methods=['POST'])
 @admin_required
 def create_subscription_plan(current_user):
+    """
+    Create subscription plan
+    ---
+    tags:
+      - Admin
+    summary: Create a new subscription plan (Admin only)
+    description: Create a new subscription plan with pricing and features
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+            - monthly_price
+          properties:
+            name:
+              type: string
+            slug:
+              type: string
+            monthly_price:
+              type: number
+            description:
+              type: string
+            features:
+              type: object
+    responses:
+      201:
+        description: Subscription plan created successfully
+        schema:
+          type: object
+          properties:
+            data:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         plan_data = request.get_json()
         data = SubscriptionsService().admin_create_plan(plan_data)
@@ -118,6 +245,54 @@ def create_subscription_plan(current_user):
 @admin_bp.route('/subscription-plans/<int:plan_id>', methods=['PUT'])
 @admin_required
 def update_subscription_plan(current_user, plan_id):
+    """
+    Update subscription plan
+    ---
+    tags:
+      - Admin
+    summary: Update an existing subscription plan (Admin only)
+    description: Update subscription plan details including pricing and features
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: plan_id
+        type: integer
+        required: true
+        description: The subscription plan ID
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+            monthly_price:
+              type: number
+            description:
+              type: string
+            is_active:
+              type: boolean
+    responses:
+      200:
+        description: Subscription plan updated successfully
+        schema:
+          type: object
+          properties:
+            data:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      404:
+        description: Plan not found
+      500:
+        description: Server error
+    """
     try:
         plan_data = request.get_json()
         data = SubscriptionsService().admin_update_plan(plan_id, plan_data)
@@ -166,6 +341,40 @@ def update_subscription_plan(current_user, plan_id):
 @admin_bp.route('/subscription-plans/<int:plan_id>', methods=['DELETE'])
 @admin_required
 def delete_subscription_plan(current_user, plan_id):
+    """
+    Delete subscription plan
+    ---
+    tags:
+      - Admin
+    summary: Delete a subscription plan (Admin only)
+    description: Delete a subscription plan. Cannot delete plans with active subscriptions.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: plan_id
+        type: integer
+        required: true
+        description: The subscription plan ID
+    responses:
+      200:
+        description: Subscription plan deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      400:
+        description: Cannot delete plan with active subscriptions
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      404:
+        description: Plan not found
+      500:
+        description: Server error
+    """
     try:
         data = SubscriptionsService().admin_delete_plan(plan_id)
         return jsonify(data), 200
@@ -457,7 +666,8 @@ def create_payment_transaction(current_user=None):
         db.session.commit()
         return jsonify({'message': 'Created', 'status': 'Pending'}), 201
     except Exception as e:
-        current_app.logger.error(f'Create payment transaction error: {e}')
+        db.session.rollback()
+        current_app.logger.error(f'Create payment transaction error: {e}', exc_info=True)
         return jsonify({'error': 'Failed to create'}), 500
 
 

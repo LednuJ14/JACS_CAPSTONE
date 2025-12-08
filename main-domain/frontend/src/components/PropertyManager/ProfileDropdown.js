@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ApiService from '../../services/api';
+import { getImageUrl } from '../../config/api';
 import defaultProfile from '../../assets/images/default_profile.png';
 import Inquiries from './Inquiries';
 import Settings from './Settings';
@@ -26,20 +27,21 @@ const ProfileDropdown = ({ onPageChange }) => {
         // Parse name into first and last name
         const fullName = p.name || '';
         const nameParts = fullName.split(' ', 2);
+        const imageUrl = p.avatar || p.profile_image_url;
         setProfileData({
           firstName: nameParts[0] || '',
           lastName: nameParts[1] || '',
-          profileImageUrl: p.avatar || p.profile_image_url || defaultProfile
+          profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile
         });
         
         // If no avatar in profile, try to get from /auth/me
         if (!p.avatar && !p.profile_image_url) {
           try {
             const meData = await ApiService.me();
-            const profileImageUrl = meData?.user?.profile_image_url || defaultProfile;
+            const imageUrl = meData?.user?.profile_image_url;
             setProfileData(prev => ({
               ...prev,
-              profileImageUrl
+              profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile
             }));
           } catch (e) {
             console.error('Failed to fetch profile image from /auth/me:', e);
@@ -57,10 +59,11 @@ const ProfileDropdown = ({ onPageChange }) => {
       const u = me?.user || {};
       const fullName = `${u.first_name || ''} ${u.last_name || ''}`.trim();
       const nameParts = fullName.split(' ', 2);
+      const imageUrl = u.profile_image_url;
       setProfileData({
         firstName: nameParts[0] || '',
         lastName: nameParts[1] || '',
-        profileImageUrl: u.profile_image_url || defaultProfile
+        profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile
       });
     } catch (e) {
       console.error('Fallback profile fetch error:', e);

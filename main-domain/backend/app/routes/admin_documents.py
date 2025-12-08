@@ -35,7 +35,32 @@ def get_document_folder(document_type):
 @admin_documents_bp.route('/documents', methods=['GET'])
 @admin_required
 def get_all_documents(current_user):
-    """Get all legal documents uploaded by property owners AND all documents from subdomain"""
+    """
+    Get all documents (Admin)
+    ---
+    tags:
+      - Admin Documents
+    summary: Get all legal documents
+    description: Retrieve all legal documents uploaded by property owners from both main domain and subdomain
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Documents retrieved successfully
+        schema:
+          type: object
+          properties:
+            documents:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         current_app.logger.info(f"Admin documents request - User: {current_user.id}")
         

@@ -101,6 +101,7 @@ const PropertyGrid = ({ filters = {} }) => {
         // No client-side filtering needed
         const cards = properties.map((property, index) => {
           const images = Array.isArray(property.images) ? property.images : [];
+          // Always use HTTP for localhost backend (backend doesn't support HTTPS)
           const normalizedImages = images.map((img) => {
             if (typeof img === 'string' && img.startsWith('/uploads/')) {
               return `http://localhost:5000${img}`;

@@ -16,7 +16,7 @@ class ApiService {
       this.propertyBaseURL = 'http://localhost:5001/api';
     }
     
-    this.mainDomainBaseURL =
+      this.mainDomainBaseURL =
       import.meta.env.VITE_MAIN_DOMAIN_API_URL ||
       'http://localhost:5000/api';
     // For subdomain, always default to property base URL
@@ -235,7 +235,29 @@ class ApiService {
     if (typeof window === 'undefined') return null;
     try {
       const hostname = window.location.hostname;
-      // Extract subdomain (e.g., "pat" from "pat.localhost")
+      
+      // First, check for subdomain in query parameters (for IP address access)
+      const urlParams = new URLSearchParams(window.location.search);
+      const subdomainParam = urlParams.get('subdomain');
+      if (subdomainParam) {
+        const subdomain = subdomainParam.toLowerCase();
+        // Try to get property_id from sessionStorage if available
+        const cached = sessionStorage.getItem('property_context');
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed?.property?.id) {
+              return parsed.property.id;
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+        // Return subdomain for backend to match (backend will handle matching)
+        return subdomain;
+      }
+      
+      // Extract subdomain from hostname (e.g., "pat" from "pat.localhost")
       const subdomainMatch = hostname.match(/^([a-zA-Z0-9-]+)\.localhost/);
       if (subdomainMatch) {
         const subdomain = subdomainMatch[1].toLowerCase();
@@ -410,8 +432,28 @@ class ApiService {
   async getPropertyBySubdomain(subdomain) {
     try {
       // Public endpoint - no auth required
-      const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-      const subdomainToUse = subdomain || hostname.split('.')[0];
+      let subdomainToUse = subdomain;
+      
+      // If no subdomain provided, try to get it from query parameter or hostname
+      if (!subdomainToUse) {
+        const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+        const subdomainParam = urlParams?.get('subdomain');
+        
+        if (subdomainParam) {
+          subdomainToUse = subdomainParam;
+        } else {
+          const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+          const hostnameSubdomain = hostname.split('.')[0];
+          // Only use hostname subdomain if it's not an IP address
+          if (hostnameSubdomain && hostnameSubdomain.toLowerCase() !== 'localhost' && !hostnameSubdomain.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            subdomainToUse = hostnameSubdomain;
+          }
+        }
+      }
+      
+      if (!subdomainToUse) {
+        return null;
+      }
       
       // Use query parameter only - no custom headers to avoid CORS issues
       const response = await fetch(`${this.propertyBaseURL}/properties/public/by-subdomain?subdomain=${encodeURIComponent(subdomainToUse)}`, {
@@ -454,10 +496,22 @@ class ApiService {
       
       if (propertyId) {
         // Try to get property by subdomain first
+        // Check query parameter first (for IP address access), then hostname
+        const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+        const subdomainParam = urlParams?.get('subdomain');
         const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-        const subdomain = hostname.split('.')[0];
         
-        if (subdomain && subdomain.toLowerCase() !== 'localhost') {
+        let subdomain = null;
+        if (subdomainParam) {
+          subdomain = subdomainParam.toLowerCase();
+        } else {
+          const hostnameSubdomain = hostname.split('.')[0];
+          if (hostnameSubdomain && hostnameSubdomain.toLowerCase() !== 'localhost' && !hostnameSubdomain.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            subdomain = hostnameSubdomain.toLowerCase();
+          }
+        }
+        
+        if (subdomain) {
           const property = await this.getPropertyBySubdomain(subdomain);
           if (property) {
             this.propertyContext = { property: property };

@@ -79,7 +79,69 @@ def can_view_announcement(user, announcement):
 @announcement_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_announcements():
-    """Get announcements filtered by user's role and target audience."""
+    """
+    Get announcements
+    ---
+    tags:
+      - Announcements
+    summary: Get announcements filtered by user's role
+    description: Retrieve announcements filtered by user's role and target audience with pagination
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: search
+        type: string
+      - in: query
+        name: type
+        type: string
+      - in: query
+        name: priority
+        type: string
+      - in: query
+        name: active
+        type: boolean
+        default: true
+      - in: query
+        name: pinned
+        type: boolean
+    responses:
+      200:
+        description: Announcements retrieved successfully
+        schema:
+          type: object
+          properties:
+            announcements:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+            current_page:
+              type: integer
+            per_page:
+              type: integer
+            has_next:
+              type: boolean
+            has_prev:
+              type: boolean
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -278,7 +340,38 @@ def get_announcements():
 @announcement_bp.route('/<int:announcement_id>', methods=['GET'])
 @jwt_required()
 def get_announcement(announcement_id):
-    """Get a specific announcement by ID."""
+    """
+    Get announcement by ID
+    ---
+    tags:
+      - Announcements
+    summary: Get a specific announcement
+    description: Retrieve a specific announcement by ID
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: announcement_id
+        type: integer
+        required: true
+        description: The announcement ID
+    responses:
+      200:
+        description: Announcement retrieved successfully
+        schema:
+          type: object
+          properties:
+            announcement:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Announcement not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:
@@ -300,7 +393,64 @@ def get_announcement(announcement_id):
 @announcement_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_announcement():
-    """Create a new announcement."""
+    """
+    Create announcement
+    ---
+    tags:
+      - Announcements
+    summary: Create a new announcement
+    description: Create a new announcement. Only property managers and staff can create announcements.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - title
+            - content
+          properties:
+            title:
+              type: string
+            content:
+              type: string
+            announcement_type:
+              type: string
+              enum: [general, maintenance, emergency, event]
+              default: general
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+              default: medium
+            property_id:
+              type: integer
+            is_published:
+              type: boolean
+              default: true
+            is_pinned:
+              type: boolean
+              default: false
+    responses:
+      201:
+        description: Announcement created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            announcement:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user or not can_manage_announcements(current_user):
@@ -452,7 +602,61 @@ def create_announcement():
 @announcement_bp.route('/<int:announcement_id>', methods=['PUT'])
 @jwt_required()
 def update_announcement(announcement_id):
-    """Update an existing announcement."""
+    """
+    Update announcement
+    ---
+    tags:
+      - Announcements
+    summary: Update an existing announcement
+    description: Update announcement information. Only property managers and staff can update announcements.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: announcement_id
+        type: integer
+        required: true
+        description: The announcement ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            title:
+              type: string
+            content:
+              type: string
+            announcement_type:
+              type: string
+              enum: [general, maintenance, emergency, event]
+            priority:
+              type: string
+              enum: [low, medium, high, urgent]
+            is_published:
+              type: boolean
+            is_pinned:
+              type: boolean
+    responses:
+      200:
+        description: Announcement updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            announcement:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Announcement not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user or not can_manage_announcements(current_user):
@@ -571,7 +775,38 @@ def update_announcement(announcement_id):
 @announcement_bp.route('/<int:announcement_id>', methods=['DELETE'])
 @jwt_required()
 def delete_announcement(announcement_id):
-    """Delete an announcement (soft delete by setting is_active to False)."""
+    """
+    Delete announcement
+    ---
+    tags:
+      - Announcements
+    summary: Delete an announcement
+    description: Delete an announcement (soft delete by setting is_published to False). Only property managers and staff can delete announcements.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: announcement_id
+        type: integer
+        required: true
+        description: The announcement ID
+    responses:
+      200:
+        description: Announcement deleted successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Announcement not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user or not can_manage_announcements(current_user):
@@ -637,7 +872,38 @@ def delete_announcement(announcement_id):
 @announcement_bp.route('/stats', methods=['GET'])
 @jwt_required()
 def get_announcement_stats():
-    """Get announcement statistics for dashboards."""
+    """
+    Get announcement statistics
+    ---
+    tags:
+      - Announcements
+    summary: Get announcement statistics for dashboards
+    description: Retrieve announcement statistics filtered by user's role
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Statistics retrieved successfully
+        schema:
+          type: object
+          properties:
+            total:
+              type: integer
+            published:
+              type: integer
+            unpublished:
+              type: integer
+            by_type:
+              type: object
+            by_priority:
+              type: object
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
+    """
     try:
         current_user = get_current_user()
         if not current_user:

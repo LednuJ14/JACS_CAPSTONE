@@ -84,9 +84,46 @@ def get_property_id_from_request(data=None):
 @jwt_required()
 def get_feedback():
     """
-    Get feedback for the current user.
-    - Tenants can only see their own feedback
-    - Property managers/staff can see all feedback for their property
+    Get feedback
+    ---
+    tags:
+      - Feedback
+    summary: Get feedback for the current user
+    description: Tenants can only see their own feedback. Property managers/staff can see all feedback for their property.
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        default: 1
+      - in: query
+        name: per_page
+        type: integer
+        default: 20
+      - in: query
+        name: status
+        type: string
+    responses:
+      200:
+        description: Feedback retrieved successfully
+        schema:
+          type: object
+          properties:
+            feedback:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            pages:
+              type: integer
+      401:
+        description: Unauthorized
+      404:
+        description: User not found
+      500:
+        description: Server error
     """
     try:
         user_id = get_jwt_identity()
@@ -214,8 +251,48 @@ def get_feedback():
 @jwt_required()
 def create_feedback():
     """
-    Create new feedback/complaint.
-    Only tenants can create feedback.
+    Create feedback
+    ---
+    tags:
+      - Feedback
+    summary: Create new feedback/complaint
+    description: Create new feedback/complaint. Only tenants can create feedback.
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - subject
+            - message
+          properties:
+            subject:
+              type: string
+            message:
+              type: string
+            category:
+              type: string
+    responses:
+      201:
+        description: Feedback created successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            feedback:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Tenant access required
+      500:
+        description: Server error
     """
     try:
         user_id = get_jwt_identity()
@@ -377,9 +454,36 @@ def create_feedback():
 @jwt_required()
 def get_feedback_detail(feedback_id):
     """
-    Get specific feedback by ID.
-    Tenants can only see their own feedback.
-    Property managers/staff can see all feedback for their property.
+    Get feedback by ID
+    ---
+    tags:
+      - Feedback
+    summary: Get specific feedback by ID
+    description: Tenants can only see their own feedback. Property managers/staff can see all feedback for their property.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: feedback_id
+        type: integer
+        required: true
+        description: The feedback ID
+    responses:
+      200:
+        description: Feedback retrieved successfully
+        schema:
+          type: object
+          properties:
+            feedback:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Access denied
+      404:
+        description: Feedback not found
+      500:
+        description: Server error
     """
     try:
         user_id = get_jwt_identity()
@@ -447,7 +551,51 @@ def get_feedback_detail(feedback_id):
 @feedback_bp.route('/<int:feedback_id>', methods=['PUT'])
 @jwt_required()
 def update_feedback(feedback_id):
-    """Update feedback status. Only property managers can update feedback status (staff cannot respond to tenant feedback)."""
+    """
+    Update feedback
+    ---
+    tags:
+      - Feedback
+    summary: Update feedback status
+    description: Update feedback status. Only property managers can update feedback status (staff cannot respond to tenant feedback).
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: feedback_id
+        type: integer
+        required: true
+        description: The feedback ID
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+            response:
+              type: string
+    responses:
+      200:
+        description: Feedback updated successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            feedback:
+              type: object
+      400:
+        description: Validation error
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      404:
+        description: Feedback not found
+      500:
+        description: Server error
+    """
     try:
         user_id = get_jwt_identity()
         try:
@@ -531,7 +679,32 @@ def update_feedback(feedback_id):
 @feedback_bp.route('/dashboard', methods=['GET'])
 @jwt_required()
 def get_feedback_dashboard():
-    """Get feedback dashboard statistics for property managers/staff."""
+    """
+    Get feedback dashboard
+    ---
+    tags:
+      - Feedback
+    summary: Get feedback dashboard statistics
+    description: Get feedback dashboard statistics for property managers/staff
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Dashboard statistics retrieved successfully
+        schema:
+          type: object
+          properties:
+            total:
+              type: integer
+            by_status:
+              type: object
+            by_category:
+              type: object
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         user_id = get_jwt_identity()
         try:

@@ -51,7 +51,43 @@ def _range_start(range_key: str) -> datetime:
 @admin_analytics_bp.route('/analytics', methods=['GET'])
 @admin_required
 def get_admin_analytics(current_user):
-    """Admin analytics aggregating data from all property managers and properties."""
+    """
+    Get admin analytics
+    ---
+    tags:
+      - Admin Analytics
+    summary: Get comprehensive analytics data (Admin only)
+    description: Retrieve aggregated analytics data from all property managers and properties
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: property
+        type: string
+        description: Filter by property ID or 'all'
+      - in: query
+        name: range
+        type: string
+        description: Date range (30days, 7days, etc.)
+    responses:
+      200:
+        description: Analytics data retrieved successfully
+        schema:
+          type: object
+          properties:
+            totalProperties:
+              type: integer
+            totalManagers:
+              type: integer
+            totalRevenue:
+              type: number
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin access required
+      500:
+        description: Server error
+    """
     try:
         property_filter = request.args.get('property', 'all')
         date_range = request.args.get('range', '30days')

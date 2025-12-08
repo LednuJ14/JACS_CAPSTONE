@@ -11,7 +11,55 @@ public_units_bp = Blueprint('public_units', __name__)
 
 @public_units_bp.route('/active', methods=['GET'])
 def get_active_units():
-    """Get all active/available units for tenant browsing using base tables."""
+    """
+    Get active units
+    ---
+    tags:
+      - Public Units
+    summary: Get all active/available units for tenant browsing
+    description: Retrieve a list of all active and available units that tenants can browse and inquire about
+    parameters:
+      - in: query
+        name: page
+        type: integer
+        description: Page number for pagination
+      - in: query
+        name: per_page
+        type: integer
+        description: Number of items per page
+      - in: query
+        name: search
+        type: string
+        description: Search term
+      - in: query
+        name: latitude
+        type: number
+        description: Latitude for location-based search
+      - in: query
+        name: longitude
+        type: number
+        description: Longitude for location-based search
+      - in: query
+        name: radius
+        type: number
+        description: Search radius in meters
+    responses:
+      200:
+        description: Active units retrieved successfully
+        schema:
+          type: object
+          properties:
+            units:
+              type: array
+              items:
+                type: object
+            total:
+              type: integer
+            page:
+              type: integer
+      500:
+        description: Server error
+    """
     try:
         params = request.args
         page = int(params.get('page', 1))

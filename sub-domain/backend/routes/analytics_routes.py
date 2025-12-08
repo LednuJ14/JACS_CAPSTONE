@@ -147,7 +147,32 @@ def require_role(allowed_roles):
 @analytics_bp.route('/dashboard', methods=['GET'])
 @jwt_required()
 def get_dashboard_data():
-    """Get dashboard data based on user role and property context."""
+    """
+    Get dashboard data
+    ---
+    tags:
+      - Analytics
+    summary: Get dashboard data based on user role
+    description: Get dashboard data based on user role and property context
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Dashboard data retrieved successfully
+        schema:
+          type: object
+          properties:
+            stats:
+              type: object
+            recent_activity:
+              type: array
+              items:
+                type: object
+      401:
+        description: Unauthorized
+      500:
+        description: Server error
+    """
     try:
         current_user_id = get_jwt_identity()
         claims = get_jwt()
@@ -889,7 +914,45 @@ def get_tenant_dashboard(user_id):
 @analytics_bp.route('/financial-summary', methods=['GET'])
 @jwt_required()
 def get_financial_summary():
-    """Get financial summary for property managers - property-specific."""
+    """
+    Get financial summary
+    ---
+    tags:
+      - Analytics
+    summary: Get financial summary for property managers
+    description: Get financial summary for property managers - property-specific
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: start_date
+        type: string
+        format: date
+      - in: query
+        name: end_date
+        type: string
+        format: date
+    responses:
+      200:
+        description: Financial summary retrieved successfully
+        schema:
+          type: object
+          properties:
+            total_revenue:
+              type: number
+            total_expenses:
+              type: number
+            net_income:
+              type: number
+            by_category:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         # Get property_id from request (subdomain, query param, header, or JWT)
         property_id = get_property_id_from_request()
@@ -1057,7 +1120,47 @@ def get_financial_summary():
 @analytics_bp.route('/occupancy-report', methods=['GET'])
 @jwt_required()
 def get_occupancy_report():
-    """Get occupancy report for property managers - property-specific."""
+    """
+    Get occupancy report
+    ---
+    tags:
+      - Analytics
+    summary: Get occupancy report for property managers
+    description: Get occupancy report for property managers - property-specific
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: start_date
+        type: string
+        format: date
+      - in: query
+        name: end_date
+        type: string
+        format: date
+    responses:
+      200:
+        description: Occupancy report retrieved successfully
+        schema:
+          type: object
+          properties:
+            total_units:
+              type: integer
+            occupied_units:
+              type: integer
+            vacant_units:
+              type: integer
+            occupancy_rate:
+              type: number
+            by_unit_type:
+              type: object
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         # Get property_id from request (subdomain, query param, header, or JWT)
         property_id = get_property_id_from_request()
@@ -1288,7 +1391,41 @@ def _get_analytics_data_for_report(property_id):
 @analytics_bp.route('/download/pdf', methods=['GET'])
 @jwt_required()
 def download_pdf_report():
-    """Download analytics report as PDF."""
+    """
+    Download PDF report
+    ---
+    tags:
+      - Analytics
+    summary: Download analytics report as PDF
+    description: Download analytics report as PDF. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: report_type
+        type: string
+        enum: [dashboard, financial, occupancy]
+        default: dashboard
+      - in: query
+        name: start_date
+        type: string
+        format: date
+      - in: query
+        name: end_date
+        type: string
+        format: date
+    responses:
+      200:
+        description: PDF report file
+        schema:
+          type: file
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     if not REPORTLAB_AVAILABLE:
         return jsonify({'error': 'PDF generation not available. Please install reportlab.'}), 503
     
@@ -1438,7 +1575,41 @@ def download_pdf_report():
 @analytics_bp.route('/download/excel', methods=['GET'])
 @jwt_required()
 def download_excel_report():
-    """Download analytics report as Excel."""
+    """
+    Download Excel report
+    ---
+    tags:
+      - Analytics
+    summary: Download analytics report as Excel
+    description: Download analytics report as Excel. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: report_type
+        type: string
+        enum: [dashboard, financial, occupancy]
+        default: dashboard
+      - in: query
+        name: start_date
+        type: string
+        format: date
+      - in: query
+        name: end_date
+        type: string
+        format: date
+    responses:
+      200:
+        description: Excel report file
+        schema:
+          type: file
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     if not OPENPYXL_AVAILABLE:
         return jsonify({'error': 'Excel generation not available. Please install openpyxl.'}), 503
     
@@ -1603,7 +1774,41 @@ def download_excel_report():
 @analytics_bp.route('/download/csv', methods=['GET'])
 @jwt_required()
 def download_csv_report():
-    """Download analytics report as CSV."""
+    """
+    Download CSV report
+    ---
+    tags:
+      - Analytics
+    summary: Download analytics report as CSV
+    description: Download analytics report as CSV. Property Manager only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: query
+        name: report_type
+        type: string
+        enum: [dashboard, financial, occupancy]
+        default: dashboard
+      - in: query
+        name: start_date
+        type: string
+        format: date
+      - in: query
+        name: end_date
+        type: string
+        format: date
+    responses:
+      200:
+        description: CSV report file
+        schema:
+          type: file
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property Manager access required
+      500:
+        description: Server error
+    """
     try:
         property_id = get_property_id_from_request()
         if not property_id:

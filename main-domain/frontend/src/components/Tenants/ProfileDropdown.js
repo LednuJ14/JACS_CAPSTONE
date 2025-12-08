@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ApiService from '../../services/api';
+import { getImageUrl } from '../../config/api';
 import defaultProfile from '../../assets/images/default_profile.png';
 import Inquiries from './Inquiries';
 import Profile from './Profile';
@@ -23,10 +24,11 @@ const ProfileDropdown = ({ onPageChange }) => {
       const data = await ApiService.getTenantProfile();
       const p = data?.profile || {};
       if (p && (p.first_name || p.email)) {
+        const imageUrl = p.profile_image_url;
         setProfileData({
           firstName: p.first_name || '',
           lastName: p.last_name || '',
-          profileImageUrl: p.profile_image_url || defaultProfile
+          profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile
         });
         return;
       }
@@ -38,10 +40,11 @@ const ProfileDropdown = ({ onPageChange }) => {
     try {
       const me = await ApiService.me();
       const u = me?.user || {};
+      const imageUrl = u.profile_image_url;
       setProfileData({
         firstName: u.first_name || '',
         lastName: u.last_name || '',
-        profileImageUrl: u.profile_image_url || defaultProfile
+        profileImageUrl: imageUrl ? getImageUrl(imageUrl) : defaultProfile
       });
     } catch (e) {
       console.error('Fallback profile fetch error:', e);

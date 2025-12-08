@@ -100,16 +100,8 @@ const BillingPayment = () => {
       setCurrentPlan(planRes?.subscription || planRes);
       const history = historyRes?.billing_history || historyRes || [];
       
-      // Apply cancelled status to entries that were previously cancelled (persist across refreshes)
-      const historyWithCancelled = history.map(b => {
-        if (recentlyCancelledIds.has(b.id)) {
-          return { ...b, status: 'cancelled' };
-        }
-        return b;
-      });
-      
-      // Create a new array to ensure React detects the state change
-      setBillingHistory([...historyWithCancelled]);
+      // Use the real status from the database - don't override with local state
+      setBillingHistory(Array.isArray(history) ? history : []);
       // Payment methods removed
       
       // Normalize plans from backend and sort by monthly price
@@ -140,33 +132,9 @@ const BillingPayment = () => {
     }
   };
 
-  // Track recently cancelled billing IDs to prevent them from being treated as pending
-  // Load from localStorage on mount to persist across page refreshes
-  const [recentlyCancelledIds, setRecentlyCancelledIds] = useState(() => {
-    try {
-      const stored = localStorage.getItem('cancelled_billing_ids');
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-  
-  // Save to localStorage whenever cancelled IDs change
-  useEffect(() => {
-    try {
-      localStorage.setItem('cancelled_billing_ids', JSON.stringify(Array.from(recentlyCancelledIds)));
-    } catch (error) {
-      console.error('Failed to save cancelled billing IDs:', error);
-    }
-  }, [recentlyCancelledIds]);
-  
-  // Check if there's a pending billing (excluding recently cancelled ones)
+  // Check if there's a pending billing (use real database status)
   const hasPendingBilling = () => {
     return billingHistory.some(billing => {
-      // Skip if this was recently cancelled
-      if (recentlyCancelledIds.has(billing.id)) {
-        return false;
-      }
       const status = (billing.status || '').toLowerCase();
       return status === 'pending';
     });
@@ -257,82 +225,14 @@ const BillingPayment = () => {
       }
 
       // Close modal first
-      const cancelledBillingId = billingToCancel.id;
       setShowCancelBillingModal(false);
       setBillingToCancel(null);
       
-      // Mark this billing ID as recently cancelled
-      setRecentlyCancelledIds(prev => new Set([...prev, cancelledBillingId]));
+      // Fetch fresh data from server to get the real updated status from database
+      await new Promise(resolve => setTimeout(resolve, 300)); // Small delay to ensure DB commit
       
-      // If backend returns updated billing entry, update it immediately in state
-      if (responseData.updated_billing) {
-        console.log('Backend returned updated billing entry:', responseData.updated_billing);
-        console.log('Status in response:', responseData.updated_billing.status);
-        
-        // Update state immediately with the cancelled status
-        setBillingHistory(prev => {
-          const updated = prev.map(b => {
-            if (b.id === cancelledBillingId) {
-              const merged = { ...b, ...responseData.updated_billing };
-              // Force status to 'cancelled' since we just cancelled it
-              merged.status = 'cancelled';
-              console.log('Merged billing entry (forced cancelled):', merged);
-              return merged;
-            }
-            return b;
-          });
-          console.log('Updated billing history in state:', updated);
-          return updated;
-        });
-      } else {
-        // Even if backend doesn't return updated_billing, mark it as cancelled in state
-        setBillingHistory(prev => {
-          return prev.map(b => {
-            if (b.id === cancelledBillingId) {
-              return { ...b, status: 'cancelled' };
-            }
-            return b;
-          });
-        });
-      }
-      
-      // Also fetch fresh data from server to ensure consistency
-      // But preserve the cancelled status if it was just cancelled (don't let server overwrite it)
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Fetch fresh data
-      try {
-        const historyRes = await ApiService.getBillingHistory();
-        const history = historyRes?.billing_history || historyRes || [];
-        
-        // Check if the cancelled entry is in the fresh data
-        const cancelledEntry = history.find(b => b.id === cancelledBillingId);
-        console.log('Cancelled entry in fresh data:', cancelledEntry);
-        if (cancelledEntry) {
-          console.log('Status in fresh data:', cancelledEntry.status);
-          
-          // If the server still shows 'pending', force it to 'cancelled' since we just cancelled it
-          // This handles the case where the UPDATE hasn't persisted yet or there's a database issue
-          if ((cancelledEntry.status || '').toLowerCase() !== 'cancelled') {
-            console.warn('Server still shows pending for cancelled entry, forcing to cancelled');
-            cancelledEntry.status = 'cancelled';
-          }
-        }
-        
-        // Update billing history, preserving cancelled status for the entry we just cancelled
-        // Always force it to 'cancelled' if it was recently cancelled, regardless of what server says
-        setBillingHistory(history.map(b => {
-          if (b.id === cancelledBillingId) {
-            // This was just cancelled, force status to 'cancelled' even if server says 'pending'
-            console.log('Preserving cancelled status for entry:', b.id, 'Server status:', b.status);
-            return { ...b, status: 'cancelled' };
-          }
-          return b;
-        }));
-      } catch (error) {
-        console.error('Error fetching fresh billing data:', error);
-        // Don't fail - we already updated the state above
-      }
+      // Fetch fresh data to show the real database status
+      await fetchBillingData();
       
       // No popup - user will see the updated status
     } catch (error) {
@@ -901,112 +801,123 @@ const BillingPayment = () => {
 
       {/* Manual Payment Proof Modal */}
       {showManualProofModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 max-w-lg w-full mx-4">
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">Upload Proof of Payment</h3>
-            {proofForm.invoiceNumber && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
-                <p className="font-semibold">Invoice: {proofForm.invoiceNumber}</p>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full mx-4 max-h-[90vh] flex flex-col">
+            {/* Header - Fixed */}
+            <div className="p-8 pb-4 border-b border-gray-200 flex-shrink-0">
+              <h3 className="text-2xl font-bold text-gray-900 mb-4">Upload Proof of Payment</h3>
+              {proofForm.invoiceNumber && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm text-blue-800">
+                  <p className="font-semibold">Invoice: {proofForm.invoiceNumber}</p>
+                </div>
+              )}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
+                <p className="font-semibold mb-1">Payment Instructions</p>
+                <ul className="list-disc ml-5 space-y-1">
+                  <li>GCash: 09XXXXXXXXX (Account Name: JACS Platform)</li>
+                  <li>Bank Transfer: ABC Bank, Account #######, Jun P.</li>
+                  <li>
+                    Amount: ₱{
+                      Number(
+                        (proofForm.amount ?? (selectedPlan?.monthly_price || 0)) || 0
+                      ).toLocaleString()
+                    } (Monthly)
+                  </li>
+                </ul>
               </div>
-            )}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 text-sm text-yellow-800">
-              <p className="font-semibold mb-1">Payment Instructions</p>
-              <ul className="list-disc ml-5 space-y-1">
-                <li>GCash: 09XXXXXXXXX (Account Name: JACS Platform)</li>
-                <li>Bank Transfer: ABC Bank, Account #######, Jun P.</li>
-                <li>
-                  Amount: ₱{
-                    Number(
-                      (proofForm.amount ?? (selectedPlan?.monthly_price || 0)) || 0
-                    ).toLocaleString()
-                  } (Monthly)
-                </li>
-              </ul>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot / Receipt</label>
-                <input type="file" accept="image/*" onChange={handleProofFileChange} className="block w-full text-sm text-gray-700" />
-                {proofForm.proofUrl && (
-                  <img
-                    src={proofForm.proofUrl}
-                    alt="Proof"
-                    className="mt-3 max-h-48 w-auto rounded-lg border mx-auto object-contain"
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto px-8 py-4">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot / Receipt</label>
+                  <input type="file" accept="image/*" onChange={handleProofFileChange} className="block w-full text-sm text-gray-700" />
+                  {proofForm.proofUrl && (
+                    <div className="mt-3 flex justify-center">
+                      <img
+                        src={proofForm.proofUrl}
+                        alt="Proof"
+                        className="max-h-64 max-w-full rounded-lg border object-contain"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                  <select
+                    value={proofForm.payment_method || 'GCash'}
+                    onChange={(e) => setProofForm(prev => ({ ...prev, payment_method: e.target.value }))}
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                  >
+                    <option value="GCash">GCash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="PayPal">PayPal</option>
+                    <option value="Cash">Cash</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={
+                      (proofForm.amount ?? Number(selectedPlan?.monthly_price || 0))
+                    }
+                    onChange={(e) => setProofForm(prev => ({ ...prev, amount: Number(e.target.value || 0) }))}
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
                   />
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                <select
-                  value={proofForm.payment_method || 'GCash'}
-                  onChange={(e) => setProofForm(prev => ({ ...prev, payment_method: e.target.value }))}
-                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                >
-                  <option value="GCash">GCash</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="PayPal">PayPal</option>
-                  <option value="Cash">Cash</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={
-                    (proofForm.amount ?? Number(selectedPlan?.monthly_price || 0))
-                  }
-                  onChange={(e) => setProofForm(prev => ({ ...prev, amount: Number(e.target.value || 0) }))}
-                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number (optional)</label>
-                <input
-                  type="text"
-                  value={proofForm.reference}
-                  onChange={(e) => setProofForm(prev => ({ ...prev, reference: e.target.value }))}
-                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                  placeholder="e.g., GCASH-1234"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Remarks (optional)</label>
-                <textarea
-                  rows={3}
-                  value={proofForm.remarks}
-                  onChange={(e) => setProofForm(prev => ({ ...prev, remarks: e.target.value }))}
-                  className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
-                  placeholder="Any notes for the admin"
-                />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number (optional)</label>
+                  <input
+                    type="text"
+                    value={proofForm.reference}
+                    onChange={(e) => setProofForm(prev => ({ ...prev, reference: e.target.value }))}
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                    placeholder="e.g., GCASH-1234"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Remarks (optional)</label>
+                  <textarea
+                    rows={3}
+                    value={proofForm.remarks}
+                    onChange={(e) => setProofForm(prev => ({ ...prev, remarks: e.target.value }))}
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-black"
+                    placeholder="Any notes for the admin"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="flex space-x-4 mt-6">
-              <button
-                onClick={() => { 
-                  setShowManualProofModal(false); 
-                  setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null }); 
-                }}
-                disabled={processingPayment}
-                className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  // minimal front-end validation
-                  const amt = Number(proofForm.amount ?? 0);
-                  if (!proofForm.proofUrl) { alert('Please upload a screenshot or receipt image.'); return; }
-                  if (!(amt > 0)) { alert('Please enter a valid amount.'); return; }
-                  submitManualProof();
-                }}
-                disabled={processingPayment}
-                className="flex-1 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-semibold disabled:opacity-50"
-              >
-                {processingPayment ? 'Submitting...' : 'Submit for Verification'}
-              </button>
+            {/* Footer - Fixed */}
+            <div className="p-8 pt-4 border-t border-gray-200 flex-shrink-0">
+              <div className="flex space-x-4">
+                <button
+                  onClick={() => { 
+                    setShowManualProofModal(false); 
+                    setProofForm({ billingId: null, file: null, proofUrl: '', reference: '', remarks: '', payment_method: 'GCash', amount: 0, invoiceNumber: null }); 
+                  }}
+                  disabled={processingPayment}
+                  className="flex-1 px-6 py-3 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    // minimal front-end validation
+                    const amt = Number(proofForm.amount ?? 0);
+                    if (!proofForm.proofUrl) { alert('Please upload a screenshot or receipt image.'); return; }
+                    if (!(amt > 0)) { alert('Please enter a valid amount.'); return; }
+                    submitManualProof();
+                  }}
+                  disabled={processingPayment}
+                  className="flex-1 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors font-semibold disabled:opacity-50"
+                >
+                  {processingPayment ? 'Submitting...' : 'Submit for Verification'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
