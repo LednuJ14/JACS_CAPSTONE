@@ -13,21 +13,34 @@ export const PropertyProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       
-      // Only use cache if not forcing refresh
+      // Only use cache if not forcing refresh and hostname hasn't changed
       if (!forceRefresh) {
-        const cached = sessionStorage.getItem('property_context');
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (parsed?.property?.id) {
-              setProperty(parsed.property || null);
-              setLoading(false);
-              // Still fetch fresh data in background
-              fetchFreshData();
-              return;
+        const currentHostname = typeof window !== 'undefined' ? window.location.hostname : '';
+        const cachedHostname = sessionStorage.getItem('last_hostname');
+        
+        // Only use cache if hostname matches (same subdomain)
+        if (cachedHostname === currentHostname) {
+          const cached = sessionStorage.getItem('property_context');
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              if (parsed?.property?.id) {
+                setProperty(parsed.property || null);
+                setLoading(false);
+                // Still fetch fresh data in background
+                fetchFreshData();
+                return;
+              }
+            } catch (e) {
+              console.warn('Failed to parse cached property context:', e);
             }
+          }
+        } else if (cachedHostname) {
+          // Hostname changed - clear stale cache
+          try {
+            sessionStorage.removeItem('property_context');
           } catch (e) {
-            console.warn('Failed to parse cached property context:', e);
+            console.warn('Failed to clear stale cache:', e);
           }
         }
       }
@@ -52,19 +65,14 @@ export const PropertyProvider = ({ children }) => {
       // Subdomain lookup works for both authenticated and unauthenticated users
       propertyData = await fetchPropertyBySubdomain();
       
-      // If subdomain lookup fails and user is authenticated, try dashboard context as fallback
-      // But prioritize subdomain to ensure correct property for current subdomain
+      // CRITICAL: Do NOT use dashboard context as fallback for property managers
+      // Dashboard context might return the first property they own, not the current subdomain
+      // Only use subdomain-based lookup to ensure correct property isolation
+      // If subdomain lookup fails, return null rather than using wrong property
       if (!propertyData?.id && token) {
-        try {
-          const ctx = await apiService.getDashboardContext();
-          // Only use dashboard context property if subdomain lookup completely failed
-          // This ensures we always get the property for the current subdomain
-          if (ctx?.property?.id) {
-            propertyData = ctx.property;
-          }
-        } catch (authError) {
-          console.warn('Authenticated fetch failed:', authError);
-        }
+        console.warn('Subdomain property lookup failed. Not using dashboard context fallback to prevent property mismatch.');
+        // Don't use dashboard context - it might return wrong property
+        // Return null so app can handle missing property gracefully
       }
       
       // Only try to load display_settings if user is authenticated and is a property manager/owner
@@ -157,6 +165,29 @@ export const PropertyProvider = ({ children }) => {
   };
 
   useEffect(() => {
+    // CRITICAL: Check if hostname changed (subdomain switch) and clear cache
+    const currentHostname = typeof window !== 'undefined' ? window.location.hostname : '';
+    const cachedHostname = sessionStorage.getItem('last_hostname');
+    
+    if (cachedHostname && cachedHostname !== currentHostname) {
+      // Subdomain changed - clear cache to prevent using wrong property
+      console.log('Subdomain changed, clearing property context cache');
+      try {
+        sessionStorage.removeItem('property_context');
+      } catch (e) {
+        console.warn('Failed to clear property context cache:', e);
+      }
+    }
+    
+    // Store current hostname for next check
+    if (currentHostname) {
+      try {
+        sessionStorage.setItem('last_hostname', currentHostname);
+      } catch (e) {
+        console.warn('Failed to store hostname:', e);
+      }
+    }
+    
     load();
     
     // Listen for refresh events (e.g., when display settings are updated)

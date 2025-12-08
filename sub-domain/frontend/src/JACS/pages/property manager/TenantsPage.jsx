@@ -80,16 +80,22 @@ const TenantsPage = () => {
         if (Array.isArray(propertiesData) && propertiesData.length > 0) {
           setProperties(propertiesData);
           
-          // If we have a subdomain, auto-select the matching property
+          // CRITICAL: Only match by exact property_id or portal_subdomain (no title matching)
           if (propertyIdOrSubdomain) {
             const matchingProperty = propertiesData.find(p => {
-              const id = typeof propertyIdOrSubdomain === 'number' ? propertyIdOrSubdomain : parseInt(propertyIdOrSubdomain);
-              return p.id === id || 
-                     p.portal_subdomain === propertyIdOrSubdomain ||
-                     (p.title && p.title.toLowerCase() === propertyIdOrSubdomain.toLowerCase());
+              // Try to parse as number first
+              const id = typeof propertyIdOrSubdomain === 'number' 
+                ? propertyIdOrSubdomain 
+                : (!isNaN(propertyIdOrSubdomain) ? parseInt(propertyIdOrSubdomain) : null);
+              
+              // Only match by exact ID or portal_subdomain (case-insensitive)
+              return (id !== null && p.id === id) || 
+                     (p.portal_subdomain && p.portal_subdomain.toLowerCase() === String(propertyIdOrSubdomain).toLowerCase());
             });
             if (matchingProperty && !formData.property_id) {
               setFormData(prev => ({ ...prev, property_id: matchingProperty.id }));
+            } else if (!matchingProperty) {
+              console.warn('No matching property found for subdomain:', propertyIdOrSubdomain);
             }
           }
         }

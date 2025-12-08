@@ -81,7 +81,7 @@ def create_app(config_name=None):
     CORS(app, 
          origins=allowed_origins_list,
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials", "X-Subdomain"],
+         allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials", "X-Subdomain", "X-Property-ID"],
          supports_credentials=True)
     
     # Handle preflight requests globally and allow subdomain origins
@@ -96,7 +96,7 @@ def create_app(config_name=None):
                 headers['Access-Control-Allow-Origin'] = origin
                 headers['Access-Control-Allow-Credentials'] = 'true'
             headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
+            headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain, X-Property-ID'
             headers['Access-Control-Max-Age'] = '86400'
             return response
     
@@ -112,7 +112,7 @@ def create_app(config_name=None):
             response.headers['Access-Control-Allow-Credentials'] = 'true'
         # Always add these headers
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain, X-Property-ID'
         return response
     
     # Register SQLAlchemy event listeners for automatic tenant registration
@@ -265,7 +265,7 @@ def create_app(config_name=None):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Subdomain, X-Property-ID'
         
         return response
     

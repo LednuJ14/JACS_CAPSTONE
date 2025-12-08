@@ -17,7 +17,7 @@ def allowed_file(filename):
 @property_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_properties():
-    """Get properties for the current user."""
+    """Get the current property for the subdomain context."""
     try:
         current_user_id = get_jwt_identity()
         
@@ -33,36 +33,52 @@ def get_properties():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Get properties owned by this user (use owner_id since manager_id doesn't exist)
-        try:
-            properties = Property.query.filter_by(owner_id=user.id).all()
+        # CRITICAL: Get property_id from subdomain context
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        
+        if not property_id:
+            # Try JWT claims
+            from flask_jwt_extended import get_jwt
+            try:
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
+        
+        if property_id:
+            # Return only the current property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
             
-            # Safely convert to dict, handling display_settings
-            properties_list = []
-            for prop in properties:
+            # Verify ownership
+            if property_obj.owner_id != user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+            
+            try:
+                prop_dict = property_obj.to_dict()
+                return jsonify([prop_dict]), 200
+            except Exception as prop_error:
+                current_app.logger.warning(f"Error converting property {property_obj.id} to dict: {str(prop_error)}", exc_info=True)
+                # Return basic property info if to_dict fails
                 try:
-                    prop_dict = prop.to_dict()
-                    properties_list.append(prop_dict)
-                except Exception as prop_error:
-                    current_app.logger.warning(f"Error converting property {prop.id} to dict: {str(prop_error)}", exc_info=True)
-                    # Return basic property info if to_dict fails
-                    try:
-                        display_settings = getattr(prop, 'display_settings', None) or {}
-                    except Exception:
-                        display_settings = {}
-                    
-                    properties_list.append({
-                        'id': prop.id,
-                        'name': getattr(prop, 'name', 'Unknown'),
-                        'address': getattr(prop, 'address', ''),
-                        'city': getattr(prop, 'city', ''),
-                        'display_settings': display_settings
-                    })
-            
-            return jsonify(properties_list), 200
-        except Exception as query_error:
-            current_app.logger.error(f"Property query error: {str(query_error)}", exc_info=True)
-            # Return empty array if query fails
+                    display_settings = getattr(property_obj, 'display_settings', None) or {}
+                except Exception:
+                    display_settings = {}
+                
+                return jsonify([{
+                    'id': property_obj.id,
+                    'name': getattr(property_obj, 'name', 'Unknown'),
+                    'address': getattr(property_obj, 'address', ''),
+                    'city': getattr(property_obj, 'city', ''),
+                    'display_settings': display_settings
+                }]), 200
+        else:
+            # No property context - return empty array (don't leak other properties)
             return jsonify([]), 200
     except Exception as e:
         current_app.logger.error(f"Get properties error: {str(e)}", exc_info=True)

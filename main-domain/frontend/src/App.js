@@ -23,6 +23,8 @@ import AdminAnalytics from './components/Admin/Analytics';
 import AdminSubscriptionManagement from './components/Admin/SubscriptionManagement';
 import DocumentManagement from './components/Admin/DocumentManagement';
 import ManagerDashboard from './components/PropertyManager/Dashboard';
+import UpgradePlanModal from './components/PropertyManager/UpgradePlanModal';
+import ApiService from './services/api';
   
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -30,6 +32,7 @@ function App() {
   const [userRole, setUserRole] = useState('tenant'); // 'tenant' | 'manager' | 'admin'
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // Check for reset password and email verification URLs on app load
   useEffect(() => {
@@ -92,6 +95,44 @@ function App() {
           }
           
           console.log('Session restored:', { role: savedRole, userId, currentPage });
+          
+          // Check subscription for property managers after session restore
+          // Show modal on every page load/refresh if on Free Plan
+          if (savedRole.toLowerCase() === 'manager') {
+            // Delay subscription check slightly to ensure API is ready
+            setTimeout(async () => {
+              try {
+                const subscriptionRes = await ApiService.getCurrentSubscription();
+                const subscription = subscriptionRes?.subscription || subscriptionRes;
+                const planName = subscription?.plan?.name || '';
+                const monthlyPrice = subscription?.plan?.monthly_price || 0;
+                
+                console.log('Subscription check on session restore:', { 
+                  planName, 
+                  monthlyPrice, 
+                  subscription: subscription?.plan 
+                });
+                
+                // Check if user is on Free Plan (either "Free Plan" or "Basic" with $0 price)
+                const isFreePlan = (planName && planName.toLowerCase() === 'free plan') || 
+                                  (planName && planName.toLowerCase() === 'basic' && Number(monthlyPrice) === 0) ||
+                                  (Number(monthlyPrice) === 0);
+                
+                if (isFreePlan) {
+                  console.log('User is on Free Plan, showing upgrade modal');
+                  // Always show modal on page load/refresh for Free Plan users
+                  // Clear any previous dismissal to ensure it shows
+                  const dismissedKey = `upgrade_modal_dismissed_${subscription?.id || 'none'}`;
+                  sessionStorage.removeItem(dismissedKey);
+                  setShowUpgradeModal(true);
+                } else {
+                  console.log('User is not on Free Plan, plan:', planName);
+                }
+              } catch (error) {
+                console.error('Error checking subscription on session restore:', error);
+              }
+            }, 2000);
+          }
         } else {
           console.log('No existing session found');
         }
@@ -124,6 +165,96 @@ function App() {
     };
   }, []);
 
+  // Track previous authentication state to detect new logins
+  const [prevAuthenticated, setPrevAuthenticated] = useState(false);
+  const [prevUserRole, setPrevUserRole] = useState('');
+
+  // Check subscription status for property managers after login
+  useEffect(() => {
+    const checkSubscriptionForUpgrade = async () => {
+      // Only check for property managers who are authenticated and on manager pages
+      if (isAuthenticated && userRole === 'manager' && 
+          currentPage !== 'login' && currentPage !== 'signup' &&
+          currentPage !== 'forgot-password' && currentPage !== 'reset-password' &&
+          currentPage !== 'verify-email' && currentPage !== 'email-verification-pending') {
+        try {
+          const subscriptionRes = await ApiService.getCurrentSubscription();
+          const subscription = subscriptionRes?.subscription || subscriptionRes;
+          const planName = subscription?.plan?.name || '';
+          const monthlyPrice = subscription?.plan?.monthly_price || 0;
+          
+          console.log('Subscription check:', { 
+            planName, 
+            monthlyPrice, 
+            subscription: subscription?.plan,
+            isAuthenticated,
+            userRole,
+            currentPage
+          });
+          
+          // Check if user is on Free Plan (either "Free Plan" or "Basic" with $0 price)
+          const isFreePlan = (planName && planName.toLowerCase() === 'free plan') || 
+                            (planName && planName.toLowerCase() === 'basic' && Number(monthlyPrice) === 0) ||
+                            (Number(monthlyPrice) === 0);
+          
+          // Show modal if user is on Free Plan
+          if (isFreePlan) {
+            console.log('User is on Free Plan, showing upgrade modal');
+            // Check if this is a new login (was not authenticated before, or role changed)
+            const isNewLogin = !prevAuthenticated || (prevUserRole !== 'manager');
+            
+            if (isNewLogin) {
+              // New login detected - show modal and clear any previous dismissal
+              const dismissedKey = `upgrade_modal_dismissed_${subscription?.id || 'none'}`;
+              sessionStorage.removeItem(dismissedKey);
+              console.log('New login detected, showing modal');
+              setShowUpgradeModal(true);
+            } else {
+              // Same session - check if modal was dismissed
+              const dismissedKey = `upgrade_modal_dismissed_${subscription?.id || 'none'}`;
+              const wasDismissed = sessionStorage.getItem(dismissedKey);
+              
+              if (!wasDismissed) {
+                console.log('Modal not dismissed, showing modal');
+                setShowUpgradeModal(true);
+              } else {
+                console.log('Modal was dismissed in this session');
+              }
+            }
+          } else {
+            // User has upgraded, hide modal and clear dismissal flag
+            console.log('User is not on Free Plan, hiding modal');
+            setShowUpgradeModal(false);
+            if (subscription?.id) {
+              sessionStorage.removeItem(`upgrade_modal_dismissed_${subscription.id}`);
+            }
+          }
+        } catch (error) {
+          console.error('Error checking subscription:', error);
+          // Don't show modal if there's an error
+        }
+      }
+    };
+
+    // Check subscription when user is authenticated and is a manager
+    // Delay slightly to ensure API is ready
+    if (isAuthenticated && userRole === 'manager') {
+      const timer = setTimeout(() => {
+        checkSubscriptionForUpgrade();
+      }, 2000);
+      
+      // Update previous state after check
+      setPrevAuthenticated(isAuthenticated);
+      setPrevUserRole(userRole);
+      
+      return () => clearTimeout(timer);
+    } else {
+      // User logged out or not a manager - reset previous state
+      setPrevAuthenticated(isAuthenticated);
+      setPrevUserRole(userRole);
+    }
+  }, [isAuthenticated, userRole, currentPage, prevAuthenticated, prevUserRole]);
+
   const handlePageChange = (nextPage) => {
     if (nextPage === 'logout') {
       // Clear all session data
@@ -131,9 +262,21 @@ function App() {
       localStorage.removeItem('user_role');
       localStorage.removeItem('user_id');
       
+      // Clear sessionStorage dismissal flags
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('upgrade_modal_dismissed_')) {
+          sessionStorage.removeItem(key);
+        }
+      });
+      
       setIsAuthenticated(false);
       setCurrentPage('dashboard');
       setUserRole('tenant');
+      setShowUpgradeModal(false);
+      
+      // Reset previous authentication state
+      setPrevAuthenticated(false);
+      setPrevUserRole('');
       
       console.log('User logged out, session cleared');
       return;
@@ -231,6 +374,10 @@ function App() {
     return (
       <Login
         onLoginSuccess={({ role }) => {
+          // Reset previous authentication state to trigger new login detection
+          setPrevAuthenticated(false);
+          setPrevUserRole('');
+          
           setIsAuthenticated(true);
           if (role === 'admin') {
             setUserRole('admin');
@@ -353,6 +500,29 @@ function App() {
     );
   }
 
+  const handleUpgradeClick = (plan) => {
+    // Navigate to billing page for upgrade
+    setCurrentPage('billingPayment');
+    setShowUpgradeModal(false);
+  };
+
+  const handleCloseUpgradeModal = () => {
+    setShowUpgradeModal(false);
+    // Store dismissal in sessionStorage to prevent showing again this session
+    // We'll check subscription ID if available
+    try {
+      const subscriptionRes = ApiService.getCurrentSubscription();
+      subscriptionRes.then(res => {
+        const subscription = res?.subscription || res;
+        if (subscription?.id) {
+          sessionStorage.setItem(`upgrade_modal_dismissed_${subscription.id}`, 'true');
+        }
+      }).catch(() => {});
+    } catch (error) {
+      // Ignore errors
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <Header
@@ -365,6 +535,14 @@ function App() {
         {renderContent()}
       </main>
       <Footer />
+      {/* Upgrade Plan Modal - only show for property managers */}
+      {isAuthenticated && userRole === 'manager' && (
+        <UpgradePlanModal
+          isOpen={showUpgradeModal}
+          onClose={handleCloseUpgradeModal}
+          onUpgrade={handleUpgradeClick}
+        />
+      )}
     </div>
   );
 }

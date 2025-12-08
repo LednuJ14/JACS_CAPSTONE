@@ -244,7 +244,7 @@ def create_staff():
         return jsonify({'error': str(e)}), 500
 
 @staff_bp.route('/<int:staff_id>', methods=['PUT'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def update_staff(staff_id):
     """Update a staff member."""
     try:
@@ -267,6 +267,24 @@ def update_staff(staff_id):
         staff = Staff.query.get(staff_id)
         if not staff:
             return jsonify({'error': 'Staff member not found'}), 404
+        
+        # CRITICAL: Verify property ownership for property managers
+        from flask_jwt_extended import get_jwt_identity, get_jwt
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager() and staff.property_id:
+                from models.property import Property
+                property_obj = Property.query.get(staff.property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         user = staff.user
         if not user:
@@ -356,13 +374,31 @@ def update_staff(staff_id):
         return jsonify({'error': str(e)}), 500
 
 @staff_bp.route('/<int:staff_id>', methods=['DELETE'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def delete_staff(staff_id):
     """Delete a staff member."""
     try:
         staff = Staff.query.get(staff_id)
         if not staff:
             return jsonify({'error': 'Staff member not found'}), 404
+        
+        # CRITICAL: Verify property ownership for property managers
+        from flask_jwt_extended import get_jwt_identity
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager() and staff.property_id:
+                from models.property import Property
+                property_obj = Property.query.get(staff.property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         user = staff.user
         user_id = user.id

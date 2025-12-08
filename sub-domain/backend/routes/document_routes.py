@@ -9,6 +9,12 @@ import mimetypes
 from app import db
 from models.document import Document, DocumentType
 from models.user import User, UserRole
+from utils.error_responses import (
+    property_context_required,
+    property_access_denied,
+    property_not_found
+)
+from utils.logging_helpers import log_property_access_attempt, log_property_operation
 
 document_bp = Blueprint('documents', __name__)
 
@@ -100,7 +106,48 @@ def get_documents():
                     query = query.filter(Document.visibility.in_(['public', 'tenants_only', 'staff_only']))
             except Exception:
                 query = query.filter(Document.visibility.in_(['public', 'tenants_only', 'staff_only']))
-        # Property managers can see all documents (no filter)
+        elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            # Property managers can only see documents for their current property subdomain
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            
+            # If property_id not in request, try to get from JWT token
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    claims = get_jwt()
+                    property_id = claims.get('property_id')
+                except Exception:
+                    pass
+            
+            if not property_id:
+                return property_context_required()
+            
+            # CRITICAL: Verify property exists and user owns it
+            from models.property import Property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                log_property_access_attempt(current_user.id, property_id, action='get_documents', success=False)
+                return property_not_found()
+            
+            if property_obj.owner_id != current_user.id:
+                log_property_access_attempt(current_user.id, property_id, action='get_documents', success=False)
+                return property_access_denied()
+            
+            # Log successful property access
+            log_property_access_attempt(current_user.id, property_id, action='get_documents', success=True)
+            
+            # Filter documents by property_id
+            if property_id_filter:
+                # If query param provided, verify it matches subdomain property
+                if property_id_filter != property_id:
+                    return jsonify({
+                        'error': 'Property ID mismatch. Please access through the correct subdomain.',
+                        'code': 'PROPERTY_MISMATCH'
+                    }), 400
+                query = query.filter(Document.property_id == property_id_filter)
+            else:
+                query = query.filter(Document.property_id == property_id)
         
         # Apply search filter
         if search:
@@ -238,6 +285,23 @@ def upload_document():
                 claims = get_jwt()
                 property_id = claims.get('property_id')
             except Exception:
+                pass
+        
+        # CRITICAL: For property managers, verify ownership before allowing upload
+        if property_id and user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            try:
+                property_id_int = int(property_id)
+                from models.property import Property
+                property_obj = Property.query.get(property_id_int)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+            except (ValueError, TypeError):
                 pass
         
         # Validate and convert property_id (handle both numeric IDs and subdomain strings)
@@ -462,14 +526,27 @@ def update_document(document_id):
         elif isinstance(current_user.role, str):
             user_role_str = current_user.role.upper()
         
+        document = Document.query.get(document_id)
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
         # Users can update their own documents, managers/staff can update any
         if document.uploaded_by != current_user.id:
             if user_role_str not in ['MANAGER', 'PROPERTY_MANAGER', 'STAFF']:
                 return jsonify({'error': 'Access denied. You can only update your own documents.'}), 403
-        
-        document = Document.query.get(document_id)
-        if not document:
-            return jsonify({'error': 'Document not found'}), 404
+            
+            # CRITICAL: For property managers, verify property ownership
+            if user_role_str in ['MANAGER', 'PROPERTY_MANAGER'] and document.property_id:
+                from models.property import Property
+                property_obj = Property.query.get(document.property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         data = request.get_json()
         if not data:
@@ -543,6 +620,19 @@ def delete_document(document_id):
         if document.uploaded_by != current_user.id:
             if user_role_str not in ['MANAGER', 'PROPERTY_MANAGER', 'STAFF']:
                 return jsonify({'error': 'Access denied. You can only delete your own documents.'}), 403
+            
+            # CRITICAL: For property managers, verify property ownership
+            if user_role_str in ['MANAGER', 'PROPERTY_MANAGER'] and document.property_id:
+                from models.property import Property
+                property_obj = Property.query.get(document.property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         # Delete file from filesystem
         if os.path.exists(document.file_path):

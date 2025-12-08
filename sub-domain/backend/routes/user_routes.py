@@ -17,17 +17,68 @@ def allowed_file(filename):
 @user_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_users():
-    """Get list of users (property manager only)."""
+    """Get list of users for the current property (property manager only)."""
     try:
         claims = get_jwt()
         if claims.get('role') != 'property_manager':
             return jsonify({'error': 'Insufficient permissions'}), 403
         
+        current_user_id = get_jwt_identity()
+        if isinstance(current_user_id, str):
+            try:
+                current_user_id = int(current_user_id)
+            except ValueError:
+                return jsonify({'error': 'Invalid user ID'}), 400
+        
+        # CRITICAL: Get property_id from subdomain context
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        
+        if not property_id:
+            # Try JWT claims
+            try:
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
+        
+        if not property_id:
+            return jsonify({
+                'error': 'Property context is required. Please access through a property subdomain.',
+                'code': 'PROPERTY_CONTEXT_REQUIRED'
+            }), 400
+        
+        # Verify ownership
+        from models.property import Property
+        property_obj = Property.query.get(property_id)
+        if not property_obj:
+            return jsonify({'error': 'Property not found'}), 404
+        
+        if property_obj.owner_id != current_user_id:
+            return jsonify({
+                'error': 'Access denied. You do not own this property.',
+                'code': 'PROPERTY_ACCESS_DENIED'
+            }), 403
+        
+        # Filter users by property
+        # Get tenants for this property
+        from models.tenant import Tenant
+        tenant_ids = [t.user_id for t in Tenant.query.filter_by(property_id=property_id).all() if t.user_id]
+        
+        # Get staff for this property
+        from models.staff import Staff
+        staff_ids = [s.user_id for s in Staff.query.filter_by(property_id=property_id).all() if s.user_id]
+        
+        # Combine user IDs (include property manager)
+        user_ids = list(set(tenant_ids + staff_ids + [current_user_id]))
+        
+        if not user_ids:
+            return jsonify({'users': []}), 200
+        
+        # Base query - filter by property-related users
+        query = User.query.filter(User.id.in_(user_ids))
+        
         # Get query parameters
         role_filter = request.args.get('role')
-        
-        # Base query
-        query = User.query
         
         # Apply role filter
         if role_filter:

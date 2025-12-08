@@ -90,10 +90,22 @@ class AuthServiceV2:
         # Setup subscription for managers (best-effort, resilient if plans table is missing)
         if role == UserRole.MANAGER:
             try:
-                basic_plan = SubscriptionPlan.query.filter_by(slug='basic').first()
-                if basic_plan:
-                    subscription = Subscription(user.id, basic_plan.id)
+                # Look for "Free Plan" by name (case-insensitive)
+                from sqlalchemy import func
+                free_plan = SubscriptionPlan.query.filter(
+                    func.lower(SubscriptionPlan.name) == 'free plan'
+                ).first()
+                if free_plan:
+                    subscription = Subscription(user.id, free_plan.id)
                     db.session.add(subscription)
+                else:
+                    # Fallback: try to find any plan with $0 monthly price
+                    free_plan = SubscriptionPlan.query.filter(
+                        SubscriptionPlan.monthly_price == 0
+                    ).first()
+                    if free_plan:
+                        subscription = Subscription(user.id, free_plan.id)
+                        db.session.add(subscription)
             except Exception as e:
                 # Do not block registration if subscription tables are absent or misconfigured
                 current_app.logger.error(f"Subscription setup skipped for user {user.id}: {e}")

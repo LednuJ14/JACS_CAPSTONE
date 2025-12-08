@@ -143,9 +143,29 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
             
             console.log('Properties response:', properties);
             
+            // CRITICAL: Don't auto-select first property - require subdomain match
             if (properties && Array.isArray(properties) && properties.length > 0) {
-              propertyIdToUse = properties[0].id;
-              console.log('Found property ID from array:', propertyIdToUse);
+              // Try to get property from subdomain
+              const propertyIdOrSubdomain = apiService.getPropertyIdFromSubdomain();
+              if (propertyIdOrSubdomain) {
+                const matchingProperty = properties.find(p => {
+                  const id = typeof propertyIdOrSubdomain === 'number' 
+                    ? propertyIdOrSubdomain 
+                    : parseInt(propertyIdOrSubdomain);
+                  return p.id === id || 
+                         p.portal_subdomain === propertyIdOrSubdomain ||
+                         (p.title && p.title.toLowerCase() === propertyIdOrSubdomain.toLowerCase());
+                });
+                if (matchingProperty) {
+                  propertyIdToUse = matchingProperty.id;
+                  console.log('Found matching property ID from subdomain:', propertyIdToUse);
+                } else {
+                  console.error('No matching property found for subdomain:', propertyIdOrSubdomain);
+                  // Don't fallback - require correct subdomain
+                }
+              } else {
+                console.warn('No subdomain property ID available for matching');
+              }
             } else if (properties && properties.id) {
               propertyIdToUse = properties.id;
               console.log('Found property ID from object:', propertyIdToUse);
@@ -160,12 +180,30 @@ const SettingsModal = ({ isOpen, onClose, currentUser, isTenant = false }) => {
           }
         }
         
-        // Method 3: Try getDashboardContext
+        // Method 3: Try getDashboardContext (but verify it matches subdomain)
         if (!propertyIdToUse) {
           try {
             const context = await apiService.getDashboardContext();
             if (context?.property?.id) {
-              propertyIdToUse = context.property.id;
+              // Verify property matches subdomain before using
+              const propertyIdOrSubdomain = apiService.getPropertyIdFromSubdomain();
+              if (propertyIdOrSubdomain) {
+                const id = typeof propertyIdOrSubdomain === 'number' 
+                  ? propertyIdOrSubdomain 
+                  : (!isNaN(propertyIdOrSubdomain) ? parseInt(propertyIdOrSubdomain) : null);
+                
+                // Only use if it matches subdomain
+                if (id !== null && context.property.id === id) {
+                  propertyIdToUse = context.property.id;
+                } else if (context.property.portal_subdomain === propertyIdOrSubdomain) {
+                  propertyIdToUse = context.property.id;
+                } else {
+                  console.warn('Dashboard context property does not match subdomain, ignoring');
+                }
+              } else {
+                // No subdomain available - don't use dashboard context to avoid wrong property
+                console.warn('No subdomain available, not using dashboard context');
+              }
             } else if (context?.property_id) {
               propertyIdToUse = context.property_id;
             }

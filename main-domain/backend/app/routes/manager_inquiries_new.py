@@ -401,6 +401,29 @@ def assign_tenant_to_property(current_user):
             db.session.flush()  # Get the ID
             tenant_id = new_tenant.id
 
+        # Check if tenant is already assigned to a unit
+        # A tenant should not be assigned to multiple units at the same time
+        existing_assignment = db.session.execute(text(
+            """
+            SELECT tu.id, tu.unit_id, tu.property_id, u.unit_name, p.title as property_name
+            FROM tenant_units tu
+            INNER JOIN tenants t ON t.id = tu.tenant_id
+            INNER JOIN units u ON u.id = tu.unit_id
+            INNER JOIN properties p ON p.id = tu.property_id
+            WHERE t.user_id = :tid
+              AND (tu.move_out_date IS NULL OR tu.move_out_date >= CURDATE())
+            LIMIT 1
+            """
+        ), { 'tid': tenant_id }).mappings().first()
+        
+        if existing_assignment:
+            unit_name = existing_assignment.get('unit_name') or f"Unit {existing_assignment.get('unit_id')}"
+            property_name = existing_assignment.get('property_name') or 'a property'
+            return handle_api_error(
+                400, 
+                f"This tenant is already assigned to {unit_name} in {property_name}. A tenant cannot be assigned to multiple units at the same time. They can inquire about other units, but cannot be assigned until their current assignment ends."
+            )
+
         # Get old status before updating
         old_status_row = db.session.execute(text(
             "SELECT status FROM inquiries WHERE id = :iid"
@@ -767,6 +790,33 @@ def create_unit(current_user, property_id):
         
         if not ownership_check:
             return handle_api_error(403, "Property not found or access denied")
+        
+        # Check property's total_units limit if property is approved
+        property_info = db.session.execute(text(
+            "SELECT total_units, status FROM properties WHERE id = :pid"
+        ), {'pid': property_id}).first()
+        
+        if property_info:
+            total_units = property_info.total_units or 0
+            property_status = property_info.status or ''
+            
+            # Only enforce limit for approved properties
+            if property_status.lower() in ['approved', 'active'] and total_units > 0:
+                # Count existing units for this property
+                unit_count_result = db.session.execute(text(
+                    "SELECT COUNT(*) AS count FROM units WHERE property_id = :pid"
+                ), {'pid': property_id}).first()
+                
+                existing_unit_count = unit_count_result.count if unit_count_result else 0
+                
+                # Prevent creating more units than total_units
+                if existing_unit_count >= total_units:
+                    return handle_api_error(
+                        400, 
+                        f"Cannot create unit. Property has reached its maximum unit limit of {total_units}. "
+                        f"Current unit count: {existing_unit_count}. "
+                        f"Please contact support if you need to increase the limit."
+                    )
         
         data = request.get_json()
         if not data:

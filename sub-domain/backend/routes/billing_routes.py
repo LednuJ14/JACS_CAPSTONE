@@ -443,25 +443,33 @@ def update_bill(current_user, bill_id):
         # Get property context
         property_id = get_property_id_from_request(data=data)
         
-        # If still no property_id, try to get from user's managed properties
+        # If property_id not in request, try to get from JWT token
         if not property_id:
-            if isinstance(current_user.role, UserRole):
-                user_role = current_user.role.value
-            else:
-                user_role = str(current_user.role).upper()
-            
-            if user_role in ['MANAGER', 'PROPERTY_MANAGER']:
-                try:
-                    managed_property = Property.query.filter_by(
-                        manager_id=current_user.id
-                    ).first()
-                    if managed_property:
-                        property_id = managed_property.id
-                except Exception as e:
-                    current_app.logger.warning(f"Error getting managed property: {str(e)}")
+            from flask_jwt_extended import get_jwt
+            try:
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
         
+        # CRITICAL: Do NOT auto-detect from owned properties
+        # Property managers must access through the correct subdomain
         if not property_id:
-            return jsonify({'error': 'Property context is required'}), 400
+            return jsonify({
+                'error': 'Property context is required. Please access through a property subdomain.',
+                'code': 'PROPERTY_CONTEXT_REQUIRED'
+            }), 400
+        
+        # CRITICAL: Verify property exists and user owns it
+        property_obj = Property.query.get(property_id)
+        if not property_obj:
+            return jsonify({'error': 'Property not found'}), 404
+        
+        if property_obj.owner_id != current_user.id:
+            return jsonify({
+                'error': 'Access denied. You do not own this property.',
+                'code': 'PROPERTY_ACCESS_DENIED'
+            }), 403
         
         # Verify bill belongs to this property
         unit = Unit.query.get(bill.unit_id)

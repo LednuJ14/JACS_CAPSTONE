@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from app import db
 from models.task import Task, TaskPriority, TaskStatus
 from models.user import User, UserRole
+from utils.error_responses import (
+    property_context_required,
+    property_access_denied,
+    property_not_found
+)
+from utils.logging_helpers import log_property_access_attempt, log_property_operation
 
 task_bp = Blueprint('tasks', __name__)
 
@@ -130,22 +136,21 @@ def get_tasks():
         elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
             # Property managers can see all tasks for their property
             if not property_id:
-                return jsonify({
-                    'error': 'Property context is required. Please access through a property subdomain.',
-                    'code': 'PROPERTY_CONTEXT_REQUIRED'
-                }), 400
+                return property_context_required()
             
             # CRITICAL: Verify property exists and user owns it
             from models.property import Property
             property_obj = Property.query.get(property_id)
             if not property_obj:
-                return jsonify({'error': 'Property not found'}), 404
+                log_property_access_attempt(current_user.id, property_id, action='get_tasks', success=False)
+                return property_not_found()
             
             if property_obj.owner_id != current_user.id:
-                return jsonify({
-                    'error': 'Access denied. You do not own this property.',
-                    'code': 'PROPERTY_ACCESS_DENIED'
-                }), 403
+                log_property_access_attempt(current_user.id, property_id, action='get_tasks', success=False)
+                return property_access_denied()
+            
+            # Log successful property access
+            log_property_access_attempt(current_user.id, property_id, action='get_tasks', success=True)
             
             # Filter tasks by property_id through units or tenants
             from models.property import Unit
@@ -273,6 +278,38 @@ def get_task(task_id):
         if current_user.role == UserRole.TENANT:
             if task.assigned_to != current_user.id and task.tenant_id != current_user.id:
                 return jsonify({'error': 'Access denied'}), 403
+        elif current_user.role in [UserRole.PROPERTY_MANAGER]:
+            # CRITICAL: Verify property ownership for property managers
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    property_id = get_jwt().get('property_id')
+                except Exception:
+                    pass
+            
+            if property_id:
+                # Verify task belongs to this property through unit or tenant
+                from models.property import Unit
+                from models.tenant import Tenant
+                task_belongs_to_property = False
+                
+                if task.unit_id:
+                    unit = Unit.query.get(task.unit_id)
+                    if unit and unit.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property and task.tenant_id:
+                    tenant = Tenant.query.get(task.tenant_id)
+                    if tenant and tenant.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property:
+                    return jsonify({
+                        'error': 'Access denied. This task does not belong to your property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         return jsonify({'task': task.to_dict()}), 200
         
@@ -292,6 +329,29 @@ def create_task():
         # Only property managers and staff can create tasks
         if current_user.role not in [UserRole.PROPERTY_MANAGER, UserRole.STAFF]:
             return jsonify({'error': 'Access denied'}), 403
+        
+        # CRITICAL: For property managers, verify property ownership
+        if current_user.role == UserRole.PROPERTY_MANAGER:
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    property_id = get_jwt().get('property_id')
+                except Exception:
+                    pass
+            
+            if not property_id:
+                return property_context_required()
+            
+            # Verify property ownership
+            from models.property import Property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return property_not_found()
+            
+            if property_obj.owner_id != current_user.id:
+                return property_access_denied()
         
         data = request.get_json()
         if not data:
@@ -382,6 +442,38 @@ def update_task(task_id):
         if current_user.role == UserRole.TENANT:
             if task.assigned_to != current_user.id:
                 return jsonify({'error': 'Access denied'}), 403
+        elif current_user.role == UserRole.PROPERTY_MANAGER:
+            # CRITICAL: Verify property ownership for property managers
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    property_id = get_jwt().get('property_id')
+                except Exception:
+                    pass
+            
+            if property_id:
+                # Verify task belongs to this property through unit or tenant
+                from models.property import Unit
+                from models.tenant import Tenant
+                task_belongs_to_property = False
+                
+                if task.unit_id:
+                    unit = Unit.query.get(task.unit_id)
+                    if unit and unit.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property and task.tenant_id:
+                    tenant = Tenant.query.get(task.tenant_id)
+                    if tenant and tenant.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property:
+                    return jsonify({
+                        'error': 'Access denied. This task does not belong to your property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         data = request.get_json()
         if not data:
@@ -494,6 +586,39 @@ def delete_task(task_id):
         if not task:
             return jsonify({'error': 'Task not found'}), 404
         
+        # CRITICAL: For property managers, verify property ownership
+        if current_user.role == UserRole.PROPERTY_MANAGER:
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    property_id = get_jwt().get('property_id')
+                except Exception:
+                    pass
+            
+            if property_id:
+                # Verify task belongs to this property through unit or tenant
+                from models.property import Unit
+                from models.tenant import Tenant
+                task_belongs_to_property = False
+                
+                if task.unit_id:
+                    unit = Unit.query.get(task.unit_id)
+                    if unit and unit.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property and task.tenant_id:
+                    tenant = Tenant.query.get(task.tenant_id)
+                    if tenant and tenant.property_id == property_id:
+                        task_belongs_to_property = True
+                
+                if not task_belongs_to_property:
+                    return jsonify({
+                        'error': 'Access denied. This task does not belong to your property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+        
         # Delete task
         db.session.delete(task)
         db.session.commit()
@@ -525,6 +650,35 @@ def get_task_stats():
                 (Task.assigned_to == current_user.id) |
                 (Task.tenant_id == current_user.id)
             )
+        elif current_user.role == UserRole.PROPERTY_MANAGER:
+            # CRITICAL: Filter by property for property managers
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    property_id = get_jwt().get('property_id')
+                except Exception:
+                    pass
+            
+            if property_id:
+                from models.property import Unit
+                from models.tenant import Tenant
+                from sqlalchemy import or_
+                
+                unit_ids = [u[0] for u in db.session.query(Unit.id).filter(Unit.property_id == property_id).all()]
+                tenant_ids = [t[0] for t in db.session.query(Tenant.id).filter(Tenant.property_id == property_id).all()]
+                
+                conditions = []
+                if unit_ids:
+                    conditions.append(Task.unit_id.in_(unit_ids))
+                if tenant_ids:
+                    conditions.append(Task.tenant_id.in_(tenant_ids))
+                
+                if conditions:
+                    query = query.filter(or_(*conditions) if len(conditions) > 1 else conditions[0])
+                else:
+                    query = query.filter(Task.id == -1)  # No units/tenants, return empty
         
         # Count by status
         stats = {}

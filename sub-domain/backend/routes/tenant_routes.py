@@ -202,7 +202,7 @@ def get_tenants():
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/', methods=['POST'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def create_tenant():
     """Create a new tenant."""
     try:
@@ -266,16 +266,53 @@ def create_tenant():
             except (ValueError, TypeError):
                 return None
         
-        # Get property_id - required for simplified schema
-        property_id = data.get('property_id')
-        if not property_id:
-            # Try to get property_id from subdomain or request context
-            try:
+        # CRITICAL: Get property_id from subdomain context (required)
+        from flask_jwt_extended import get_jwt_identity, get_jwt
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                # Property managers must provide property_id from subdomain
                 from routes.auth_routes import get_property_id_from_request
                 property_id = get_property_id_from_request(data=data)
-            except Exception as prop_error:
-                current_app.logger.warning(f"Could not get property_id from request: {str(prop_error)}")
-            
+                
+                if not property_id:
+                    try:
+                        claims = get_jwt()
+                        property_id = claims.get('property_id')
+                    except Exception:
+                        pass
+                
+                if not property_id:
+                    return jsonify({
+                        'error': 'Property context is required. Please access through a property subdomain.',
+                        'code': 'PROPERTY_CONTEXT_REQUIRED'
+                    }), 400
+                
+                # CRITICAL: Verify property ownership
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+            else:
+                # For tenants/staff, get property_id from request or data
+                property_id = data.get('property_id')
+                if not property_id:
+                    try:
+                        from routes.auth_routes import get_property_id_from_request
+                        property_id = get_property_id_from_request(data=data)
+                    except Exception as prop_error:
+                        current_app.logger.warning(f"Could not get property_id from request: {str(prop_error)}")
+        else:
+            property_id = data.get('property_id')
+        
         # Convert string property_id to int if needed
         if property_id and not isinstance(property_id, int):
             try:
@@ -316,6 +353,80 @@ def create_tenant():
         )
         
         db.session.add(tenant)
+        db.session.flush()  # Get tenant ID before commit
+        
+        # Handle unit assignment if unit_id is provided
+        unit_id = data.get('unit_id')
+        if unit_id:
+            try:
+                from models.property import Unit
+                from models.tenant import TenantUnit
+                from datetime import date, timedelta
+                from sqlalchemy import text
+                
+                # Verify unit exists and belongs to the property
+                unit = Unit.query.get(unit_id)
+                if not unit:
+                    db.session.rollback()
+                    return jsonify({'error': f'Unit with id {unit_id} not found'}), 404
+                
+                if unit.property_id != property_id:
+                    db.session.rollback()
+                    return jsonify({'error': 'Unit does not belong to the specified property'}), 400
+                
+                # Check if unit is already occupied
+                existing_tenant_unit = db.session.execute(text(
+                    """
+                    SELECT tu.id FROM tenant_units tu
+                    WHERE tu.unit_id = :unit_id
+                      AND (
+                        (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                         AND tu.move_out_date >= CURDATE())
+                        OR
+                        (tu.is_active = TRUE)
+                      )
+                    LIMIT 1
+                    """
+                ), {'unit_id': unit_id}).first()
+                
+                if existing_tenant_unit:
+                    db.session.rollback()
+                    return jsonify({'error': 'Unit is already occupied by another tenant'}), 400
+                
+                # Verify unit status is vacant or available
+                unit_status = str(unit.status).lower() if unit.status else 'vacant'
+                if unit_status not in ['vacant', 'available']:
+                    current_app.logger.warning(
+                        f"Assigning tenant to unit {unit_id} with status '{unit.status}', "
+                        f"but expected 'vacant' or 'available'"
+                    )
+                
+                # Create TenantUnit record
+                move_in_date = date.today()
+                move_out_date = move_in_date + timedelta(days=30)  # Default 30-day rental
+                
+                tenant_unit = TenantUnit(
+                    tenant_id=tenant.id,
+                    unit_id=unit_id,
+                    move_in_date=move_in_date,
+                    move_out_date=move_out_date,
+                    is_active=True
+                )
+                db.session.add(tenant_unit)
+                
+                # Update unit status to 'occupied'
+                unit.status = 'occupied'
+                db.session.flush()
+                
+                current_app.logger.info(
+                    f"Created TenantUnit: tenant_id={tenant.id}, unit_id={unit_id}, "
+                    f"and updated unit status to 'occupied'"
+                )
+            except Exception as unit_error:
+                db.session.rollback()
+                current_app.logger.error(f"Error assigning unit to tenant: {str(unit_error)}")
+                return jsonify({'error': f'Failed to assign unit to tenant: {str(unit_error)}'}), 500
+        
         db.session.commit()
         
         print(f"Successfully created tenant with ID: {tenant.id}")
@@ -362,16 +473,55 @@ def create_tenant():
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/<int:tenant_id>', methods=['PUT'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def update_tenant(tenant_id):
     """Update a tenant."""
     try:
+        from flask_jwt_extended import get_jwt_identity
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                # CRITICAL: Verify property ownership
+                from routes.auth_routes import get_property_id_from_request
+                property_id = get_property_id_from_request()
+                if not property_id:
+                    from flask_jwt_extended import get_jwt
+                    try:
+                        property_id = get_jwt().get('property_id')
+                    except Exception:
+                        pass
+                
+                if property_id:
+                    from models.property import Property
+                    property_obj = Property.query.get(property_id)
+                    if property_obj and property_obj.owner_id != current_user.id:
+                        return jsonify({
+                            'error': 'Access denied. You do not own this property.',
+                            'code': 'PROPERTY_ACCESS_DENIED'
+                        }), 403
+        
         data = request.get_json()
         
         # Find tenant
         tenant = Tenant.query.get(tenant_id)
         if not tenant:
             return jsonify({'error': 'Tenant not found'}), 404
+        
+        # CRITICAL: For property managers, verify tenant belongs to their property
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                if tenant.property_id:
+                    from models.property import Property
+                    property_obj = Property.query.get(tenant.property_id)
+                    if not property_obj or property_obj.owner_id != current_user.id:
+                        return jsonify({
+                            'error': 'Access denied. This tenant does not belong to your property.',
+                            'code': 'PROPERTY_ACCESS_DENIED'
+                        }), 403
         
         user = tenant.user
         if not user:
@@ -441,6 +591,172 @@ def update_tenant(tenant_id):
         if 'email' in data:
             tenant.email = data.get('email', '')
         
+        # Handle unit assignment if unit_id is provided
+        unit_id = data.get('unit_id')
+        if unit_id:
+            try:
+                from models.property import Unit
+                from models.tenant import TenantUnit
+                from datetime import date, timedelta
+                from sqlalchemy import text
+                
+                # Verify unit exists and belongs to the tenant's property
+                unit = Unit.query.get(unit_id)
+                if not unit:
+                    return jsonify({'error': f'Unit with id {unit_id} not found'}), 404
+                
+                property_id_for_unit = tenant.property_id or data.get('property_id')
+                if unit.property_id != property_id_for_unit:
+                    return jsonify({'error': 'Unit does not belong to the tenant\'s property'}), 400
+                
+                # Check if there's an existing active TenantUnit for this tenant
+                existing_tenant_unit = db.session.execute(text(
+                    """
+                    SELECT tu.id, tu.unit_id FROM tenant_units tu
+                    WHERE tu.tenant_id = :tenant_id
+                      AND (
+                        (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                         AND tu.move_out_date >= CURDATE())
+                        OR
+                        (tu.is_active = TRUE)
+                      )
+                    LIMIT 1
+                    """
+                ), {'tenant_id': tenant.id}).first()
+                
+                old_unit_id = None
+                if existing_tenant_unit:
+                    old_unit_id = existing_tenant_unit.unit_id
+                    # If tenant is already assigned to a different unit, end the old assignment
+                    if old_unit_id != unit_id:
+                        db.session.execute(text(
+                            """
+                            UPDATE tenant_units 
+                            SET move_out_date = CURDATE(), is_active = FALSE
+                            WHERE id = :tu_id
+                            """
+                        ), {'tu_id': existing_tenant_unit.id})
+                        
+                        # Update old unit status to vacant if no other active tenants
+                        old_unit_check = db.session.execute(text(
+                            """
+                            SELECT COUNT(*) AS count FROM tenant_units tu
+                            WHERE tu.unit_id = :unit_id
+                              AND (
+                                (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                                 AND tu.move_out_date >= CURDATE())
+                                OR
+                                (tu.is_active = TRUE)
+                              )
+                            """
+                        ), {'unit_id': old_unit_id}).first()
+                        
+                        if old_unit_check and old_unit_check.count == 0:
+                            db.session.execute(text(
+                                "UPDATE units SET status = 'vacant' WHERE id = :unit_id"
+                            ), {'unit_id': old_unit_id})
+                            current_app.logger.info(f"Updated old unit {old_unit_id} status to 'vacant'")
+                else:
+                    # Check if the new unit is already occupied by another tenant
+                    unit_occupied_check = db.session.execute(text(
+                        """
+                        SELECT tu.id FROM tenant_units tu
+                        WHERE tu.unit_id = :unit_id
+                          AND tu.tenant_id != :tenant_id
+                          AND (
+                            (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                             AND tu.move_out_date >= CURDATE())
+                            OR
+                            (tu.is_active = TRUE)
+                          )
+                        LIMIT 1
+                        """
+                    ), {'unit_id': unit_id, 'tenant_id': tenant.id}).first()
+                    
+                    if unit_occupied_check:
+                        return jsonify({'error': 'Unit is already occupied by another tenant'}), 400
+                
+                # If tenant is being assigned to a new unit (or reassigned), create/update TenantUnit
+                if not existing_tenant_unit or old_unit_id != unit_id:
+                    move_in_date = date.today()
+                    move_out_date = move_in_date + timedelta(days=30)  # Default 30-day rental
+                    
+                    # Create new TenantUnit record
+                    tenant_unit = TenantUnit(
+                        tenant_id=tenant.id,
+                        unit_id=unit_id,
+                        move_in_date=move_in_date,
+                        move_out_date=move_out_date,
+                        is_active=True
+                    )
+                    db.session.add(tenant_unit)
+                    
+                    # Update unit status to 'occupied'
+                    unit.status = 'occupied'
+                    db.session.flush()
+                    
+                    current_app.logger.info(
+                        f"Updated TenantUnit: tenant_id={tenant.id}, unit_id={unit_id}, "
+                        f"and updated unit status to 'occupied'"
+                    )
+            except Exception as unit_error:
+                db.session.rollback()
+                current_app.logger.error(f"Error assigning unit to tenant: {str(unit_error)}")
+                return jsonify({'error': f'Failed to assign unit to tenant: {str(unit_error)}'}), 500
+        elif unit_id is None and 'unit_id' in data:
+            # If unit_id is explicitly set to null/empty, remove tenant from current unit
+            try:
+                from sqlalchemy import text
+                
+                # Find and end active TenantUnit
+                existing_tenant_unit = db.session.execute(text(
+                    """
+                    SELECT tu.id, tu.unit_id FROM tenant_units tu
+                    WHERE tu.tenant_id = :tenant_id
+                      AND (
+                        (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                         AND tu.move_out_date >= CURDATE())
+                        OR
+                        (tu.is_active = TRUE)
+                      )
+                    LIMIT 1
+                    """
+                ), {'tenant_id': tenant.id}).first()
+                
+                if existing_tenant_unit:
+                    old_unit_id = existing_tenant_unit.unit_id
+                    # End the tenant-unit relationship
+                    db.session.execute(text(
+                        """
+                        UPDATE tenant_units 
+                        SET move_out_date = CURDATE(), is_active = FALSE
+                        WHERE id = :tu_id
+                        """
+                    ), {'tu_id': existing_tenant_unit.id})
+                    
+                    # Update unit status to vacant if no other active tenants
+                    old_unit_check = db.session.execute(text(
+                        """
+                        SELECT COUNT(*) AS count FROM tenant_units tu
+                        WHERE tu.unit_id = :unit_id
+                          AND (
+                            (tu.move_in_date IS NOT NULL AND tu.move_out_date IS NOT NULL 
+                             AND tu.move_out_date >= CURDATE())
+                            OR
+                            (tu.is_active = TRUE)
+                          )
+                        """
+                    ), {'unit_id': old_unit_id}).first()
+                    
+                    if old_unit_check and old_unit_check.count == 0:
+                        db.session.execute(text(
+                            "UPDATE units SET status = 'vacant' WHERE id = :unit_id"
+                        ), {'unit_id': old_unit_id})
+                        current_app.logger.info(f"Removed tenant from unit {old_unit_id} and updated status to 'vacant'")
+            except Exception as unit_error:
+                current_app.logger.warning(f"Error removing unit assignment: {str(unit_error)}")
+                # Don't fail the entire update if unit removal fails
+        
         db.session.commit()
         
         # Return updated tenant using to_dict method
@@ -472,13 +788,43 @@ def update_tenant(tenant_id):
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/<int:tenant_id>', methods=['DELETE'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def delete_tenant(tenant_id):
     """Delete a tenant."""
     try:
+        from flask_jwt_extended import get_jwt_identity
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                # CRITICAL: Verify property ownership
+                from routes.auth_routes import get_property_id_from_request
+                property_id = get_property_id_from_request()
+                if not property_id:
+                    from flask_jwt_extended import get_jwt
+                    try:
+                        property_id = get_jwt().get('property_id')
+                    except Exception:
+                        pass
+        
         tenant = Tenant.query.get(tenant_id)
         if not tenant:
             return jsonify({'error': 'Tenant not found'}), 404
+        
+        # CRITICAL: For property managers, verify tenant belongs to their property
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                if tenant.property_id:
+                    from models.property import Property
+                    property_obj = Property.query.get(tenant.property_id)
+                    if not property_obj or property_obj.owner_id != current_user.id:
+                        return jsonify({
+                            'error': 'Access denied. This tenant does not belong to your property.',
+                            'code': 'PROPERTY_ACCESS_DENIED'
+                        }), 403
         
         user = tenant.user
         
@@ -497,13 +843,43 @@ def delete_tenant(tenant_id):
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/<int:tenant_id>', methods=['GET'])
-# @jwt_required()  # Temporarily disabled for testing
+@jwt_required()
 def get_tenant(tenant_id):
     """Get a specific tenant."""
     try:
+        from flask_jwt_extended import get_jwt_identity
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                # CRITICAL: Verify property ownership
+                from routes.auth_routes import get_property_id_from_request
+                property_id = get_property_id_from_request()
+                if not property_id:
+                    from flask_jwt_extended import get_jwt
+                    try:
+                        property_id = get_jwt().get('property_id')
+                    except Exception:
+                        pass
+        
         tenant = Tenant.query.get(tenant_id)
         if not tenant:
             return jsonify({'error': 'Tenant not found'}), 404
+        
+        # CRITICAL: For property managers, verify tenant belongs to their property
+        if current_user_id:
+            from models.user import User
+            current_user = User.query.get(current_user_id)
+            if current_user and current_user.is_property_manager():
+                if tenant.property_id:
+                    from models.property import Property
+                    property_obj = Property.query.get(tenant.property_id)
+                    if not property_obj or property_obj.owner_id != current_user.id:
+                        return jsonify({
+                            'error': 'Access denied. This tenant does not belong to your property.',
+                            'code': 'PROPERTY_ACCESS_DENIED'
+                        }), 403
         
         tenant_data = {
             'id': tenant.id,

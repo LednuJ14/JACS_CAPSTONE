@@ -6,6 +6,12 @@ from sqlalchemy import and_, or_
 from app import db
 from models.announcement import Announcement, AnnouncementType, AnnouncementPriority
 from models.user import User, UserRole
+from utils.error_responses import (
+    property_context_required,
+    property_access_denied,
+    property_not_found
+)
+from utils.logging_helpers import log_property_access_attempt, log_property_operation
 
 announcement_bp = Blueprint('announcements', __name__)
 
@@ -143,7 +149,46 @@ def get_announcements():
                 current_app.logger.warning(f"Error filtering announcements for tenant: {str(tenant_error)}")
                 # Fallback: show only global announcements if tenant filtering fails
                 query = query.filter(Announcement.property_id.is_(None))
-        # Staff and property managers can see all announcements
+        elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            # Property managers can only see announcements for their current property subdomain
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            
+            # If property_id not in request, try to get from JWT token
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    claims = get_jwt()
+                    property_id = claims.get('property_id')
+                except Exception:
+                    pass
+            
+            if not property_id:
+                return property_context_required()
+            
+            # CRITICAL: Verify property exists and user owns it
+            from models.property import Property
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                log_property_access_attempt(current_user.id, property_id, action='get_announcements', success=False)
+                return property_not_found()
+            
+            if property_obj.owner_id != current_user.id:
+                log_property_access_attempt(current_user.id, property_id, action='get_announcements', success=False)
+                return property_access_denied()
+            
+            # Log successful property access
+            log_property_access_attempt(current_user.id, property_id, action='get_announcements', success=True)
+            
+            # Filter announcements by property_id (include global announcements too)
+            query = query.filter(
+                or_(
+                    Announcement.property_id == property_id,
+                    Announcement.property_id.is_(None)  # Global announcements
+                )
+            )
+        # Staff can see all announcements (they work for a specific property via staff.property_id)
+        # Note: Staff filtering by property_id could be added if needed
         
         # Apply search filter (use LIKE instead of ILIKE for MySQL compatibility)
         if search:
@@ -304,11 +349,39 @@ def create_announcement():
         
         # Get property_id from request (for property-specific announcements)
         property_id = data.get('property_id')
+        
+        # If property_id not provided, try to get from subdomain context
+        if not property_id:
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            
+            # If still not found, try JWT claims
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    claims = get_jwt()
+                    property_id = claims.get('property_id')
+                except Exception:
+                    pass
+        
         if property_id:
             try:
                 property_id = int(property_id)
             except (ValueError, TypeError):
                 property_id = None
+            
+            # CRITICAL: Verify property exists and user owns it (for property managers)
+            if current_user.is_property_manager():
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         # Get is_published value (default to True)
         is_published = data.get('is_published', True)
@@ -401,6 +474,32 @@ def update_announcement(announcement_id):
         
         if user_role_str not in ['MANAGER', 'PROPERTY_MANAGER'] and announcement.published_by != current_user.id:
             return jsonify({'error': 'You can only edit announcements you created'}), 403
+        
+        # CRITICAL: For property managers, verify property ownership
+        if user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
+            if announcement.property_id:
+                from models.property import Property
+                property_obj = Property.query.get(announcement.property_id)
+                if not property_obj:
+                    return jsonify({'error': 'Property not found'}), 404
+                
+                if property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+            else:
+                # For global announcements, verify from subdomain context
+                from routes.auth_routes import get_property_id_from_request
+                property_id = get_property_id_from_request()
+                if property_id:
+                    from models.property import Property
+                    property_obj = Property.query.get(property_id)
+                    if property_obj and property_obj.owner_id != current_user.id:
+                        return jsonify({
+                            'error': 'Access denied. You do not own this property.',
+                            'code': 'PROPERTY_ACCESS_DENIED'
+                        }), 403
         
         # Get JSON data and handle case where it might be a string
         data = request.get_json()
@@ -496,6 +595,31 @@ def delete_announcement(announcement_id):
         # Only property managers can delete
         if user_role_str not in ['MANAGER', 'PROPERTY_MANAGER']:
             return jsonify({'error': 'Only property managers can delete announcements'}), 403
+        
+        # CRITICAL: Verify property ownership
+        if announcement.property_id:
+            from models.property import Property
+            property_obj = Property.query.get(announcement.property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+        else:
+            # For global announcements, verify from subdomain context
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            if property_id:
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if property_obj and property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
         
         # Soft delete (set is_published to False)
         announcement.is_published = False

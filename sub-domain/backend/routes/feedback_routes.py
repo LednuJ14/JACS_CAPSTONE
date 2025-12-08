@@ -116,18 +116,45 @@ def get_feedback():
         # Build query
         query = Feedback.query
         
-        # Filter by property if property_id is provided
-        if property_id:
-            query = query.filter(Feedback.property_id == property_id)
-        
         # Tenants can only see their own feedback
         if user_role == 'TENANT':
             # Use integer user_id to match database type (submitted_by is INT)
             query = query.filter(Feedback.submitted_by == user_id_int)
+            
+            # Also filter by property if available
+            if property_id:
+                query = query.filter(Feedback.property_id == property_id)
         
         # Property managers and staff can see all feedback for their property
-        # If no property_id, they see all feedback (they can filter by property_id in query param)
-        elif user_role not in ['MANAGER', 'PROPERTY_MANAGER', 'STAFF']:
+        elif user_role in ['MANAGER', 'PROPERTY_MANAGER']:
+            # CRITICAL: Property managers MUST provide property_id
+            if not property_id:
+                return jsonify({
+                    'error': 'Property context is required. Please access through a property subdomain.',
+                    'code': 'PROPERTY_CONTEXT_REQUIRED'
+                }), 400
+            
+            # CRITICAL: Verify property exists and user owns it
+            property_obj = Property.query.get(property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+            
+            # Filter by property_id
+            query = query.filter(Feedback.property_id == property_id)
+        
+        elif user_role == 'STAFF':
+            # Staff can see feedback for their property if property_id is provided
+            if property_id:
+                query = query.filter(Feedback.property_id == property_id)
+            # If no property_id, staff see all (they work for a specific property via staff.property_id)
+        
+        else:
             return jsonify({'error': 'Access denied'}), 403
         
         # Apply filters from query parameters

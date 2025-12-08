@@ -97,7 +97,8 @@ const LoginForm = ({ onForgotPassword }) => {
         const storedUser = apiService.getStoredUser();
         const email = storedUser?.email || localStorage.getItem('pending_2fa_email') || formData.username;
         
-        const data = await apiService.verify2FA(email, twoFactorToken);
+        // Use login function with 2FA code to ensure session is persisted properly
+        const data = await apiService.login(formData.username, formData.password, twoFactorToken);
         setMessage({ type: 'success', text: 'Login successful! Welcome back!' });
         console.log('Login successful:', data);
 

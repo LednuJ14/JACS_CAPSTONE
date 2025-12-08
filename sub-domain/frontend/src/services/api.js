@@ -111,10 +111,42 @@ class ApiService {
     }
 
     // Add authorization header if token exists
-    if (this.token) {
-      config.headers['Authorization'] = `Bearer ${this.token}`;
+    // Check both instance token and localStorage to ensure we don't miss it
+    const token = this.token || localStorage.getItem('access_token');
+    if (token) {
+      // Sync instance token if it was missing
+      if (!this.token) {
+        this.token = token;
+      }
+      config.headers['Authorization'] = `Bearer ${token}`;
     } else {
-      console.warn('No access token found. User may need to log in.');
+      // Only warn if we're making an authenticated request (not public endpoints)
+      const isPublicEndpoint = url.includes('/auth/login') || 
+                               url.includes('/auth/register') || 
+                               url.includes('/properties/by-subdomain') ||
+                               url.includes('/public');
+      if (!isPublicEndpoint) {
+        console.warn('No access token found. User may need to log in.');
+      }
+    }
+
+    // CRITICAL: Automatically add property context if available
+    // This ensures all API calls include property_id from subdomain
+    const propertyId = this.getPropertyIdFromSubdomain();
+    if (propertyId && !optionHeaders?.['X-Property-ID'] && !config.headers['X-Property-ID']) {
+      config.headers['X-Property-ID'] = propertyId;
+    }
+    
+    // Also add to query params for GET requests if not already present
+    if (propertyId && (config.method === 'GET' || !config.method)) {
+      const hasPropertyParam = url.includes('property_id=') || url.includes('property_subdomain=');
+      if (!hasPropertyParam) {
+        const separator = url.includes('?') ? '&' : '?';
+        // Try to convert to number if possible, otherwise use as string
+        const propertyParam = typeof propertyId === 'number' ? propertyId : 
+                             (!isNaN(propertyId) ? parseInt(propertyId) : propertyId);
+        url = `${url}${separator}property_id=${encodeURIComponent(propertyParam)}`;
+      }
     }
 
     // Priority: overrideBaseURL > propertyBaseURL > activeBaseURL (only if it's property URL)
@@ -416,19 +448,65 @@ class ApiService {
 
   async getDashboardContext() {
     try {
+      // CRITICAL: Don't use first property - get property from subdomain context
+      // This ensures we get the correct property for the current subdomain
+      const propertyId = this.getPropertyIdFromSubdomain();
+      
+      if (propertyId) {
+        // Try to get property by subdomain first
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+        const subdomain = hostname.split('.')[0];
+        
+        if (subdomain && subdomain.toLowerCase() !== 'localhost') {
+          const property = await this.getPropertyBySubdomain(subdomain);
+          if (property) {
+            this.propertyContext = { property: property };
+            return this.propertyContext;
+          }
+        }
+        
+        // If subdomain lookup fails, try to get property by ID
+        // But only if propertyId is a number (not a subdomain string)
+        if (!isNaN(propertyId)) {
+          try {
+            const property = await this.makeRequest(`/properties/${propertyId}`, {
+              baseURL: this.propertyBaseURL
+            });
+            if (property && property.id) {
+              this.propertyContext = { property: property };
+              return this.propertyContext;
+            }
+          } catch (error) {
+            console.warn('Failed to load property by ID:', error);
+          }
+        }
+      }
+      
       // Try to load properties from backend - use property base URL
+      // But don't use first property - only use if it matches subdomain
       const properties = await this.makeRequest('/properties/', {
         baseURL: this.propertyBaseURL
       });
-      if (properties && properties.length > 0) {
-        this.propertyContext = { property: properties[0] }; // Use first property
-        return this.propertyContext;
+      if (properties && Array.isArray(properties) && properties.length > 0) {
+        // Only use property if it matches subdomain
+        const propertyId = this.getPropertyIdFromSubdomain();
+        if (propertyId) {
+          const matchingProperty = properties.find(p => {
+            const id = typeof propertyId === 'number' ? propertyId : parseInt(propertyId);
+            return p.id === id || p.portal_subdomain === propertyId;
+          });
+          if (matchingProperty) {
+            this.propertyContext = { property: matchingProperty };
+            return this.propertyContext;
+          }
+        }
+        // Don't fallback to first property - return null instead
       }
     } catch (error) {
       console.warn('Failed to load properties from backend:', error);
     }
     
-    // Fallback to empty context if no properties or error
+    // Return empty context if no matching property found
     this.propertyContext = { property: null };
     return this.propertyContext;
   }
@@ -765,11 +843,28 @@ class ApiService {
   // 2FA - Email-based (like main domain)
   async verify2FA(email, code) {
     try {
-      return await this.makeRequest('/auth/verify-2fa', {
+      const response = await this.makeRequest('/auth/verify-2fa', {
         method: 'POST',
         body: JSON.stringify({ email, code }),
         baseURL: this.propertyBaseURL
       });
+      
+      // Persist session after successful 2FA verification
+      if (response.access_token) {
+        this.setActiveBaseURL(this.propertyBaseURL);
+        this.token = response.access_token;
+        localStorage.setItem('access_token', response.access_token);
+        if (response.refresh_token) {
+          localStorage.setItem('refresh_token', response.refresh_token);
+        }
+        
+        if (response.user) {
+          const normalizedUser = this.normalizeUserPayload(response.user);
+          localStorage.setItem('user', JSON.stringify(normalizedUser));
+        }
+      }
+      
+      return response;
     } catch (error) {
       console.error('Failed to verify 2FA code:', error);
       throw error;

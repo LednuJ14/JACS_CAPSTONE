@@ -390,6 +390,19 @@ def update_request(request_id):
         elif not is_manager:
             return jsonify({'error': 'Access denied'}), 403
         
+        # CRITICAL: For property managers, verify property ownership
+        if is_manager and maintenance_request.property_id:
+            from models.property import Property
+            property_obj = Property.query.get(maintenance_request.property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
+        
         data = request.get_json() or {}
         
         # Update fields based on role
@@ -600,6 +613,19 @@ def delete_request(request_id):
                 return jsonify({'error': 'You can only delete pending requests'}), 400
         elif not is_manager:
             return jsonify({'error': 'Access denied'}), 403
+        
+        # CRITICAL: For property managers, verify property ownership
+        if is_manager and maintenance_request.property_id:
+            from models.property import Property
+            property_obj = Property.query.get(maintenance_request.property_id)
+            if not property_obj:
+                return jsonify({'error': 'Property not found'}), 404
+            
+            if property_obj.owner_id != current_user.id:
+                return jsonify({
+                    'error': 'Access denied. You do not own this property.',
+                    'code': 'PROPERTY_ACCESS_DENIED'
+                }), 403
         
         db.session.delete(maintenance_request)
         db.session.commit()

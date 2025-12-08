@@ -71,12 +71,45 @@ def get_notifications():
             if not tenant:
                 return jsonify({'error': 'Tenant profile not found'}), 404
             query = Notification.query.filter_by(tenant_id=tenant.id, user_id=current_user.id, recipient_type='tenant')
-        elif user_role_str in ['MANAGER']:
+        elif user_role_str in ['MANAGER', 'PROPERTY_MANAGER']:
             # Property managers see notifications for their user_id with recipient_type='property_manager'
+            # CRITICAL: Get property_id from subdomain context to ensure isolation
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request()
+            
+            # If property_id not in request, try to get from JWT token
+            if not property_id:
+                from flask_jwt_extended import get_jwt
+                try:
+                    claims = get_jwt()
+                    property_id = claims.get('property_id')
+                except Exception:
+                    pass
+            
+            # Build base query
             query = Notification.query.filter_by(
                 user_id=current_user.id,
                 recipient_type='property_manager'
             )
+            
+            # If property_id is available and Notification model has property_id field,
+            # filter by it. Otherwise, notifications are already filtered by user_id
+            # which should be sufficient since each property manager has their own user account.
+            # However, if a manager manages multiple properties, we need property_id in notifications.
+            # For now, we'll verify ownership if property_id is provided
+            if property_id:
+                from models.property import Property
+                property_obj = Property.query.get(property_id)
+                if property_obj and property_obj.owner_id != current_user.id:
+                    return jsonify({
+                        'error': 'Access denied. You do not own this property.',
+                        'code': 'PROPERTY_ACCESS_DENIED'
+                    }), 403
+                
+                # If Notification model has property_id, filter by it
+                # Check if property_id column exists
+                if hasattr(Notification, 'property_id'):
+                    query = query.filter(Notification.property_id == property_id)
         elif user_role_str == 'STAFF':
             # Staff see notifications for their user_id with recipient_type='staff'
             query = Notification.query.filter_by(
