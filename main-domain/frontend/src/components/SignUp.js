@@ -46,11 +46,11 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
       feedback.push('At least 8 characters');
     }
     
-    // Uppercase letter
+    // Uppercase letter (anywhere in password, not just first letter)
     if (/[A-Z]/.test(password)) {
       score += 1;
     } else {
-      feedback.push('One uppercase letter');
+      feedback.push('At least one uppercase letter');
     }
     
     // Lowercase letter
@@ -123,18 +123,43 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
         }
         break;
       case 1:
-        if (!formData.firstName || !formData.lastName || !formData.email) {
-          setErrorMessage('Please fill in all required fields for Step 1.');
+        // Validate all fields are filled
+        if (!formData.firstName || !formData.firstName.trim()) {
+          setErrorMessage('First name is required.');
+          return false;
+        }
+        if (!formData.lastName || !formData.lastName.trim()) {
+          setErrorMessage('Last name is required.');
+          return false;
+        }
+        if (!formData.email || !formData.email.trim()) {
+          setErrorMessage('Email address is required.');
           return false;
         }
         if (!/\S+@\S+\.\S+/.test(formData.email)) {
           setErrorMessage('Please enter a valid email address.');
           return false;
         }
+        if (!formData.phone || !formData.phone.trim()) {
+          setErrorMessage('Phone number is required.');
+          return false;
+        }
+        if (!formData.dateOfBirth || !formData.dateOfBirth.trim()) {
+          setErrorMessage('Date of birth is required.');
+          return false;
+        }
+        if (!formData.address || !formData.address.trim()) {
+          setErrorMessage('Address is required.');
+          return false;
+        }
         break;
       case 2:
-        if (!formData.password || !formData.confirmPassword) {
-          setErrorMessage('Please fill in all required fields for Step 2.');
+        if (!formData.password || !formData.password.trim()) {
+          setErrorMessage('Password is required.');
+          return false;
+        }
+        if (!formData.confirmPassword || !formData.confirmPassword.trim()) {
+          setErrorMessage('Please confirm your password.');
           return false;
         }
         if (formData.password !== formData.confirmPassword) {
@@ -142,7 +167,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
           return false;
         }
         if (!passwordStrength.isValid) {
-          setErrorMessage('Password must be at least 8 characters, include a number, a capital letter, and a special character.');
+          setErrorMessage('Password must be at least 8 characters, include a number, at least one capital letter, and a special character.');
           return false;
         }
         break;
@@ -174,22 +199,36 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     
-    if (!validateStep(3)) return;
+    // Validate all steps before submitting
+    if (!validateStep(0) || !validateStep(1) || !validateStep(2) || !validateStep(3)) {
+      return;
+    }
 
     setErrorMessage('');
     setIsSubmitting(true);
 
     try {
-      // Prepare data for backend API
+      // Prepare data for backend API - ensure all required fields are present
       const registrationData = {
-        email: formData.email,
+        email: formData.email.trim(),
         password: formData.password,
-        first_name: formData.firstName,
-        last_name: formData.lastName,
+        first_name: formData.firstName.trim(),
+        last_name: formData.lastName.trim(),
         role: role.toLowerCase(), // Backend expects tenant, manager, admin
-        phone_number: formData.phone || undefined,
-        date_of_birth: formData.dateOfBirth || undefined
+        phone_number: formData.phone.trim(),
+        date_of_birth: formData.dateOfBirth.trim(),
+        address: formData.address.trim()
       };
+      
+      // Final validation - ensure no empty strings after trimming
+      if (!registrationData.email || !registrationData.password || 
+          !registrationData.first_name || !registrationData.last_name ||
+          !registrationData.phone_number || !registrationData.date_of_birth ||
+          !registrationData.address) {
+        setErrorMessage('All fields are required. Please fill in all information.');
+        setIsSubmitting(false);
+        return;
+      }
 
       // Make API call using ApiService
       const data = await ApiService.register(registrationData);
@@ -223,7 +262,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
         if (error.message.includes('Email already exists')) {
           errorMsg = 'An account with this email already exists. Please use a different email or try logging in.';
         } else if (error.message.includes('Weak password')) {
-          errorMsg = `Password must be at least 8 characters, include a number, a capital letter, and a special character.`;
+          errorMsg = `Password must be at least 8 characters, include a number, at least one capital letter, and a special character.`;
         } else if (error.message.includes('Missing required fields')) {
           errorMsg = 'Please fill in all required fields.';
         } else {
@@ -405,6 +444,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
             value={formData.email}
             onChange={(e) => handleInputChange('email', e.target.value)}
             placeholder="Enter your email address"
+            required
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
         </div>
@@ -424,6 +464,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
             value={formData.phone}
             onChange={(e) => handleInputChange('phone', e.target.value)}
             placeholder="Enter your phone number"
+            required
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
         </div>
@@ -457,6 +498,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
             value={formData.password}
             onChange={(e) => handleInputChange('password', e.target.value)}
             placeholder="Create a password"
+            required
             className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
           <button
@@ -492,6 +534,7 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
             value={formData.confirmPassword}
             onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
             placeholder="Confirm your password"
+            required
             className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
           <button
@@ -516,21 +559,23 @@ const SignUp = ({ onSignUpSuccess, onBackToLogin }) => {
       {/* Additional Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Birth</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Birth *</label>
           <input
             type="date"
             value={formData.dateOfBirth}
             onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
+            required
             className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
         </div>
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Address</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Address *</label>
           <input
             type="text"
             value={formData.address}
             onChange={(e) => handleInputChange('address', e.target.value)}
             placeholder="Enter your address"
+            required
             className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all duration-200 transform focus:scale-105 hover:shadow-md"
           />
         </div>
