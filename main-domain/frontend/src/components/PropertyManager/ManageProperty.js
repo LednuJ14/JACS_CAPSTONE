@@ -1679,11 +1679,11 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
             {currentPageItems.map((building) => (
               <div key={building.id} className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300">
                 {/* Building Image */}
-                <div className="relative h-60 bg-gray-200 flex items-center justify-center">
+                <div className="relative h-60 bg-gray-200 overflow-hidden">
                   <img
                     src={getImageSrc(building.image)}
                     alt={building.buildingName}
-                    className="w-full object-cover rounded-lg"
+                    className="w-full h-full object-cover"
                     onError={(e) => { e.target.src = defaultProperty; }}
                   />
                   <div className="absolute top-3 left-3">
@@ -2165,8 +2165,8 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {newProperty.images && newProperty.images.map((image, index) => (
-                          <div key={index} className="relative group">
-                            <img src={getImageSrc(image)} alt={`Property ${index + 1}`} className="w-full h-32 object-cover rounded-lg border border-gray-200 shadow-sm" />
+                          <div key={index} className="relative group h-32 rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+                            <img src={getImageSrc(image)} alt={`Property ${index + 1}`} className="w-full h-full object-cover" />
                             <button
                               type="button"
                               onClick={() => removePropertyImage(index)}
@@ -2889,8 +2889,8 @@ const ManageProperty = ({ onOpenManageUnits = () => {} }) => {
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {editingBuilding.images && editingBuilding.images.map((image, index) => (
-                          <div key={index} className="relative group">
-                            <img src={getImageSrc(image)} alt={`Property ${index + 1}`} className="w-full h-32 object-cover rounded-lg border border-gray-200 shadow-sm" />
+                          <div key={index} className="relative group h-32 rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+                            <img src={getImageSrc(image)} alt={`Property ${index + 1}`} className="w-full h-full object-cover" />
                             <button
                               type="button"
                               onClick={() => removeEditPropertyImage(index)}

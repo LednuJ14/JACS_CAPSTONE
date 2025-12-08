@@ -10,6 +10,10 @@ const AdminPropertyReview = () => {
   const [approving, setApproving] = useState({});
   // const [refreshKey] = useState(0); // Removed unused variable
   const [propertyDocumentsStatus, setPropertyDocumentsStatus] = useState({}); // Track document statuses per property
+  const [updatingDocumentStatus, setUpdatingDocumentStatus] = useState({}); // Track document status updates
+  const [previewDocument, setPreviewDocument] = useState(null); // Document preview state
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
 
   const [properties, setProperties] = useState([]);
 
@@ -124,6 +128,159 @@ const AdminPropertyReview = () => {
     console.log('useEffect triggered with activeTab:', activeTab);
     fetchPendingProperties();
   }, [activeTab, fetchPendingProperties]); // Include fetchPendingProperties in dependencies
+
+  // Fetch documents for a specific property
+  const fetchPropertyDocuments = useCallback(async (propertyId) => {
+    try {
+      const documentsResponse = await ApiService.adminDocuments();
+      const allDocuments = documentsResponse.documents || [];
+      
+      // Filter documents for this property (main domain only)
+      const propertyDocuments = allDocuments.filter(doc => 
+        doc.property_id === propertyId && doc.source !== 'subdomain'
+      );
+      
+      setPropertyDocumentsStatus(prev => ({
+        ...prev,
+        [propertyId]: propertyDocuments
+      }));
+    } catch (error) {
+      console.error('Error fetching property documents:', error);
+    }
+  }, []);
+
+  // Fetch documents when modal opens
+  useEffect(() => {
+    if (showModal && selectedProperty) {
+      fetchPropertyDocuments(selectedProperty.id);
+    }
+  }, [showModal, selectedProperty, fetchPropertyDocuments]);
+
+  // Cleanup blob URLs when component unmounts or preview changes
+  useEffect(() => {
+    return () => {
+      if (previewDocument?.previewUrl) {
+        window.URL.revokeObjectURL(previewDocument.previewUrl);
+      }
+    };
+  }, [previewDocument]);
+
+  // Handle document status update (approve/reject)
+  const handleDocumentStatusUpdate = async (documentId, newStatus) => {
+    try {
+      setUpdatingDocumentStatus(prev => ({ ...prev, [documentId]: true }));
+      await ApiService.updateDocumentStatus(documentId, newStatus);
+      
+      // Update local state
+      if (selectedProperty) {
+        const propertyDocs = propertyDocumentsStatus[selectedProperty.id] || [];
+        const updatedDocs = propertyDocs.map(doc => 
+          doc.id === documentId 
+            ? { ...doc, status: newStatus }
+            : doc
+        );
+        
+        setPropertyDocumentsStatus(prev => ({
+          ...prev,
+          [selectedProperty.id]: updatedDocs
+        }));
+      }
+      
+      alert(`Document ${newStatus} successfully!`);
+    } catch (error) {
+      console.error('Error updating document status:', error);
+      alert(`Failed to update document status: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUpdatingDocumentStatus(prev => ({ ...prev, [documentId]: false }));
+    }
+  };
+
+  // Handle document preview
+  const handleDocumentPreview = async (doc) => {
+    if (!doc || !doc.id) {
+      alert('Invalid document selected for preview');
+      return;
+    }
+
+    try {
+      setPreviewLoading(true);
+      setPreviewError('');
+      
+      // Clean up previous preview URL if exists
+      if (previewDocument?.previewUrl) {
+        window.URL.revokeObjectURL(previewDocument.previewUrl);
+      }
+      
+      setPreviewDocument(doc);
+      
+      // Get the preview URL from the download endpoint
+      const blob = await ApiService.downloadDocument(doc.id);
+      
+      // Safety check for blob
+      if (!blob || !(blob instanceof Blob)) {
+        throw new Error('Invalid file data received');
+      }
+      
+      const url = window.URL.createObjectURL(blob);
+      
+      // Store the blob URL in the document object for preview
+      setPreviewDocument({
+        ...doc,
+        previewUrl: url
+      });
+    } catch (error) {
+      console.error('Error loading document for preview:', error);
+      
+      let errorMessage = 'Failed to load document for preview';
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setPreviewError(errorMessage);
+      setPreviewDocument({
+        ...doc,
+        previewUrl: null
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // Close preview
+  const closePreview = useCallback(() => {
+    setPreviewDocument(prev => {
+      if (prev?.previewUrl) {
+        window.URL.revokeObjectURL(prev.previewUrl);
+      }
+      return null;
+    });
+    setPreviewError('');
+    setPreviewLoading(false);
+  }, []);
+
+  // Handle escape key to close preview
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape' && previewDocument) {
+        closePreview();
+      }
+    };
+    
+    if (previewDocument) {
+      window.addEventListener('keydown', handleEscape);
+      return () => window.removeEventListener('keydown', handleEscape);
+    }
+  }, [previewDocument, closePreview]);
+
+  // Get file type for preview
+  const getFileType = (filename) => {
+    if (!filename) return 'unknown';
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
+    if (ext === 'pdf') return 'pdf';
+    if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) return 'document';
+    return 'unknown';
+  };
 
   const handleStatusChange = async (propertyId, newStatus, adminNotes = '') => {
     setApproving(prev => ({ ...prev, [propertyId]: true }));
@@ -824,36 +981,82 @@ const AdminPropertyReview = () => {
                           const isPending = docStatus !== 'approved' && docStatus !== 'rejected';
                           
                           return (
-                            <div key={index} className={`flex items-center p-4 border rounded-lg transition-colors ${
+                            <div key={doc.id || index} className={`p-4 border rounded-lg transition-colors ${
                               isPending ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200 hover:bg-gray-50'
                             }`}>
-                              <div className="flex-shrink-0">
-                                <svg className={`w-8 h-8 ${isPending ? 'text-yellow-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                              </div>
-                              <div className="ml-3 flex-1">
-                                <p className="text-sm font-medium text-gray-900">{docName}</p>
-                                <p className="text-xs text-gray-500">{docType}</p>
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
-                                  docStatus === 'approved' ? 'bg-green-100 text-green-800' :
-                                  docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
-                                  'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                  {docStatus === 'approved' ? '✓ Approved' :
-                                   docStatus === 'rejected' ? '✗ Rejected' :
-                                   '⏳ Pending Review'}
-                                </span>
-                              </div>
-                              <div className="flex-shrink-0">
-                                {docStatus === 'approved' ? (
-                                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              <div className="flex items-start">
+                                <div className="flex-shrink-0">
+                                  <svg className={`w-8 h-8 ${isPending ? 'text-yellow-500' : docStatus === 'approved' ? 'text-green-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                   </svg>
-                                ) : (
-                                  <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </div>
+                                <div className="ml-3 flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{docName}</p>
+                                  <p className="text-xs text-gray-500">{docType}</p>
+                                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
+                                    docStatus === 'approved' ? 'bg-green-100 text-green-800' :
+                                    docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
+                                    'bg-yellow-100 text-yellow-800'
+                                  }`}>
+                                    {docStatus === 'approved' ? '✓ Approved' :
+                                     docStatus === 'rejected' ? '✗ Rejected' :
+                                     '⏳ Pending Review'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mt-3 flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleDocumentPreview(doc)}
+                                  className="flex-1 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium flex items-center justify-center"
+                                  title="Preview document"
+                                >
+                                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                   </svg>
+                                  Preview
+                                </button>
+                                {isPending && (
+                                  <>
+                                    <button
+                                      onClick={() => handleDocumentStatusUpdate(doc.id, 'approved')}
+                                      disabled={updatingDocumentStatus[doc.id]}
+                                      className="flex-1 bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors text-xs font-medium flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Approve document"
+                                    >
+                                      {updatingDocumentStatus[doc.id] ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      ) : (
+                                        <>
+                                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                          </svg>
+                                          Approve
+                                        </>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDocumentStatusUpdate(doc.id, 'rejected')}
+                                      disabled={updatingDocumentStatus[doc.id]}
+                                      className="flex-1 bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition-colors text-xs font-medium flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Reject document"
+                                    >
+                                      {updatingDocumentStatus[doc.id] ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      ) : (
+                                        <>
+                                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                          </svg>
+                                          Reject
+                                        </>
+                                      )}
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -866,27 +1069,98 @@ const AdminPropertyReview = () => {
                         const docName = typeof doc === 'string' ? doc : (doc.filename || doc.name || `Document ${index + 1}`);
                         const docType = typeof doc === 'object' ? (doc.type || 'Document') : 'Document';
                         const docStatus = typeof doc === 'object' ? (doc.status || 'pending') : 'pending';
+                        const isPending = docStatus !== 'approved' && docStatus !== 'rejected';
+                        
+                        // Create a document object with id for preview/status update
+                        const docObj = typeof doc === 'object' ? doc : {
+                          id: `fallback_${selectedProperty.id}_${index}`,
+                          file_name: docName,
+                          document_type: docType,
+                          status: docStatus,
+                          ...doc
+                        };
                         
                         return (
-                          <div key={index} className="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                            <div className="flex-shrink-0">
-                              <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
+                          <div key={index} className={`p-4 border rounded-lg transition-colors ${
+                            isPending ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200 hover:bg-gray-50'
+                          }`}>
+                            <div className="flex items-start">
+                              <div className="flex-shrink-0">
+                                <svg className={`w-8 h-8 ${isPending ? 'text-yellow-500' : docStatus === 'approved' ? 'text-green-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              </div>
+                              <div className="ml-3 flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">{docName}</p>
+                                <p className="text-xs text-gray-500">{docType}</p>
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
+                                  docStatus === 'approved' ? 'bg-green-100 text-green-800' :
+                                  docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
+                                  'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {docStatus === 'approved' ? '✓ Approved' :
+                                   docStatus === 'rejected' ? '✗ Rejected' :
+                                   '⏳ Pending Review'}
+                                </span>
+                              </div>
                             </div>
-                            <div className="ml-3 flex-1">
-                              <p className="text-sm font-medium text-gray-900">{docName}</p>
-                              <p className="text-xs text-gray-500">{docType}</p>
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${
-                                docStatus === 'approved' ? 'bg-green-100 text-green-800' :
-                                docStatus === 'rejected' ? 'bg-red-100 text-red-800' :
-                                'bg-yellow-100 text-yellow-800'
-                              }`}>
-                                {docStatus === 'approved' ? '✓ Approved' :
-                                 docStatus === 'rejected' ? '✗ Rejected' :
-                                 '⏳ Pending Review'}
-                              </span>
-                            </div>
+                            {docObj.id && (
+                              <div className="mt-3 flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleDocumentPreview(docObj)}
+                                  className="flex-1 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium flex items-center justify-center"
+                                  title="Preview document"
+                                >
+                                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                  </svg>
+                                  Preview
+                                </button>
+                                {isPending && docObj.id.startsWith('main_') && (
+                                  <>
+                                    <button
+                                      onClick={() => handleDocumentStatusUpdate(docObj.id, 'approved')}
+                                      disabled={updatingDocumentStatus[docObj.id]}
+                                      className="flex-1 bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors text-xs font-medium flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Approve document"
+                                    >
+                                      {updatingDocumentStatus[docObj.id] ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      ) : (
+                                        <>
+                                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                          </svg>
+                                          Approve
+                                        </>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDocumentStatusUpdate(docObj.id, 'rejected')}
+                                      disabled={updatingDocumentStatus[docObj.id]}
+                                      className="flex-1 bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition-colors text-xs font-medium flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Reject document"
+                                    >
+                                      {updatingDocumentStatus[docObj.id] ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      ) : (
+                                        <>
+                                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                          </svg>
+                                          Reject
+                                        </>
+                                      )}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       });
@@ -1088,6 +1362,164 @@ const AdminPropertyReview = () => {
                   ) : null}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Document Preview Modal */}
+      {previewDocument && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-[60]" onClick={closePreview}>
+          <div className="bg-white rounded-xl max-w-6xl w-full max-h-[95vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-900 to-black flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">{previewDocument.file_name || previewDocument.fileName || 'Document Preview'}</h3>
+                  <p className="text-sm text-gray-300">
+                    {selectedProperty?.name || 'Property'} • {previewDocument.document_type || previewDocument.documentType || 'Document'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                {previewDocument.status === 'pending' && previewDocument.id && previewDocument.id.startsWith('main_') && (
+                  <>
+                    <button
+                      onClick={() => {
+                        handleDocumentStatusUpdate(previewDocument.id, 'approved');
+                        closePreview();
+                      }}
+                      disabled={updatingDocumentStatus[previewDocument.id]}
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Approve document"
+                    >
+                      {updatingDocumentStatus[previewDocument.id] ? (
+                        <svg className="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleDocumentStatusUpdate(previewDocument.id, 'rejected');
+                        closePreview();
+                      }}
+                      disabled={updatingDocumentStatus[previewDocument.id]}
+                      className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Reject document"
+                    >
+                      {updatingDocumentStatus[previewDocument.id] ? (
+                        <svg className="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      )}
+                      Reject
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={closePreview}
+                  className="text-white hover:text-gray-300 transition-colors p-2"
+                  title="Close preview"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-auto p-6 bg-gray-50">
+              {previewLoading ? (
+                <div className="flex items-center justify-center h-96">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading document preview...</p>
+                  </div>
+                </div>
+              ) : previewError ? (
+                <div className="flex items-center justify-center h-96">
+                  <div className="text-center max-w-md">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">Preview Error</h3>
+                    <p className="text-gray-600 mb-4 whitespace-pre-line">{previewError}</p>
+                    <button
+                      onClick={() => handleDocumentPreview(previewDocument)}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Try Again
+                    </button>
+                  </div>
+                </div>
+              ) : previewDocument.previewUrl ? (
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                  {(() => {
+                    const fileType = getFileType(previewDocument.file_name || previewDocument.fileName || '');
+                    if (fileType === 'image') {
+                      return (
+                        <div className="flex items-center justify-center p-8">
+                          <img
+                            src={previewDocument.previewUrl}
+                            alt={previewDocument.file_name || 'Preview'}
+                            className="max-w-full max-h-[70vh] object-contain rounded-lg"
+                            onError={(e) => {
+                              setPreviewError('Failed to load image preview');
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      );
+                    } else if (fileType === 'pdf') {
+                      return (
+                        <iframe
+                          src={previewDocument.previewUrl}
+                          className="w-full h-[70vh] border-0"
+                          title="PDF Preview"
+                          onError={() => {
+                            console.error('PDF iframe load error');
+                            setPreviewError('Failed to load PDF preview. The PDF may be corrupted or too large.');
+                          }}
+                        />
+                      );
+                    } else {
+                      return (
+                        <div className="flex items-center justify-center h-96 p-8">
+                          <div className="text-center max-w-md">
+                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                            <h3 className="text-lg font-medium text-gray-900 mb-2">Preview Not Available</h3>
+                            <p className="text-gray-600 mb-4">
+                              Preview is not available for this file type ({fileType}). Please download the file to view it.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+                  })()}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
