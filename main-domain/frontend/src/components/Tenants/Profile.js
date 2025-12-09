@@ -533,15 +533,32 @@ const Profile = ({ onClose }) => {
                                   <p className="text-black font-medium">
                                     {unitAssignment.property.building_name || unitAssignment.property.title || unitAssignment.property.address || 'N/A'}
                                   </p>
-                                  {(unitAssignment.property.address || unitAssignment.property.city || unitAssignment.property.province) && (
+                                  {(() => {
+                                    const address = unitAssignment.property.address || '';
+                                    const city = unitAssignment.property.city || '';
+                                    const province = unitAssignment.property.province || '';
+                                    
+                                    // Check if address already contains city and/or province to avoid duplicates
+                                    const addressLower = address.toLowerCase();
+                                    const cityLower = city.toLowerCase();
+                                    const provinceLower = province.toLowerCase();
+                                    
+                                    // If address already contains city, don't add it again
+                                    const hasCityInAddress = city && addressLower.includes(cityLower);
+                                    // If address already contains province, don't add it again
+                                    const hasProvinceInAddress = province && addressLower.includes(provinceLower);
+                                    
+                                    const parts = [];
+                                    if (address) parts.push(address);
+                                    if (city && !hasCityInAddress) parts.push(city);
+                                    if (province && !hasProvinceInAddress) parts.push(province);
+                                    
+                                    return parts.length > 0 ? (
                                     <p className="text-sm text-gray-600 mt-1">
-                                      {[
-                                        unitAssignment.property.address,
-                                        unitAssignment.property.city,
-                                        unitAssignment.property.province
-                                      ].filter(Boolean).join(', ')}
+                                        {parts.join(', ')}
                                     </p>
-                                  )}
+                                    ) : null;
+                                  })()}
                                 </div>
                               </div>
                             )}
@@ -588,32 +605,58 @@ const Profile = ({ onClose }) => {
                       </div>
                       <div>
                         <h3 className="text-lg font-bold text-black">Address Information</h3>
-                        <p className="text-sm text-black">Your location details</p>
+                        <p className="text-sm text-black">Property address from your current assignment</p>
                       </div>
                     </div>
+                    {(() => {
+                      // Use property address from current assignment if available, otherwise fall back to user's personal address
+                      const hasProperty = unitAssignment.property && typeof unitAssignment.property === 'object' && (unitAssignment.property.address || unitAssignment.property.city || unitAssignment.property.province);
+                      const displayAddress = hasProperty ? (unitAssignment.property.address || '') : (profileData.address || '');
+                      const displayCity = hasProperty ? (unitAssignment.property.city || '') : (profileData.city || '');
+                      const displayProvince = hasProperty ? (unitAssignment.property.province || '') : (profileData.province || '');
+                      const displayPostalCode = profileData.postalCode || '';
+                      const displayCountry = profileData.country || 'Philippines';
+                      
+                      return (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2 md:col-span-2">
                         <label className="block text-sm font-semibold text-black">Address</label>
+                            <div className={`w-full px-4 py-3 border rounded-2xl ${
+                              hasProperty 
+                                ? 'border-gray-200 bg-gray-50 text-black' 
+                                : isEditing 
+                                  ? 'border-gray-200 bg-white hover:border-gray-300' 
+                                  : 'border-gray-200 bg-gray-50'
+                            }`}>
+                              {hasProperty ? (
+                                <p className="text-black">{displayAddress || 'No address available'}</p>
+                              ) : (
                         <textarea
                           name="address"
-                          value={profileData.address}
+                                  value={displayAddress}
                           onChange={handleInputChange}
                           disabled={!isEditing}
                           placeholder="Enter your full address (street, apartment, suite, etc.)"
                           rows={3}
-                          className={`w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 resize-none ${
-                            isEditing 
-                              ? 'border-gray-200 bg-white hover:border-gray-300' 
-                              : 'border-gray-200 bg-gray-50'
-                          }`}
-                        />
+                                  className="w-full focus:outline-none focus:ring-4 focus:ring-black/20 focus:border-black transition-all duration-200 text-black placeholder-gray-400 resize-none border-none bg-transparent"
+                                />
+                              )}
+                            </div>
+                            {hasProperty && (
+                              <p className="text-xs text-gray-500 mt-1">This is the address of your assigned property</p>
+                            )}
                       </div>
                       <div className="space-y-2">
                         <label className="block text-sm font-semibold text-black">City</label>
+                            {hasProperty ? (
+                              <div className="px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50">
+                                <p className="text-black">{displayCity || 'N/A'}</p>
+                              </div>
+                            ) : (
                         <input
                           type="text"
                           name="city"
-                          value={profileData.city}
+                                value={displayCity}
                           onChange={handleInputChange}
                           disabled={!isEditing}
                           placeholder="Enter your city"
@@ -623,13 +666,19 @@ const Profile = ({ onClose }) => {
                               : 'border-gray-200 bg-gray-50'
                           }`}
                         />
+                            )}
                       </div>
                       <div className="space-y-2">
                         <label className="block text-sm font-semibold text-black">Province/State</label>
+                            {hasProperty ? (
+                              <div className="px-4 py-3 border border-gray-200 rounded-2xl bg-gray-50">
+                                <p className="text-black">{displayProvince || 'N/A'}</p>
+                              </div>
+                            ) : (
                         <input
                           type="text"
                           name="province"
-                          value={profileData.province}
+                                value={displayProvince}
                           onChange={handleInputChange}
                           disabled={!isEditing}
                           placeholder="Enter your province or state"
@@ -639,13 +688,14 @@ const Profile = ({ onClose }) => {
                               : 'border-gray-200 bg-gray-50'
                           }`}
                         />
+                            )}
                       </div>
                       <div className="space-y-2">
                         <label className="block text-sm font-semibold text-black">Postal Code</label>
                         <input
                           type="text"
                           name="postalCode"
-                          value={profileData.postalCode}
+                              value={displayPostalCode}
                           onChange={handleInputChange}
                           disabled={!isEditing}
                           placeholder="Enter postal code"
@@ -661,7 +711,7 @@ const Profile = ({ onClose }) => {
                         <input
                           type="text"
                           name="country"
-                          value={profileData.country}
+                              value={displayCountry}
                           onChange={handleInputChange}
                           disabled={!isEditing}
                           placeholder="Enter your country"
@@ -673,6 +723,8 @@ const Profile = ({ onClose }) => {
                         />
                       </div>
                     </div>
+                      );
+                    })()}
                   </div>
 
                   {/* About Me */}

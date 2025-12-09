@@ -62,17 +62,17 @@ const AdminProfileDropdown = ({ onPageChange }) => {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+        className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-800 transition-colors"
       >
-        <div className="w-8 h-8 bg-gradient-to-br from-black to-gray-800 rounded-full flex items-center justify-center">
+        <div className="w-8 h-8 bg-gradient-to-br from-gray-700 to-gray-900 rounded-full flex items-center justify-center">
           <span className="text-white text-sm font-semibold">A</span>
         </div>
         <div className="hidden md:block text-left">
-          <p className="text-sm font-medium text-gray-900">Admin</p>
-          <p className="text-xs text-gray-500">System Administrator</p>
+          <p className="text-sm font-medium text-white">Admin</p>
+          <p className="text-xs text-gray-300">System Administrator</p>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-gray-300 transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

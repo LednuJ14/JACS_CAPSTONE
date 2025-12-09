@@ -568,7 +568,9 @@ def login():
         
         # Check if user is active using status enum
         try:
-            if not user.is_active_user():
+            # Staff accounts don't require email verification - they're verified by property managers
+            # Skip email verification check for staff
+            if not user.is_staff() and not user.is_active_user():
                 current_app.logger.warning(f"Login attempt failed - account not active: user_id={user.id}, status={getattr(user.status, 'value', user.status)}")
                 status_value = getattr(user.status, 'value', str(user.status)) if hasattr(user, 'status') and user.status else 'unknown'
                 if status_value == 'suspended':
@@ -579,6 +581,13 @@ def login():
                     return jsonify({'error': 'Email verification required'}), 401
                 else:
                     return jsonify({'error': 'Account is not active'}), 401
+            # For staff with pending_verification status, auto-verify and activate them
+            elif user.is_staff() and hasattr(user, 'status') and getattr(user.status, 'value', str(user.status)) == 'pending_verification':
+                current_app.logger.info(f"Auto-verifying staff account: user_id={user.id}")
+                user.email_verified = True
+                from models.user import UserStatus
+                user.status = UserStatus.ACTIVE
+                db.session.commit()
         except Exception as attr_error:
             current_app.logger.error(f"Error checking user status: {str(attr_error)}", exc_info=True)
             if current_app.config.get('DEBUG', False):

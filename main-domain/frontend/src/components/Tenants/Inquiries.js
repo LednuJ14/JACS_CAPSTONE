@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, memo } from 'react';
 import api from '../../services/api';
+import { getImageUrl } from '../../config/api';
+import defaultProfile from '../../assets/images/default_profile.png';
 
 /**
  * Inquiries Component - Tenant Chat Interface
@@ -45,6 +47,8 @@ const Inquiries = ({ onClose, initialChat = null }) => {
   const pollingIntervalRef = useRef(null);
   const isPollingRef = useRef(false);
   const messagesEndRef = useRef(null);
+  const lastAttachmentPollRef = useRef({}); // Track last attachment poll time per inquiry
+  const attachmentPollBackoffRef = useRef({}); // Track backoff time for 429 errors per inquiry
   const selectedChatIdRef = useRef(selectedChatId);
   const deduplicatingRef = useRef(false);
   
@@ -239,6 +243,14 @@ const Inquiries = ({ onClose, initialChat = null }) => {
     const processed = inquiries.map(inquiry => {
       const messages = parseMessages(inquiry);
       
+      // Get manager profile picture
+      const managerProfileImage = inquiry.property_manager?.profile_image_url 
+        ? getImageUrl(inquiry.property_manager.profile_image_url) 
+        : null;
+      const managerInitials = inquiry.property_manager?.first_name && inquiry.property_manager?.last_name
+        ? `${inquiry.property_manager.first_name[0]}${inquiry.property_manager.last_name[0]}`.toUpperCase()
+        : inquiry.property_manager?.first_name?.[0]?.toUpperCase() || 'PM';
+      
       return {
         id: inquiry.id,
         managerName: `${inquiry.property_manager?.first_name || 'Property'} ${inquiry.property_manager?.last_name || 'Manager'}`,
@@ -246,7 +258,8 @@ const Inquiries = ({ onClose, initialChat = null }) => {
         propertyId: inquiry.property_id,
         unitId: inquiry.unit_id || inquiry.property_id,
         unitName: inquiry.unit_name || inquiry.property?.title || 'Property',
-        avatar: '🏢',
+        avatar: managerProfileImage || null,
+        avatarInitials: managerInitials,
         status: inquiry.status || 'pending',
         messages,
         inquiry
@@ -942,21 +955,41 @@ const Inquiries = ({ onClose, initialChat = null }) => {
             return prevChats; // No changes
           });
           
-          // Update attachments for selected chat only
+          // Update attachments for selected chat only (with rate limiting and backoff)
           const currentSelectedId = selectedChatIdRef.current;
           if (currentSelectedId) {
             const selectedChat = processedChats.find(c => c.id === currentSelectedId);
             if (selectedChat) {
-              try {
-                const attData = await api.getInquiryAttachments(selectedChat.id);
+              const inquiryId = selectedChat.id;
+              const now = Date.now();
+              
+              // Check if we're in backoff period due to 429 errors
+              const backoffUntil = attachmentPollBackoffRef.current[inquiryId] || 0;
+              const isInBackoff = now < backoffUntil;
+              
+              // Only poll attachments every 10 seconds (instead of every 2 seconds)
+              const lastPoll = lastAttachmentPollRef.current[inquiryId] || 0;
+              const attachmentPollInterval = 10000; // 10 seconds
+              const shouldPoll = !isInBackoff && (now - lastPoll >= attachmentPollInterval);
+              
+              if (shouldPoll) {
+                try {
+                  const attData = await api.getInquiryAttachments(inquiryId);
+                  lastAttachmentPollRef.current[inquiryId] = now;
+                  
+                  // Reset backoff on successful request
+                  if (attachmentPollBackoffRef.current[inquiryId]) {
+                    delete attachmentPollBackoffRef.current[inquiryId];
+                  }
+                  
                 if (attData && attData.attachments && Array.isArray(attData.attachments)) {
                   setAttachments(prev => {
-                    const currentAtts = prev[selectedChat.id] || [];
+                      const currentAtts = prev[inquiryId] || [];
                     const newAtts = attData.attachments || [];
                     
                     // Check if attachments changed
                     if (currentAtts.length !== newAtts.length) {
-                      return { ...prev, [selectedChat.id]: newAtts };
+                        return { ...prev, [inquiryId]: newAtts };
                     }
                     
                     // Check if any attachment IDs are different
@@ -964,15 +997,29 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                     const newIds = new Set(newAtts.map(a => String(a.id)));
                     if (currentIds.size !== newIds.size || 
                         [...currentIds].some(id => !newIds.has(id))) {
-                      return { ...prev, [selectedChat.id]: newAtts };
+                        return { ...prev, [inquiryId]: newAtts };
                     }
                     
                     return prev; // No changes
                   });
                 }
               } catch (err) {
-                // Silently fail for attachment polling errors
-                console.debug(`Failed to poll attachments for inquiry ${selectedChat.id}:`, err);
+                  // Handle 429 errors with exponential backoff
+                  if (err?.response?.status === 429 || err?.status === 429) {
+                    const currentBackoff = attachmentPollBackoffRef.current[inquiryId] || 0;
+                    const backoffTime = Math.max(30000, (now - currentBackoff) * 2 || 30000); // Start with 30s, double each time
+                    attachmentPollBackoffRef.current[inquiryId] = now + backoffTime;
+                    
+                    if (process.env.NODE_ENV === 'development') {
+                      console.debug(`Rate limited for inquiry ${inquiryId}, backing off for ${backoffTime}ms`);
+                    }
+                  } else {
+                    // For other errors, just log in debug mode
+                    if (process.env.NODE_ENV === 'development') {
+                      console.debug(`Failed to poll attachments for inquiry ${inquiryId}:`, err);
+                    }
+                  }
+                }
               }
             }
           }
@@ -1249,8 +1296,21 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                     >
                       <div className="flex items-center space-x-3">
                         <div className="relative">
-                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-medium text-blue-600">{chat.avatar}</span>
+                          {chat.avatar ? (
+                            <img
+                              src={chat.avatar}
+                              alt={chat.managerName}
+                              className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div 
+                            className={`w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center ${chat.avatar ? 'hidden' : ''}`}
+                          >
+                            <span className="text-sm font-medium text-blue-600">{chat.avatarInitials || 'PM'}</span>
                           </div>
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1280,8 +1340,21 @@ const Inquiries = ({ onClose, initialChat = null }) => {
                 {/* Chat Header */}
                 <div className="flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-blue-600">{selectedChat.avatar}</span>
+                    {selectedChat.avatar ? (
+                      <img
+                        src={selectedChat.avatar}
+                        alt={selectedChat.managerName}
+                        className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div 
+                      className={`w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center ${selectedChat.avatar ? 'hidden' : ''}`}
+                    >
+                      <span className="text-sm font-medium text-blue-600">{selectedChat.avatarInitials || 'PM'}</span>
                     </div>
                     <div>
                       <h3 className="text-sm font-medium text-gray-900">{selectedChat.managerName}</h3>

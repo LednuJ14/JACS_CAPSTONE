@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import api from '../../services/api';
+import { getImageUrl } from '../../config/api';
+import defaultProfile from '../../assets/images/default_profile.png';
 
 const Inquiries = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState('chats');
@@ -22,6 +24,8 @@ const Inquiries = ({ isOpen, onClose }) => {
   const messagesEndRef = useRef(null);
   const selectedChatIdRef = useRef(selectedChatId);
   const deduplicatingRef = useRef(false);
+  const lastAttachmentPollRef = useRef({}); // Track last attachment poll time per inquiry
+  const attachmentPollBackoffRef = useRef({}); // Track backoff time for 429 errors per inquiry
   const [mediaUrls, setMediaUrls] = useState({}); // Cache for blob URLs
   const [lightboxImage, setLightboxImage] = useState(null); // {url, fileName} for lightbox modal
   const [copiedLink, setCopiedLink] = useState(false); // Track if link was copied
@@ -281,11 +285,21 @@ const Inquiries = ({ isOpen, onClose }) => {
       if (response && response.inquiries) {
         // Backend has already filtered inquiries by manager's properties
         // All inquiries returned here are for properties owned by this manager
-        const mapped = response.inquiries.map(inquiry => ({
-          id: inquiry.id,
-          tenantName: inquiry.tenant?.first_name && inquiry.tenant?.last_name 
+        const mapped = response.inquiries.map(inquiry => {
+          // Get tenant profile picture
+          const tenantProfileImage = inquiry.tenant?.profile_image_url 
+            ? getImageUrl(inquiry.tenant.profile_image_url) 
+            : null;
+          const tenantName = inquiry.tenant?.first_name && inquiry.tenant?.last_name 
             ? `${inquiry.tenant.first_name} ${inquiry.tenant.last_name}` 
-            : inquiry.tenant?.name || 'Tenant',
+            : inquiry.tenant?.name || 'Tenant';
+          const tenantInitials = inquiry.tenant?.first_name && inquiry.tenant?.last_name
+            ? `${inquiry.tenant.first_name[0]}${inquiry.tenant.last_name[0]}`.toUpperCase()
+            : inquiry.tenant?.first_name?.[0]?.toUpperCase() || inquiry.tenant?.name?.[0]?.toUpperCase() || 'T';
+          
+          return {
+          id: inquiry.id,
+          tenantName,
           tenantEmail: inquiry.tenant?.email || '',
           tenantPhone: inquiry.tenant?.phone || inquiry.tenant?.phone_number || null,
             tenant: inquiry.tenant || {},
@@ -295,6 +309,8 @@ const Inquiries = ({ isOpen, onClose }) => {
             unitId: inquiry.unit_id || null,
             unitName: inquiry.unit_name,
             status: inquiry.status ? inquiry.status.toLowerCase() : inquiry.status,
+            tenantProfileImage,
+            tenantInitials,
           messages: (function(){
             // Use new messages array from inquiry_messages table if available
             if (inquiry.messages && Array.isArray(inquiry.messages) && inquiry.messages.length > 0) {
@@ -336,7 +352,8 @@ const Inquiries = ({ isOpen, onClose }) => {
             return out;
           })(),
           inquiry: inquiry
-        }));
+          };
+        });
         
         // Aggressive deduplication by inquiry ID to prevent same inquiry appearing multiple times
         // But allow multiple different inquiries for the same property/unit
@@ -414,11 +431,21 @@ const Inquiries = ({ isOpen, onClose }) => {
         const response = await api.getManagerInquiries();
         if (response && response.inquiries) {
           // Map the new data same way as loadInquiries
-          const mapped = response.inquiries.map(inquiry => ({
-            id: inquiry.id,
-            tenantName: inquiry.tenant?.first_name && inquiry.tenant?.last_name 
+          const mapped = response.inquiries.map(inquiry => {
+            // Get tenant profile picture
+            const tenantProfileImage = inquiry.tenant?.profile_image_url 
+              ? getImageUrl(inquiry.tenant.profile_image_url) 
+              : null;
+            const tenantName = inquiry.tenant?.first_name && inquiry.tenant?.last_name 
               ? `${inquiry.tenant.first_name} ${inquiry.tenant.last_name}` 
-              : inquiry.tenant?.name || 'Tenant',
+              : inquiry.tenant?.name || 'Tenant';
+            const tenantInitials = inquiry.tenant?.first_name && inquiry.tenant?.last_name
+              ? `${inquiry.tenant.first_name[0]}${inquiry.tenant.last_name[0]}`.toUpperCase()
+              : inquiry.tenant?.first_name?.[0]?.toUpperCase() || inquiry.tenant?.name?.[0]?.toUpperCase() || 'T';
+            
+            return {
+            id: inquiry.id,
+            tenantName,
             tenantEmail: inquiry.tenant?.email || '',
             tenantPhone: inquiry.tenant?.phone || inquiry.tenant?.phone_number || null,
             tenant: inquiry.tenant || {},
@@ -428,6 +455,8 @@ const Inquiries = ({ isOpen, onClose }) => {
             unitId: inquiry.unit_id || null,
             unitName: inquiry.unit_name,
             status: inquiry.status ? inquiry.status.toLowerCase() : inquiry.status,
+            tenantProfileImage,
+            tenantInitials,
             messages: (function(){
               // Use new messages array from inquiry_messages table if available
               if (inquiry.messages && Array.isArray(inquiry.messages) && inquiry.messages.length > 0) {
@@ -469,7 +498,8 @@ const Inquiries = ({ isOpen, onClose }) => {
               return out;
             })(),
             inquiry: inquiry
-          }));
+            };
+          });
           
           // Update inquiries state - always update to ensure we have latest data
           setInquiries(prevInquiries => {
@@ -564,37 +594,71 @@ const Inquiries = ({ isOpen, onClose }) => {
             return prevInquiries; // No changes
           });
           
-          // Update attachments for selected chat only
+          // Update attachments for selected chat only (with rate limiting and backoff)
           const currentSelectedId = selectedChatIdRef.current;
           if (currentSelectedId) {
             const selectedInquiry = mapped.find(i => i.id === currentSelectedId);
             if (selectedInquiry) {
-              try {
-                const attData = await api.getInquiryAttachments(selectedInquiry.id);
-                if (attData && attData.attachments) {
-                  setAttachments(prev => {
-                    const currentAtts = prev[selectedInquiry.id] || [];
-                    const newAtts = attData.attachments || [];
+              const inquiryId = selectedInquiry.id;
+              const now = Date.now();
+              
+              // Check if we're in backoff period due to 429 errors
+              const backoffUntil = attachmentPollBackoffRef.current[inquiryId] || 0;
+              const isInBackoff = now < backoffUntil;
+              
+              // Only poll attachments every 10 seconds (instead of every 2 seconds)
+              const lastPoll = lastAttachmentPollRef.current[inquiryId] || 0;
+              const attachmentPollInterval = 10000; // 10 seconds
+              const shouldPoll = !isInBackoff && (now - lastPoll >= attachmentPollInterval);
+              
+              if (shouldPoll) {
+                try {
+                  const attData = await api.getInquiryAttachments(inquiryId);
+                  lastAttachmentPollRef.current[inquiryId] = now;
+                  
+                  // Reset backoff on successful request
+                  if (attachmentPollBackoffRef.current[inquiryId]) {
+                    delete attachmentPollBackoffRef.current[inquiryId];
+                  }
+                  
+                  if (attData && attData.attachments) {
+                    setAttachments(prev => {
+                      const currentAtts = prev[inquiryId] || [];
+                      const newAtts = attData.attachments || [];
+                      
+                      // Check if attachments changed
+                      if (currentAtts.length !== newAtts.length) {
+                        return { ...prev, [inquiryId]: newAtts };
+                      }
+                      
+                      // Check if any attachment IDs are different
+                      const currentIds = new Set(currentAtts.map(a => String(a.id)));
+                      const newIds = new Set(newAtts.map(a => String(a.id)));
+                      if (currentIds.size !== newIds.size || 
+                          [...currentIds].some(id => !newIds.has(id))) {
+                        return { ...prev, [inquiryId]: newAtts };
+                      }
+                      
+                      return prev; // No changes
+                    });
+                  }
+                } catch (err) {
+                  // Handle 429 errors with exponential backoff
+                  if (err?.response?.status === 429 || err?.status === 429) {
+                    const currentBackoff = attachmentPollBackoffRef.current[inquiryId] || 0;
+                    const backoffTime = Math.max(30000, (now - currentBackoff) * 2 || 30000); // Start with 30s, double each time
+                    attachmentPollBackoffRef.current[inquiryId] = now + backoffTime;
                     
-                    // Check if attachments changed
-                    if (currentAtts.length !== newAtts.length) {
-                      return { ...prev, [selectedInquiry.id]: newAtts };
+                    if (process.env.NODE_ENV === 'development') {
+                      console.debug(`Rate limited for inquiry ${inquiryId}, backing off for ${backoffTime}ms`);
                     }
-                    
-                    // Check if any attachment IDs are different
-                    const currentIds = new Set(currentAtts.map(a => String(a.id)));
-                    const newIds = new Set(newAtts.map(a => String(a.id)));
-                    if (currentIds.size !== newIds.size || 
-                        [...currentIds].some(id => !newIds.has(id))) {
-                      return { ...prev, [selectedInquiry.id]: newAtts };
+                  } else {
+                    // For other errors, just log in debug mode
+                    if (process.env.NODE_ENV === 'development') {
+                      console.debug(`Failed to poll attachments for inquiry ${inquiryId}:`, err);
                     }
-                    
-                    return prev; // No changes
-                  });
+                  }
                 }
-              } catch (err) {
-                // Silently fail for attachment polling errors
-                console.debug(`Failed to poll attachments for inquiry ${selectedInquiry.id}:`, err);
               }
             }
           }
@@ -950,23 +1014,6 @@ const Inquiries = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Error Message */}
-        {error && (
-          <div className="bg-red-50 border-l-4 border-red-400 p-4 mx-6 mt-2">
-            <div className="flex">
-              <div className="ml-3">
-                <p className="text-sm text-red-700">{error}</p>
-                <button 
-                  onClick={() => setError(null)}
-                  className="text-xs text-red-600 underline mt-1"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Tabs */}
       <div className="flex border-b">
         <button
@@ -1026,9 +1073,22 @@ const Inquiries = ({ isOpen, onClose }) => {
                     }`}
                   >
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                      {inquiry.tenantProfileImage ? (
+                        <img
+                          src={inquiry.tenantProfileImage}
+                          alt={inquiry.tenantName}
+                          className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div 
+                        className={`w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center ${inquiry.tenantProfileImage ? 'hidden' : ''}`}
+                      >
                         <span className="text-gray-600 font-medium">
-                          {(inquiry.tenantName || 'T').toString().slice(0,2).toUpperCase()}
+                          {inquiry.tenantInitials || (inquiry.tenantName || 'T').toString().slice(0,2).toUpperCase()}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
@@ -1076,8 +1136,27 @@ const Inquiries = ({ isOpen, onClose }) => {
                   {/* Chat Header */}
                   <div className="p-4 border-b bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-medium text-gray-900">{selectedChat.tenantName || selectedChat.tenant?.name}</h3>
+                      <div className="flex items-center space-x-3">
+                        {selectedChat.tenantProfileImage ? (
+                          <img
+                            src={selectedChat.tenantProfileImage}
+                            alt={selectedChat.tenantName}
+                            className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.nextSibling.style.display = 'flex';
+                            }}
+                          />
+                        ) : null}
+                        <div 
+                          className={`w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center ${selectedChat.tenantProfileImage ? 'hidden' : ''}`}
+                        >
+                          <span className="text-gray-600 font-medium text-sm">
+                            {selectedChat.tenantInitials || (selectedChat.tenantName || 'T').toString().slice(0,2).toUpperCase()}
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="font-medium text-gray-900">{selectedChat.tenantName || selectedChat.tenant?.name}</h3>
                         <p className="text-sm text-gray-500">
                           Interested in: {selectedChat.unitName ? `${selectedChat.unitName}/${selectedChat.property}` : selectedChat.property || 'Property'}
                         </p>
@@ -1086,6 +1165,7 @@ const Inquiries = ({ isOpen, onClose }) => {
                             {[selectedChat.tenantEmail || selectedChat.tenant?.email, selectedChat.tenantPhone || selectedChat.tenant?.phone].filter(Boolean).join(' • ')}
                           </p>
                         )}
+                        </div>
                       </div>
                       <div className="flex items-center space-x-3">
                         {(selectedChat.status?.toLowerCase() !== 'assigned' && selectedChat.status?.toLowerCase() !== 'closed') && (

@@ -226,13 +226,41 @@ def create_staff():
         print(f"Received staff creation data: {data}")
         
         # Validate required fields (only fields that exist in database)
-        required_fields = ['email', 'username', 'password', 'first_name', 'last_name', 'employee_id', 'staff_role', 'property_id']
+        required_fields = ['email', 'username', 'password', 'first_name', 'last_name', 'employee_id', 'staff_role']
         for field in required_fields:
             if field not in data or not data[field]:
                 return jsonify({'error': f'{field} is required'}), 400
         
-        # Validate property_id exists
-        property_id = data.get('property_id')
+        # Get property_id from subdomain context (preferred) or request body
+        property_id = None
+        
+        # Try to get from subdomain context first
+        try:
+            from routes.auth_routes import get_property_id_from_request
+            property_id = get_property_id_from_request(data=data)
+        except Exception as prop_error:
+            current_app.logger.warning(f"Could not get property_id from request context: {str(prop_error)}")
+        
+        # If not found from context, try JWT claims
+        if not property_id:
+            try:
+                from flask_jwt_extended import get_jwt
+                claims = get_jwt()
+                property_id = claims.get('property_id')
+            except Exception:
+                pass
+        
+        # If still not found, try from request body
+        if not property_id:
+            property_id = data.get('property_id')
+        
+        # Validate property_id exists and is valid
+        if not property_id:
+            return jsonify({
+                'error': 'property_id is required. Please provide property_id or access through a property subdomain.',
+                'code': 'PROPERTY_ID_REQUIRED'
+            }), 400
+        
         try:
             property_id = int(property_id)
             from models.property import Property
@@ -269,6 +297,12 @@ def create_staff():
             role=UserRole.STAFF,
             address=data.get('address') or None
         )
+        
+        # Auto-verify staff emails since they're created by property managers
+        # Staff accounts don't need email verification - they're verified by the property manager
+        user.email_verified = True
+        from models.user import UserStatus
+        user.status = UserStatus.ACTIVE
         
         db.session.add(user)
         db.session.flush()  # Get the user ID

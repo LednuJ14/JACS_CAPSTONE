@@ -77,6 +77,8 @@ class AuthServiceV2:
                 user.date_of_birth = datetime.strptime(payload['date_of_birth'], '%Y-%m-%d').date()
             except ValueError:
                 raise AuthValidationError('Invalid date format', {'message': 'Date of birth must be in YYYY-MM-DD format'})
+        if 'address' in payload and payload['address']:
+            user.address = payload['address'].strip()
 
         user.status = UserStatus.PENDING_VERIFICATION
         
