@@ -622,9 +622,16 @@ def update_bill(current_user, bill_id):
                 'code': 'PROPERTY_ACCESS_DENIED'
             }), 403
         
-        # Verify bill belongs to this property
-        unit = Unit.query.get(bill.unit_id)
-        if not unit or unit.property_id != property_id:
+        # Verify bill belongs to this property using raw SQL to avoid enum validation issues
+        unit_check = db.session.execute(text(
+            """
+            SELECT id, property_id FROM units 
+            WHERE id = :unit_id AND property_id = :property_id
+            LIMIT 1
+            """
+        ), {'unit_id': bill.unit_id, 'property_id': property_id}).first()
+        
+        if not unit_check:
             return jsonify({'error': 'Bill does not belong to this property'}), 403
         
         # Update fields if provided
@@ -636,8 +643,16 @@ def update_bill(current_user, bill_id):
         
         if 'unit_id' in data:
             unit_id = data['unit_id']
-            unit_obj = Unit.query.get(unit_id)
-            if not unit_obj or unit_obj.property_id != property_id:
+            # Verify unit belongs to property using raw SQL to avoid enum validation issues
+            unit_check = db.session.execute(text(
+                """
+                SELECT id, property_id FROM units 
+                WHERE id = :unit_id AND property_id = :property_id
+                LIMIT 1
+                """
+            ), {'unit_id': unit_id, 'property_id': property_id}).first()
+            
+            if not unit_check:
                 return jsonify({'error': 'Unit does not belong to this property'}), 400
             bill.unit_id = unit_id
         
@@ -653,8 +668,8 @@ def update_bill(current_user, bill_id):
         
         if 'amount' in data:
             bill.amount = Decimal(str(data['amount']))
-            # Recalculate amount_due
-            bill.amount_due = bill.amount - bill.amount_paid
+            # amount_due is a computed property, so it will be recalculated automatically
+            # No need to set it directly - it's calculated as amount - amount_paid
         
         if 'due_date' in data:
             due_date_str = data['due_date']
@@ -765,8 +780,16 @@ def delete_bill(current_user, bill_id):
             return jsonify({'error': 'Property context is required'}), 400
         
         # Verify bill belongs to this property
-        unit = Unit.query.get(bill.unit_id)
-        if not unit or unit.property_id != property_id:
+        # Verify bill belongs to property using raw SQL to avoid enum validation issues
+        unit_check = db.session.execute(text(
+            """
+            SELECT id, property_id FROM units 
+            WHERE id = :unit_id AND property_id = :property_id
+            LIMIT 1
+            """
+        ), {'unit_id': bill.unit_id, 'property_id': property_id}).first()
+        
+        if not unit_check:
             return jsonify({'error': 'Bill does not belong to this property'}), 403
         
         # Check if bill has payments - if so, warn or prevent deletion
@@ -1033,8 +1056,16 @@ def approve_payment(current_user, payment_id):
         if not bill:
             return jsonify({'error': 'Bill not found'}), 404
         
-        unit = Unit.query.get(bill.unit_id)
-        if not unit or unit.property_id != property_id:
+        # Verify payment belongs to property using raw SQL to avoid enum validation issues
+        unit_check = db.session.execute(text(
+            """
+            SELECT id, property_id FROM units 
+            WHERE id = :unit_id AND property_id = :property_id
+            LIMIT 1
+            """
+        ), {'unit_id': bill.unit_id, 'property_id': property_id}).first()
+        
+        if not unit_check:
             return jsonify({'error': 'Payment does not belong to this property'}), 403
         
         # Update payment status
@@ -1166,8 +1197,16 @@ def reject_payment(current_user, payment_id):
         if not bill:
             return jsonify({'error': 'Bill not found'}), 404
         
-        unit = Unit.query.get(bill.unit_id)
-        if not unit or unit.property_id != property_id:
+        # Verify payment belongs to property using raw SQL to avoid enum validation issues
+        unit_check = db.session.execute(text(
+            """
+            SELECT id, property_id FROM units 
+            WHERE id = :unit_id AND property_id = :property_id
+            LIMIT 1
+            """
+        ), {'unit_id': bill.unit_id, 'property_id': property_id}).first()
+        
+        if not unit_check:
             return jsonify({'error': 'Payment does not belong to this property'}), 403
         
         # Update payment status

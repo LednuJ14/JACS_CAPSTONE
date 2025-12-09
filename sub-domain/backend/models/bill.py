@@ -264,49 +264,102 @@ class Bill(db.Model):
         
         if include_unit:
             try:
-                # Access unit through relationship
-                unit = getattr(self, 'unit', None)
-                if unit:
-                    if hasattr(unit, 'to_dict'):
-                        unit_dict = unit.to_dict()
-                        # Always add property information
-                        if hasattr(unit, 'property') and unit.property:
-                            property_obj = unit.property
-                            unit_dict['property_obj'] = {
-                                'id': property_obj.id,
-                                'name': getattr(property_obj, 'name', None) or getattr(property_obj, 'title', None) or getattr(property_obj, 'building_name', None) or f'Property {property_obj.id}',
-                                'title': getattr(property_obj, 'title', None),
-                                'building_name': getattr(property_obj, 'building_name', None)
-                            }
-                            unit_dict['property'] = unit_dict['property_obj']  # Alias for backward compatibility
-                        elif hasattr(unit, 'property_id') and unit.property_id:
-                            # Fallback: if property relationship doesn't work, at least include property_id
-                            unit_dict['property_id'] = unit.property_id
-                            unit_dict['property'] = {
-                                'id': unit.property_id,
-                                'name': f'Property {unit.property_id}'
-                            }
-                        # Ensure unit_number and unit_name are both included
-                        if 'unit_number' in unit_dict and not 'unit_name' in unit_dict:
-                            unit_dict['unit_name'] = unit_dict['unit_number']
-                        if 'unit_name' in unit_dict and not 'unit_number' in unit_dict:
-                            unit_dict['unit_number'] = unit_dict['unit_name']
-                        data['unit'] = unit_dict
-                    else:
-                        # Fallback: create minimal unit data
-                        property_id = getattr(unit, 'property_id', None)
+                # Use raw SQL to get unit name directly from database to avoid enum validation issues
+                from sqlalchemy import text
+                from app import db
+                
+                unit_id = self.unit_id
+                if unit_id:
+                    # Fetch unit name directly from database using raw SQL
+                    # The database column is 'unit_name' (mapped to model attribute 'unit_number')
+                    try:
+                        unit_result = db.session.execute(text(
+                            "SELECT id, unit_name, property_id FROM units WHERE id = :unit_id"
+                        ), {'unit_id': unit_id}).first()
+                    except Exception as query_error:
+                        # If query fails, log and create minimal unit data
+                        try:
+                            from flask import current_app
+                            current_app.logger.warning(f"Error querying unit {unit_id} for bill {self.id}: {str(query_error)}")
+                        except Exception:
+                            pass
+                        unit_result = None
+                    
+                    if unit_result:
+                        unit_id_from_db = unit_result[0]
+                        # Get unit_name from database - handle NULL and empty strings
+                        unit_name_raw = unit_result[1]
+                        unit_name_from_db = None
+                        
+                        if unit_name_raw:
+                            # Check if it's a non-empty string
+                            if isinstance(unit_name_raw, str) and unit_name_raw.strip():
+                                unit_name_from_db = unit_name_raw.strip()
+                        
+                        # If unit_name is NULL or empty in database, generate one from unit_id
+                        if not unit_name_from_db:
+                            unit_name_from_db = f"Unit {unit_id_from_db}"
+                        
+                        property_id_from_db = unit_result[2]
+                        
+                        # Get property name
+                        property_name = f'Property {property_id_from_db}'
+                        if property_id_from_db:
+                            try:
+                                prop_result = db.session.execute(text(
+                                    "SELECT name, title, building_name FROM properties WHERE id = :prop_id"
+                                ), {'prop_id': property_id_from_db}).first()
+                                if prop_result:
+                                    property_name = prop_result[0] or prop_result[1] or prop_result[2] or property_name
+                            except Exception:
+                                pass
+                        
                         unit_dict = {
-                            'id': unit.id,
-                            'unit_number': getattr(unit, 'unit_number', None) or getattr(unit, 'unit_name', None),
-                            'unit_name': getattr(unit, 'unit_name', None) or getattr(unit, 'unit_number', None),
-                            'property_id': property_id
-                        }
-                        if property_id:
-                            unit_dict['property'] = {
-                                'id': property_id,
-                                'name': f'Property {property_id}'
+                            'id': unit_id_from_db,
+                            'unit_number': unit_name_from_db,  # Map to unit_number for compatibility
+                            'unit_name': unit_name_from_db,    # The actual unit name from database
+                            'name': unit_name_from_db,          # Alias for compatibility
+                            'property_id': property_id_from_db,
+                            'property': {
+                                'id': property_id_from_db,
+                                'name': property_name,
+                                'title': property_name,
+                                'building_name': property_name
+                            },
+                            'property_obj': {
+                                'id': property_id_from_db,
+                                'name': property_name,
+                                'title': property_name,
+                                'building_name': property_name
                             }
+                        }
                         data['unit'] = unit_dict
+                        
+                        # Log for debugging (only in development)
+                        try:
+                            from flask import current_app
+                            if current_app.config.get('DEBUG', False):
+                                current_app.logger.debug(f"Bill {self.id}: Unit {unit_id_from_db} - unit_name='{unit_name_from_db}'")
+                        except Exception:
+                            pass
+                    else:
+                        # Unit not found, create minimal data
+                        data['unit'] = {
+                            'id': unit_id,
+                            'unit_number': None,
+                            'unit_name': None,
+                            'name': None,
+                            'property_id': None
+                        }
+                else:
+                    # No unit_id, create empty unit data
+                    data['unit'] = {
+                        'id': None,
+                        'unit_number': None,
+                        'unit_name': None,
+                        'name': None,
+                        'property_id': None
+                    }
             except Exception as unit_error:
                 # Include minimal unit data if serialization fails
                 try:

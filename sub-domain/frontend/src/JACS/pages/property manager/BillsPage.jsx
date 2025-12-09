@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Search, Download, Edit, Trash2, Loader2, X, CreditCard, DollarSign, Calendar, Filter, MoreVertical, CheckCircle, Clock, AlertTriangle, Building, User, Eye, ArrowRight, AlertCircle, Repeat, FileText, Hash, Bell, Mail, Image, FileCheck, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Loader2, X, CreditCard, DollarSign, Calendar, Filter, MoreVertical, CheckCircle, Clock, AlertTriangle, Building, User, Eye, ArrowRight, AlertCircle, Repeat, FileText, Hash, Bell, Mail, Image, FileCheck, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import AccountSettings from '../../components/AccountSettings';
 import ErrorBoundary from '../../components/ErrorBoundary';
@@ -52,7 +52,8 @@ const BillsPage = () => {
     }
 
     fetchBillsData();
-  }, [navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
   const fetchBillsData = async () => {
@@ -103,9 +104,30 @@ const BillsPage = () => {
             }
             
             // Get unit number/name - check multiple sources
-            const unitNumber = unit.unit_number || unit.unit_name || unit.unit_name || null;
+            // First, try to get from bill's unit directly
+            // The backend returns unit_name from the database column 'unit_name'
+            let unitNumber = null;
+            if (unit && Object.keys(unit).length > 0) {
+              // Check all possible field names - backend sets unit_name, unit_number, and name
+              unitNumber = unit.unit_name || unit.unit_number || unit.name || null;
+              
+              // Debug logging (remove in production)
+              if (process.env.NODE_ENV === 'development' && !unitNumber && (unit.id || bill.unit_id)) {
+                console.warn(`Bill ${bill.id}: Unit ${unit.id || bill.unit_id} has no name. Unit object:`, unit);
+              }
+            }
+            
+            // Also check tenant's current_rent for unit info
+            const currentRent = tenant.current_rent || {};
+            const rentUnit = currentRent.unit || {};
+            const rentUnitName = rentUnit ? (rentUnit.unit_name || rentUnit.unit_number || rentUnit.name || null) : null;
+            
+            // Check tenant's assigned room as fallback
             const tenantRoom = tenant.assigned_room || tenant.room_number || null;
-            const roomNumber = unitNumber || tenantRoom || 'N/A';
+            
+            // Prioritize: unit from bill > unit from current_rent > tenant room
+            // Only use unit ID as fallback if we truly have no name
+            const roomNumber = unitNumber || rentUnitName || tenantRoom || null;
             
             return {
               id: bill.id,
@@ -115,8 +137,9 @@ const BillsPage = () => {
               property_id: propertyId || unit.property_id || tenant.property_id,
               property_name: propertyName,
               unit_id: unit.id || bill.unit_id,
-              unit_number: unitNumber,
+              unit_number: unitNumber || rentUnitName || tenantRoom,
               room_number: roomNumber,
+              unit_name: unitNumber || rentUnitName || tenantRoom, // Store unit name for easy access
               bill_type: bill.bill_type || 'other',
               amount: parseFloat(bill.amount || 0),
               amount_paid: parseFloat(bill.amount_paid || 0),
@@ -132,7 +155,6 @@ const BillsPage = () => {
               _fullData: bill
             };
           } catch (err) {
-            console.error('Error transforming bill:', err, bill);
             // Return minimal bill data if transformation fails
             return {
               id: bill.id || 0,
@@ -168,7 +190,6 @@ const BillsPage = () => {
         });
         setError(null);
       } catch (apiError) {
-        console.warn('API not available:', apiError);
         setBills([]);
         setDashboardData({
           total_revenue: 0,
@@ -185,7 +206,6 @@ const BillsPage = () => {
         setError(null);
       }
     } catch (err) {
-      console.error('Failed to fetch bills data:', err);
       setError('Failed to load bills data');
     } finally {
       setLoading(false);
@@ -281,7 +301,7 @@ const BillsPage = () => {
         setTenants(data);
       }
     } catch (e) {
-      console.error('Failed to load tenants:', e);
+      // Silently handle tenant loading error
     }
     
     setShowEditBill(true);
@@ -352,7 +372,6 @@ const BillsPage = () => {
       closeEditBillModal();
       await fetchBillsData();
     } catch (e) {
-      console.error('Update bill error:', e);
       setAddError(e?.message || e?.error || 'Failed to update bill. Please try again.');
     } finally {
       setSaving(false);
@@ -369,7 +388,6 @@ const BillsPage = () => {
       await apiService.deleteBill(bill.id);
       await fetchBillsData();
     } catch (error) {
-      console.error('Failed to delete bill:', error);
       alert(error?.message || error?.error || 'Failed to delete bill. Please try again.');
     } finally {
       setLoading(false);
@@ -430,7 +448,6 @@ const BillsPage = () => {
       closeAddBillModal();
       await fetchBillsData();
     } catch (e) {
-      console.error('Create bill error:', e);
       setAddError(e?.message || e?.error || 'Failed to create bill. Please try again.');
     } finally {
       setSaving(false);
@@ -629,11 +646,6 @@ const BillsPage = () => {
                 </button>
               </div>
 
-              {/* Export Button */}
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-                <Download className="w-4 h-4" />
-                <span>Export</span>
-              </button>
             </div>
 
             {/* Search and Filters */}
@@ -720,19 +732,14 @@ const BillsPage = () => {
                           </div>
                           <div>
                             <div className="text-sm font-medium text-gray-900">{bill.tenant_name}</div>
-                            <div className="text-xs text-gray-500">ID: {bill.id}</div>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
                           <Building className="w-4 h-4 text-gray-400" />
-                          <div>
-                            <div className="text-sm text-gray-900">{bill.property_name}</div>
-                            <div className="text-xs text-gray-500">Unit: {bill.room_number}</div>
-                            {bill.unit_id && (
-                              <div className="text-xs text-gray-400">Unit ID: {bill.unit_id}</div>
-                            )}
+                          <div className="text-sm font-medium text-gray-900">
+                            {bill.unit_name || bill.unit_number || bill.room_number || (bill.unit_id ? `Unit ${bill.unit_id}` : 'Unassigned')}
                           </div>
                         </div>
                       </td>
@@ -744,9 +751,6 @@ const BillsPage = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-lg font-semibold text-gray-900">₱{(bill.amount || 0).toLocaleString()}</div>
-                        {bill.amount_due > 0 && (
-                          <div className="text-xs text-gray-500">Due: ₱{(bill.amount_due || 0).toLocaleString()}</div>
-                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center space-x-2">
@@ -1694,7 +1698,6 @@ const BillsPage = () => {
                           setShowPaymentProof(false);
                           setSelectedPayment(null);
                         } catch (error) {
-                          console.error('Failed to approve payment:', error);
                           alert('Failed to approve payment. Please try again.');
                         }
                       }}
@@ -1717,7 +1720,6 @@ const BillsPage = () => {
                             setShowPaymentProof(false);
                             setSelectedPayment(null);
                           } catch (error) {
-                            console.error('Failed to reject payment:', error);
                             alert('Failed to reject payment. Please try again.');
                           }
                         }

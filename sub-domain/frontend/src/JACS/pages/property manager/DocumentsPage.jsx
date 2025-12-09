@@ -14,6 +14,10 @@ const DocumentsPage = () => {
   const [category, setCategory] = useState('all');
   const [property, setProperty] = useState('all');
   const [preview, setPreview] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewMime, setPreviewMime] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [documentTypes, setDocumentTypes] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -31,6 +35,50 @@ const DocumentsPage = () => {
       setLoading(false);
     }
   };
+
+  // Cleanup preview object URLs when closing
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  // Load preview content when a document is selected
+  useEffect(() => {
+    const loadPreview = async () => {
+      if (!preview) return;
+      setPreviewLoading(true);
+      setPreviewError(null);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+      }
+      try {
+        const response = await fetch(`${apiService.getBaseURL()}/documents/${preview.id}/download`, {
+          headers: {
+            'Authorization': `Bearer ${apiService.getToken()}`
+          }
+        });
+        if (!response.ok) {
+          throw new Error('Failed to load preview');
+        }
+        const contentType = response.headers.get('content-type');
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+        setPreviewMime(contentType);
+      } catch (err) {
+        console.error('Preview load error:', err);
+        setPreviewError('Preview not available. Please download the file.');
+      } finally {
+        setPreviewLoading(false);
+      }
+    };
+
+    loadPreview();
+  }, [preview]);
 
   const loadDocumentTypes = async () => {
     try {
@@ -252,7 +300,14 @@ const DocumentsPage = () => {
               <div className="bg-white rounded-2xl w-full max-w-2xl mx-4 shadow-2xl">
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-gray-900">Preview</h3>
-                  <button onClick={() => setPreview(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
+                  <button onClick={() => {
+                    setPreview(null);
+                    setPreviewError(null);
+                    if (previewUrl) {
+                      URL.revokeObjectURL(previewUrl);
+                      setPreviewUrl(null);
+                    }
+                  }} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
@@ -266,8 +321,35 @@ const DocumentsPage = () => {
                       <p className="text-sm text-gray-500">{preview.document_type} • {preview.unit_name || 'All Units'}</p>
                     </div>
                   </div>
-                  <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-500">
-                    <p>Live file preview is not available in this demo.</p>
+                  <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-500 min-h-[280px] flex items-center justify-center">
+                    {previewLoading && (
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Loading preview...</span>
+                      </div>
+                    )}
+                    {!previewLoading && previewError && (
+                      <p>{previewError}</p>
+                    )}
+                    {!previewLoading && !previewError && previewUrl && (
+                      <>
+                        {previewMime?.startsWith('image/') && (
+                          <img src={previewUrl} alt={preview.name} className="max-h-96 w-full object-contain rounded-lg" />
+                        )}
+                        {previewMime?.includes('pdf') && (
+                          <iframe
+                            title="Document preview"
+                            src={previewUrl}
+                            className="w-full h-96 rounded-lg bg-white"
+                          />
+                        )}
+                        {!previewMime?.startsWith('image/') && !previewMime?.includes('pdf') && (
+                          <div className="text-sm text-gray-600">
+                            Preview not available for this file type. Please download to view.
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="px-6 py-4 border-t border-gray-100 flex justify-end">

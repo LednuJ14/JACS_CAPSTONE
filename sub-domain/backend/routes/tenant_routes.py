@@ -42,7 +42,8 @@ def get_my_tenant():
             return jsonify({'error': 'Tenant profile not found'}), 404
         
         try:
-            tenant_data = tenant.to_dict(include_user=True, include_lease=False)
+            # Include current rental info so frontend can derive unit_id/property_id
+            tenant_data = tenant.to_dict(include_user=True, include_lease=False, include_rent=True)
             return jsonify(tenant_data), 200
         except Exception as tenant_error:
             current_app.logger.warning(f"Error serializing tenant {tenant.id}: {str(tenant_error)}")

@@ -8,21 +8,11 @@ import {
   Trash2, 
   Loader2, 
   X, 
-  Megaphone, 
   Calendar, 
-  Filter, 
-  MoreVertical, 
-  Eye, 
-  Clock, 
-  AlertCircle, 
-  CheckCircle, 
   FileText, 
   Bell, 
-  Users, 
-  Tag,
   Send,
   Pin,
-  Archive,
   Settings
 } from 'lucide-react';
 import { apiService } from '../../../services/api';
@@ -279,65 +269,6 @@ const AnnouncementPage = () => {
             </button>
           </div>
 
-          {/* Key Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Total Announcements</p>
-                  <p className="text-2xl font-bold text-gray-900">{announcements.length}</p>
-                  <p className="text-xs text-gray-500 mt-1">all time</p>
-                </div>
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <Megaphone className="w-6 h-6 text-blue-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Active Announcements</p>
-                  <p className="text-2xl font-bold text-green-600">{announcements.filter(a => a.status === 'active').length}</p>
-                  <p className="text-xs text-gray-500 mt-1">currently active</p>
-                </div>
-                <div className="p-3 bg-green-50 rounded-lg">
-                  <CheckCircle className="w-6 h-6 text-green-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Pinned Announcements</p>
-                  <p className="text-2xl font-bold text-amber-600">{announcements.filter(a => a.is_pinned).length}</p>
-                  <p className="text-xs text-gray-500 mt-1">featured posts</p>
-                </div>
-                <div className="p-3 bg-amber-50 rounded-lg">
-                  <Pin className="w-6 h-6 text-amber-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">This Month</p>
-                  <p className="text-2xl font-bold text-purple-600">{announcements.filter(a => {
-                    const createdDate = new Date(a.created_at);
-                    const now = new Date();
-                    return createdDate.getMonth() === now.getMonth() && createdDate.getFullYear() === now.getFullYear();
-                  }).length}</p>
-                  <p className="text-xs text-gray-500 mt-1">new announcements</p>
-                </div>
-                <div className="p-3 bg-purple-50 rounded-lg">
-                  <Calendar className="w-6 h-6 text-purple-600" />
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Filters and Search */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div className="flex flex-col lg:flex-row gap-4">
@@ -393,9 +324,6 @@ const AnnouncementPage = () => {
                         {announcement.title}
                       </h3>
                     </div>
-                    <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
                   </div>
 
                   {/* Content */}
@@ -616,43 +544,6 @@ const AnnouncementPage = () => {
                 </div>
               </div>
 
-              {/* Options */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center">
-                  <Bell className="w-4 h-4 mr-2" />
-                  Options
-                </h3>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="is_pinned"
-                      checked={form.is_pinned}
-                      onChange={(e) => setForm({ ...form, is_pinned: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label htmlFor="is_pinned" className="text-sm font-medium text-gray-700 flex items-center">
-                      <Pin className="w-4 h-4 mr-1" />
-                      Pin this announcement to the top
-                    </label>
-                  </div>
-
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="send_notification"
-                      checked={form.send_notification}
-                      onChange={(e) => setForm({ ...form, send_notification: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label htmlFor="send_notification" className="text-sm font-medium text-gray-700 flex items-center">
-                      <Bell className="w-4 h-4 mr-1" />
-                      Send push notification to residents
-                    </label>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div className="flex justify-end space-x-3 mt-6">
@@ -786,44 +677,6 @@ const AnnouncementPage = () => {
                       <option value="tenants">Tenants Only</option>
                       <option value="staff">Staff Only</option>
                     </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Options */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center">
-                  <Bell className="w-4 h-4 mr-2" />
-                  Options
-                </h3>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="edit_is_pinned"
-                      checked={form.is_pinned}
-                      onChange={(e) => setForm({ ...form, is_pinned: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label htmlFor="edit_is_pinned" className="text-sm font-medium text-gray-700 flex items-center">
-                      <Pin className="w-4 h-4 mr-1" />
-                      Pin this announcement to the top
-                    </label>
-                  </div>
-
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      id="edit_send_notification"
-                      checked={form.send_notification}
-                      onChange={(e) => setForm({ ...form, send_notification: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <label htmlFor="edit_send_notification" className="text-sm font-medium text-gray-700 flex items-center">
-                      <Bell className="w-4 h-4 mr-1" />
-                      Send push notification to residents
-                    </label>
                   </div>
                 </div>
               </div>

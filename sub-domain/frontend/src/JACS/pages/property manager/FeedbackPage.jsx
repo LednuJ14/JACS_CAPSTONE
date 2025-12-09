@@ -240,10 +240,6 @@ const FeedbackPage = () => {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Feedback & Complaints</h1>
               <p className="text-gray-600">Manage tenant feedback, complaints, and suggestions effectively</p>
             </div>
-            <button className="flex items-center space-x-2 px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md">
-              <Download className="w-4 h-4" />
-              <span>Export</span>
-            </button>
           </div>
 
           {/* Key Metrics Cards */}

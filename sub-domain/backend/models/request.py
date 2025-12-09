@@ -175,8 +175,43 @@ class MaintenanceRequest(db.Model):
         if include_tenant and self.tenant:
             data['tenant'] = self.tenant.to_dict(include_user=True)
         
-        if include_unit and self.unit:
-            data['unit'] = self.unit.to_dict()
+        if include_unit:
+            try:
+                from sqlalchemy import text
+                # Fetch unit info via raw SQL to avoid enum validation issues
+                unit_row = db.session.execute(text(
+                    "SELECT id, unit_name, property_id FROM units WHERE id = :uid"
+                ), {'uid': self.unit_id}).first()
+                if unit_row:
+                    unit_name = unit_row[1] or f"Unit {unit_row[0]}"
+                    property_id = unit_row[2]
+                    data['unit'] = {
+                        'id': unit_row[0],
+                        'unit_number': unit_name,
+                        'unit_name': unit_name,
+                        'name': unit_name,
+                        'property_id': property_id,
+                        'property': {
+                            'id': property_id
+                        }
+                    }
+                else:
+                    data['unit'] = {
+                        'id': self.unit_id,
+                        'unit_number': None,
+                        'unit_name': None,
+                        'name': None,
+                        'property_id': None
+                    }
+            except Exception:
+                # Fallback to minimal data without invoking ORM enums
+                data['unit'] = {
+                    'id': self.unit_id,
+                    'unit_number': None,
+                    'unit_name': None,
+                    'name': None,
+                    'property_id': None
+                }
         
         if include_assigned_staff and self.assigned_staff:
             data['assigned_staff'] = self.assigned_staff.to_dict(include_user=True)

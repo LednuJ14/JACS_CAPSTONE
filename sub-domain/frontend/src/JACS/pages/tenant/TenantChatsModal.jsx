@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Loader2, MessageCircle, Send, User, Clock, Search, MoreVertical, Paperclip, Smile, Check, CheckCheck } from 'lucide-react';
+import { X, Loader2, MessageCircle, Send, User, Clock, Paperclip, Smile, Check, CheckCheck } from 'lucide-react';
 import { apiService } from '../../../services/api';
 
 const TenantChatsModal = ({ isOpen, onClose }) => {
@@ -10,8 +10,7 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
   const [newMessage, setNewMessage] = useState('');
   const [tenant, setTenant] = useState(null);
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [creatingChat, setCreatingChat] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  // Search removed per requirements
 
   useEffect(() => {
     if (isOpen) {
@@ -142,34 +141,24 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
     }
   };
 
-  const startNewChat = async () => {
-    try {
-      setCreatingChat(true);
-      setError(null);
-      
-      // Backend will automatically use property manager's name as subject
-      const newChat = await apiService.createChat({
-        // Subject will be set by backend to property manager's name
-      });
-      
-      setCurrentChat(newChat);
-      
-      // Refresh chats list
-      const chatsData = await apiService.getChats();
-      setChats(Array.isArray(chatsData) ? chatsData : []);
-    } catch (err) {
-      console.error('Failed to create chat:', err);
-      setError('Failed to create new chat. Please try again.');
-    } finally {
-      setCreatingChat(false);
-    }
+  // Filter chats based on search
+  const filteredChats = chats;
+
+  // Force gray placeholder avatars (ignore profile photos)
+  const getManagerAvatar = () => null;
+
+  const getManagerName = (chatObj) => {
+    return chatObj?.property?.manager?.name || chatObj?.subject || 'Management';
   };
 
-  // Filter chats based on search
-  const filteredChats = chats.filter(chat => 
-    chat.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    chat.messages?.some(msg => msg.content.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const getManagerInitials = (chatObj) => {
+    const name = getManagerName(chatObj);
+    if (!name) return 'PM';
+    const parts = name.trim().split(' ');
+    const first = parts[0]?.charAt(0) || '';
+    const last = parts.length > 1 ? parts[parts.length - 1].charAt(0) : '';
+    return (first + last).toUpperCase() || 'PM';
+  };
 
   const formatTime = (dateString) => {
     const date = new Date(dateString);
@@ -193,39 +182,20 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 rounded-t-xl">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-              <MessageCircle className="w-5 h-5 text-purple-600" />
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <MessageCircle className="w-5 h-5 text-blue-600" />
             </div>
             <div>
               <h2 className="text-xl font-bold text-gray-900">Messages</h2>
               <p className="text-sm text-gray-500">Communicate with management</p>
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={startNewChat}
-              disabled={creatingChat || !tenant}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 text-sm"
-            >
-              {creatingChat ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Creating...</span>
-                </>
-              ) : (
-                <>
-                  <MessageCircle className="w-4 h-4" />
-                  <span>New Message</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
         {/* Content */}
@@ -253,18 +223,6 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
             <>
               {/* Chat List */}
               <div className="w-1/3 bg-gray-50 border-r border-gray-200 flex flex-col">
-                <div className="px-4 py-3 border-b border-gray-200">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input
-                      type="text"
-                      placeholder="Search conversations..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    />
-                  </div>
-                </div>
                 <div className="flex-1 overflow-y-auto">
                   {!tenant ? (
                     <div className="px-4 py-8 text-center text-gray-500">
@@ -289,12 +247,12 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
                           }`}
                         >
                           <div className="flex items-start space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <User className="w-5 h-5 text-white" />
+                            <div className="w-10 h-10 bg-gradient-to-br from-gray-300 to-gray-400 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-semibold">
+                              {getManagerInitials(chat)}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between mb-1">
-                                <h3 className="font-medium text-gray-900 truncate text-sm">{chat.subject}</h3>
+                                <h3 className="font-medium text-gray-900 truncate text-sm">{getManagerName(chat)}</h3>
                                 <span className="text-xs text-gray-500">
                                   {formatTime(chat.messages && chat.messages.length > 0 
                                     ? chat.messages[chat.messages.length - 1].created_at
@@ -328,18 +286,13 @@ const TenantChatsModal = ({ isOpen, onClose }) => {
                     <div className="px-6 py-4 border-b border-gray-200">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                            <User className="w-5 h-5 text-white" />
+                          <div className="w-10 h-10 bg-gradient-to-br from-gray-300 to-gray-400 rounded-lg flex items-center justify-center text-white font-semibold">
+                            {getManagerInitials(currentChat)}
                           </div>
                           <div>
-                            <h2 className="text-lg font-semibold text-gray-900">{currentChat.subject}</h2>
+                            <h2 className="text-lg font-semibold text-gray-900">{getManagerName(currentChat)}</h2>
                             <p className="text-sm text-gray-500">Management Team</p>
                           </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
                         </div>
                       </div>
                     </div>

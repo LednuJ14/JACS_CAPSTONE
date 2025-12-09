@@ -12,6 +12,7 @@ const TenantFeedbackPage = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [editingFeedback, setEditingFeedback] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -81,18 +82,20 @@ const TenantFeedbackPage = () => {
         status: 'new'
       };
 
-      const newFeedback = await apiService.createFeedback(feedbackData);
+      if (editingFeedback) {
+        await apiService.updateFeedback(editingFeedback.id, feedbackData);
+      } else {
+        await apiService.createFeedback(feedbackData);
+      }
       
-      // Refresh feedback list
       await fetchFeedbackData();
-      
-      // Reset form and close modal
       setFormData({
         subject: '',
         message: '',
         feedback_type: 'other',
         rating: null
       });
+      setEditingFeedback(null);
       setShowCreateModal(false);
       setSubmitError(null);
     } catch (err) {
@@ -110,6 +113,24 @@ const TenantFeedbackPage = () => {
       setShowDetailsModal(true);
     } catch (err) {
       console.error('Failed to load feedback details:', err);
+    }
+  };
+
+  const handleEditFeedback = async (item) => {
+    try {
+      const detail = await apiService.getFeedbackById(item.id);
+      setFormData({
+        subject: detail.subject || '',
+        message: detail.message || detail.content || '',
+        feedback_type: detail.feedback_type || 'other',
+        rating: detail.rating || null
+      });
+      setEditingFeedback(detail);
+      setShowCreateModal(true);
+      setSubmitError(null);
+    } catch (err) {
+      console.error('Failed to load feedback for edit:', err);
+      setSubmitError('Failed to load feedback for editing.');
     }
   };
 
@@ -210,61 +231,6 @@ const TenantFeedbackPage = () => {
             </div>
           )}
 
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Total Feedback</p>
-                  <p className="text-2xl font-bold text-gray-900">{totalFeedback}</p>
-                  <p className="text-xs text-gray-500 mt-1">all submissions</p>
-                </div>
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <MessageSquare className="w-6 h-6 text-blue-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Complaints</p>
-                  <p className="text-2xl font-bold text-red-600">{complaintsCount}</p>
-                  <p className="text-xs text-gray-500 mt-1">issues reported</p>
-                </div>
-                <div className="p-3 bg-red-50 rounded-lg">
-                  <AlertTriangle className="w-6 h-6 text-red-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">New</p>
-                  <p className="text-2xl font-bold text-amber-600">{newCount}</p>
-                  <p className="text-xs text-gray-500 mt-1">pending review</p>
-                </div>
-                <div className="p-3 bg-amber-50 rounded-lg">
-                  <Clock className="w-6 h-6 text-amber-600" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Resolved</p>
-                  <p className="text-2xl font-bold text-green-600">{resolvedCount}</p>
-                  <p className="text-xs text-gray-500 mt-1">completed</p>
-                </div>
-                <div className="p-3 bg-green-50 rounded-lg">
-                  <CheckCircle className="w-6 h-6 text-green-600" />
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Search and Filter */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div className="flex flex-col sm:flex-row gap-4">
@@ -357,13 +323,22 @@ const TenantFeedbackPage = () => {
                           </span>
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleViewDetails(item.id)}
-                        className="ml-4 p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-150"
-                        title="View Details"
-                      >
-                        <Eye className="w-5 h-5" />
-                      </button>
+                      <div className="ml-4 flex items-center space-x-2">
+                        <button
+                          onClick={() => handleViewDetails(item.id)}
+                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-150"
+                          title="View Details"
+                        >
+                          <Eye className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleEditFeedback(item)}
+                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors duration-150"
+                          title="Edit Feedback"
+                        >
+                          <FileText className="w-5 h-5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Receipt, Calendar, AlertCircle, Eye, X, CreditCard, TrendingUp, Filter, Search, Download, MoreVertical, CheckCircle, Clock, AlertTriangle, Upload, FileText } from 'lucide-react';
+import { Loader2, Receipt, Calendar, AlertCircle, Eye, X, CreditCard, TrendingUp, Filter, Search, Download, CheckCircle, Clock, AlertTriangle, Upload, FileText } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import Header from '../../components/Header';
 
@@ -391,21 +391,15 @@ const TenantBillsPage = () => {
                             )}
                           </p>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => handleViewBill(bill)}
-                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
-                            title="View details"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <button
-                            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all duration-200"
-                            title="More options"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
-                        </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleViewBill(bill)}
+                              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
+                              title="View details"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
                       </div>
                     </div>
                   </div>

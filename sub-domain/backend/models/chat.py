@@ -147,7 +147,9 @@ class Chat(db.Model):
                             property_data['manager'] = {
                                 'id': owner.id,
                                 'name': f"{owner.first_name} {owner.last_name}".strip() or owner.email,
-                                'email': owner.email
+                                'email': owner.email,
+                                'avatar_url': getattr(owner, 'avatar_url', None) or getattr(owner, 'profile_image_url', None),
+                                'profile_image_url': getattr(owner, 'profile_image_url', None)
                             }
                     except Exception as owner_error:
                         # Log but don't fail - manager info is optional

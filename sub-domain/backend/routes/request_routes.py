@@ -294,20 +294,69 @@ def create_request():
         
         # Get tenant's current unit
         unit_id = data.get('unit_id')
+
         if not unit_id:
-            # Try to get from tenant's active unit
+            # Try to get from tenant's active unit (ORM property)
             if tenant.current_unit:
                 unit_id = tenant.current_unit.id
+
+        if not unit_id:
+            # Fallback: latest tenant_unit record by created_at
+            try:
+                from sqlalchemy import text
+                latest_tu = db.session.execute(text(
+                    """
+                    SELECT unit_id 
+                    FROM tenant_units 
+                    WHERE tenant_id = :tid
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ), {'tid': tenant.id}).first()
+                if latest_tu and latest_tu[0]:
+                    unit_id = latest_tu[0]
+            except Exception as tu_err:
+                current_app.logger.warning(f"Fallback tenant_units lookup failed for tenant {tenant.id}: {str(tu_err)}")
+
+        if not unit_id:
+            # Last resort fallback: order by id DESC in case created_at is null/absent
+            try:
+                from sqlalchemy import text
+                latest_tu_id = db.session.execute(text(
+                    """
+                    SELECT unit_id 
+                    FROM tenant_units 
+                    WHERE tenant_id = :tid
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
+                ), {'tid': tenant.id}).first()
+                if latest_tu_id and latest_tu_id[0]:
+                    unit_id = latest_tu_id[0]
+            except Exception as tu_err:
+                current_app.logger.warning(f"ID-based tenant_units lookup failed for tenant {tenant.id}: {str(tu_err)}")
+
+        if not unit_id:
+            return jsonify({'error': 'Unit is required. Please specify unit_id or ensure tenant has an active unit.'}), 400
+        
+        # Verify unit exists (use raw SQL as safety) and fetch property_id
+        property_id = None
+        try:
+            from sqlalchemy import text
+            unit_row = db.session.execute(text(
+                "SELECT id, property_id FROM units WHERE id = :uid"
+            ), {'uid': unit_id}).first()
+            if unit_row:
+                property_id = unit_row[1]
             else:
-                return jsonify({'error': 'Unit is required. Please specify unit_id or ensure tenant has an active unit.'}), 400
+                return jsonify({'error': 'Unit not found'}), 404
+        except Exception:
+            # Fallback to ORM
+            unit = Unit.query.get(unit_id)
+            if not unit:
+                return jsonify({'error': 'Unit not found'}), 404
+            property_id = unit.property_id
         
-        # Verify unit exists and belongs to tenant's property
-        unit = Unit.query.get(unit_id)
-        if not unit:
-            return jsonify({'error': 'Unit not found'}), 404
-        
-        # Get property_id from unit
-        property_id = unit.property_id
         if not property_id:
             return jsonify({'error': 'Property not found for this unit'}), 404
         

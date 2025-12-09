@@ -25,6 +25,7 @@ const RequestsPage = () => {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showAssignStaffModal, setShowAssignStaffModal] = useState(false);
+  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [fullRequestData, setFullRequestData] = useState(null);
   const [staffList, setStaffList] = useState([]);
@@ -42,6 +43,11 @@ const RequestsPage = () => {
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [staffIdInput, setStaffIdInput] = useState('');
+  const [taskForm, setTaskForm] = useState({
+    assigned_to: '',
+    due_date: '',
+    priority: 'medium'
+  });
 
   useEffect(() => {
     // Check if user is authenticated
@@ -491,6 +497,52 @@ const RequestsPage = () => {
     }
   };
 
+  // Handle create task from maintenance request
+  const handleCreateTaskClick = (request) => {
+    setSelectedRequest(request);
+    setTaskForm({
+      assigned_to: '',
+      due_date: '',
+      priority: (request.priority_level || 'medium').toLowerCase()
+    });
+    setActionError(null);
+    setShowMoreMenu(null);
+    setShowCreateTaskModal(true);
+  };
+
+  const submitTaskFromRequest = async () => {
+    if (!selectedRequest) return;
+    if (!taskForm.assigned_to) {
+      setActionError('Please select a staff to assign.');
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const body = {
+        title: selectedRequest.issue || 'Maintenance Task',
+        description: `Request ID: ${selectedRequest.request_id}\nTenant: ${selectedRequest.tenant_name}\nProperty: ${selectedRequest.property_name}\nUnit: ${selectedRequest.room_number || 'N/A'}`,
+        priority: taskForm.priority || 'medium',
+        assigned_to: parseInt(taskForm.assigned_to),
+        due_date: taskForm.due_date || null
+      };
+      await apiService.post('/tasks', body);
+      setShowCreateTaskModal(false);
+      setSelectedRequest(null);
+      setTaskForm({
+        assigned_to: '',
+        due_date: '',
+        priority: 'medium'
+      });
+      alert('Task created and assigned to staff.');
+    } catch (err) {
+      console.error('Failed to create task:', err);
+      setActionError(err?.message || err?.error || 'Failed to create task from request');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const filteredRequests = requests.filter(request => {
     const matchesSearch = request.tenant_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          request.property_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -548,10 +600,6 @@ const RequestsPage = () => {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Maintenance Requests</h1>
               <p className="text-gray-600">Manage and monitor maintenance issues with ease</p>
             </div>
-            <button className="flex items-center space-x-2 px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md">
-              <Download className="w-4 h-4" />
-              <span>Export</span>
-            </button>
           </div>
 
           {/* Key Metrics Cards */}
@@ -856,6 +904,13 @@ const RequestsPage = () => {
                                       <span>Mark Complete</span>
                                     </button>
                                   )}
+                                  <button
+                                    onClick={() => handleCreateTaskClick(request)}
+                                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
+                                  >
+                                    <FileText className="w-4 h-4" />
+                                    <span>Create Task</span>
+                                  </button>
                                 </div>
                               </div>
                             )}
@@ -1304,6 +1359,112 @@ const RequestsPage = () => {
                   </>
                 ) : (
                   <span>Reject Request</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Task Modal */}
+      {showCreateTaskModal && selectedRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Create Task from Request</h2>
+              <button
+                onClick={() => {
+                  setShowCreateTaskModal(false);
+                  setSelectedRequest(null);
+                  setTaskForm({ assigned_to: '', due_date: '', priority: 'medium' });
+                  setActionError(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {actionError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                  {actionError}
+                </div>
+              )}
+
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Request</h3>
+                <p className="text-lg font-semibold text-gray-900">{selectedRequest.request_id}</p>
+                <p className="text-sm text-gray-600">{selectedRequest.issue}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Assign to Staff *</label>
+                <select
+                  value={taskForm.assigned_to}
+                  onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">Select staff</option>
+                  {staffList.map(staff => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.user?.first_name} {staff.user?.last_name} {staff.employee_id ? `(${staff.employee_id})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                  <select
+                    value={taskForm.priority}
+                    onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Due Date</label>
+                  <input
+                    type="date"
+                    value={taskForm.due_date}
+                    onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowCreateTaskModal(false);
+                  setSelectedRequest(null);
+                  setTaskForm({ assigned_to: '', due_date: '', priority: 'medium' });
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitTaskFromRequest}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+              >
+                {actionLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <span>Create Task</span>
                 )}
               </button>
             </div>

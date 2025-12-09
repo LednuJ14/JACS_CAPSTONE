@@ -218,7 +218,7 @@ const TenantsPage = () => {
         fetchUnitsForProperty(propertyIdValue);
       }, 100);
     } else {
-      setUnits([]);
+    setUnits([]);
     }
   };
 
@@ -642,15 +642,15 @@ const TenantsPage = () => {
                           
                           return (
                             <div className="flex items-center space-x-2">
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                                 isActive
-                                  ? 'bg-green-100 text-green-800' 
+                            ? 'bg-green-100 text-green-800' 
                                   : isPendingVerification
                                   ? 'bg-yellow-100 text-yellow-800'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}>
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
                                 {isActive ? 'Active' : isPendingVerification ? 'Pending Verification' : 'Pending'}
-                              </span>
+                        </span>
                               {isPendingVerification && (
                                 <button
                                   onClick={async () => {
@@ -961,12 +961,12 @@ const TenantsPage = () => {
                                 return false;
                               }
                               
-                            // Show units with available/vacant status only
+                              // Show units with available/vacant status only
                             const status = (unit.status || 'vacant').toLowerCase().trim();
-                            // Exclude explicitly occupied/rented units
+                              // Exclude explicitly occupied/rented units
                             if (status === 'occupied' || status === 'rented' || status === 'taken') {
-                              return false;
-                            }
+                                return false;
+                              }
                             // Include available, vacant, or any other non-occupied status
                             // This ensures we show all units that aren't explicitly occupied
                             return status === 'available' || status === 'vacant' || status === '' || !status;
@@ -1014,7 +1014,7 @@ const TenantsPage = () => {
                                 })();
                                 return filteredCount === 0 
                                   ? 'No available units found (all units may be occupied)' 
-                                  : editingTenant
+                            : editingTenant
                                   ? `Showing ${filteredCount} available unit(s) including current unit`
                                   : `Showing ${filteredCount} available unit(s)`;
                               })()}

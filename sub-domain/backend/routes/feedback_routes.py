@@ -338,10 +338,25 @@ def create_feedback():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        # Validate required fields
-        message = data.get('message', '').strip()
+        # Validate required fields safely
+        raw_message = data.get('message')
+        if raw_message is None:
+            return jsonify({'error': 'Message is required'}), 400
+        try:
+            message = str(raw_message).strip()
+        except Exception:
+            return jsonify({'error': 'Message is required'}), 400
         if not message:
             return jsonify({'error': 'Message is required'}), 400
+
+        # Optional subject, safely normalized
+        raw_subject = data.get('subject')
+        subject = None
+        if raw_subject is not None:
+            try:
+                subject = str(raw_subject).strip()
+            except Exception:
+                subject = None
         
         # Get property_id from request (subdomain, header, query param, etc.) or from body
         property_id = get_property_id_from_request(data=data)
@@ -386,19 +401,30 @@ def create_feedback():
             return jsonify({'error': 'Property context is required. Please ensure you are logged in through your property portal.'}), 400
         
         # Validate feedback_type (optional)
-        feedback_type = data.get('feedback_type', 'other').lower()
+        raw_feedback_type = data.get('feedback_type', 'other')
+        feedback_type = str(raw_feedback_type).lower() if raw_feedback_type is not None else 'other'
         valid_types = ['complaint', 'suggestion', 'compliment', 'other']
         if feedback_type not in valid_types:
             feedback_type = 'other'
         
         # Validate status (default to 'new')
-        status = data.get('status', 'new').lower()
+        raw_status = data.get('status', 'new')
+        status = str(raw_status).lower() if raw_status is not None else 'new'
         valid_statuses = ['new', 'reviewed', 'responded', 'resolved']
         if status not in valid_statuses:
             status = 'new'
         
-        # Get optional fields
-        subject = data.get('subject', '').strip()
+        # Get optional fields safely
+        raw_subject = data.get('subject')
+        subject = None
+        if raw_subject is not None:
+            try:
+                s = str(raw_subject).strip()
+                if s:
+                    subject = s
+            except Exception:
+                subject = None
+
         rating = data.get('rating')
         if rating is not None:
             try:
@@ -410,7 +436,7 @@ def create_feedback():
         
         # Create feedback
         feedback = Feedback(
-            subject=subject if subject else None,
+            subject=subject,
             message=message,
             feedback_type=feedback_type,
             rating=rating,
@@ -616,20 +642,9 @@ def update_feedback(feedback_id):
         else:
             user_role = str(current_user.role).upper()
         
-        # Only property managers can update feedback (staff cannot respond to tenant feedback)
-        if user_role not in ['MANAGER', 'PROPERTY_MANAGER']:
-            return jsonify({'error': 'Access denied. Staff cannot update feedback status.'}), 403
-        
         feedback = Feedback.query.get(feedback_id)
         if not feedback:
             return jsonify({'error': 'Feedback not found'}), 404
-        
-        # Get property_id from request
-        property_id = get_property_id_from_request()
-        
-        # Verify feedback belongs to property if property_id is provided
-        if property_id and feedback.property_id != property_id:
-            return jsonify({'error': 'Access denied'}), 403
         
         # Get update data and handle case where it might be a string
         data = request.get_json()
@@ -649,15 +664,74 @@ def update_feedback(feedback_id):
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
+
+        # Tenant can edit own feedback only while status is 'new'
+        if user_role == 'TENANT':
+            if feedback.submitted_by != user_id_int:
+                return jsonify({'error': 'Access denied'}), 403
+            if str(feedback.status).lower() != 'new':
+                return jsonify({'error': 'Feedback can no longer be edited'}), 403
+
+            # Tenant edit: allow subject/message/feedback_type/rating
+            if 'message' in data:
+                try:
+                    msg = str(data.get('message', '')).strip()
+                except Exception:
+                    msg = ''
+                if not msg:
+                    return jsonify({'error': 'Message is required'}), 400
+                feedback.message = msg
+
+            if 'subject' in data:
+                try:
+                    subj = str(data.get('subject', '')).strip()
+                    feedback.subject = subj if subj else None
+                except Exception:
+                    feedback.subject = None
+
+            if 'feedback_type' in data:
+                ftype = str(data.get('feedback_type', 'other')).lower()
+                if ftype in ['complaint', 'suggestion', 'compliment', 'other']:
+                    feedback.feedback_type = ftype
+
+            if 'rating' in data:
+                rating_val = data.get('rating')
+                try:
+                    rating_val = int(rating_val)
+                    if 1 <= rating_val <= 5:
+                        feedback.rating = rating_val
+                    else:
+                        feedback.rating = None
+                except Exception:
+                    feedback.rating = None
+
+            db.session.commit()
+            feedback_dict = feedback.to_dict()
+            return jsonify({
+                'message': 'Feedback updated successfully',
+                'feedback': feedback_dict
+            }), 200
+
+        # Only property managers can update status/response
+        if user_role not in ['MANAGER', 'PROPERTY_MANAGER']:
+            return jsonify({'error': 'Access denied. Staff cannot update feedback status.'}), 403
+
+        # Get property_id from request
+        property_id = get_property_id_from_request()
+
+        # Verify feedback belongs to property if property_id is provided
+        if property_id and feedback.property_id != property_id:
+            return jsonify({'error': 'Access denied'}), 403
+
         # Update status if provided
         if 'status' in data:
             new_status = data.get('status', '').lower()
             valid_statuses = ['new', 'reviewed', 'responded', 'resolved']
             if new_status in valid_statuses:
                 feedback.status = new_status
-        
+
         db.session.commit()
-        
+
         # Return updated feedback
         feedback_dict = feedback.to_dict()
         return jsonify({

@@ -784,7 +784,7 @@ class ApiService {
       throw error;
     }
   }
-
+  
   async verifyTenant(tenantId) {
     try {
       return await this.makeRequest(`/tenants/${tenantId}/verify`, {
@@ -1572,6 +1572,20 @@ class ApiService {
       return response.feedback || response;
     } catch (error) {
       console.error('Failed to reply to feedback:', error);
+      throw error;
+    }
+  }
+
+  async updateFeedback(feedbackId, feedbackData) {
+    try {
+      const response = await this.makeRequest(`/feedback/${feedbackId}`, {
+        method: 'PUT',
+        body: JSON.stringify(feedbackData),
+        baseURL: this.propertyBaseURL
+      });
+      return response.feedback || response;
+    } catch (error) {
+      console.error('Failed to update feedback:', error);
       throw error;
     }
   }

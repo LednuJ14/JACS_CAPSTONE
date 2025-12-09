@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, Send, MessageSquare, MoreVertical, CheckCheck, User, Loader2 } from 'lucide-react';
+import { X, Search, Send, MessageSquare, CheckCheck, User, Loader2 } from 'lucide-react';
 import { apiService } from '../../../services/api';
 
 const ChatsModal = ({ isOpen, onClose }) => {
@@ -13,24 +13,75 @@ const ChatsModal = ({ isOpen, onClose }) => {
 
   useEffect(() => {
     if (isOpen) {
-      const fetchChats = async () => {
+      const fetchChatsAndTenants = async () => {
         try {
           setLoading(true);
           setError(null);
+
+          // Fetch existing chats
           const chatsData = await apiService.getChats();
-          // Handle both array response and object with chats property
           const chatsList = Array.isArray(chatsData) 
             ? chatsData 
             : (chatsData?.chats || []);
-          setChats(chatsList);
+
+          // Fetch all tenants for this property (subdomain provides context)
+          let tenants = [];
+          try {
+            const tenantsData = await apiService.getTenants();
+            tenants = Array.isArray(tenantsData) ? tenantsData : (tenantsData?.tenants || []);
+          } catch (tenErr) {
+            console.warn('Could not load tenants for chat list:', tenErr);
+          }
+
+          // Merge: ensure every tenant appears as a chat entry
+          const merged = tenants.map((tenant) => {
+            const existingChat = chatsList.find(
+              (c) => c.tenant_id === tenant.id || c.tenant?.id === tenant.id
+            );
+            if (existingChat) {
+              // Ensure messages array
+              if (!existingChat.messages) existingChat.messages = [];
+              return existingChat;
+            }
+            // Placeholder chat with no messages yet
+            const name =
+              (tenant.user?.first_name || '') ||
+              (tenant.user?.last_name || '') ||
+              tenant.user?.email ||
+              'Tenant';
+            return {
+              id: null,
+              tenant_id: tenant.id,
+              tenant,
+              subject: name.trim() || 'Tenant',
+              messages: [],
+              created_at: tenant.created_at || new Date().toISOString(),
+              last_message_at: tenant.created_at || new Date().toISOString(),
+            };
+          });
+
+          // If there are chats without tenants (edge cases), keep them
+          const orphanChats = chatsList.filter(
+            (c) => !tenants.find((t) => t.id === c.tenant_id || t.id === c.tenant?.id)
+          );
+
+          const finalList = [...merged, ...orphanChats];
+          setChats(finalList);
+
+          // Select first entry
+          if (finalList.length > 0) {
+            setCurrentChat(finalList[0]);
+          } else {
+            setCurrentChat(null);
+          }
         } catch (err) {
-          console.error('Failed to load chats:', err);
+          console.error('Failed to load chats/tenants:', err);
           setError('Failed to load chats. Please try again.');
         } finally {
           setLoading(false);
         }
       };
-      fetchChats();
+      fetchChatsAndTenants();
     }
   }, [isOpen]);
 
@@ -67,6 +118,43 @@ const ChatsModal = ({ isOpen, onClose }) => {
     chat.tenant?.name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const getTenantInitials = (chat) => {
+    const name =
+      chat?.tenant?.name ||
+      (chat?.tenant?.user?.first_name || '') + ' ' + (chat?.tenant?.user?.last_name || '') ||
+      chat?.tenant?.user?.email ||
+      'TN';
+    const parts = name.trim().split(' ').filter(Boolean);
+    const first = parts[0]?.charAt(0) || '';
+    const last = parts.length > 1 ? parts[parts.length - 1].charAt(0) : '';
+    return (first + last).toUpperCase() || 'TN';
+  };
+  const getUnitName = (chat) => {
+    const rent = chat?.tenant?.current_rent;
+    const unit =
+      rent?.unit ||
+      chat?.tenant?.unit ||
+      chat?.unit;
+
+    const candidates = [
+      unit?.unit_name,
+      unit?.unit_number,
+      unit?.name,
+      rent?.unit_name,
+      rent?.unit_number,
+      chat?.tenant?.unit_name,
+      chat?.tenant?.unit_number,
+      chat?.unit_name,
+      chat?.unit_number,
+      rent?.unit_id ? `Unit ${rent.unit_id}` : null,
+      chat?.tenant?.unit_id ? `Unit ${chat.tenant.unit_id}` : null,
+      chat?.unit_id ? `Unit ${chat.unit_id}` : null,
+    ];
+
+    const name = candidates.find((v) => v && String(v).trim() !== '');
+    return name || 'Unit';
+  };
+
   const handleChatSelect = (chat) => {
     setCurrentChat(chat);
   };
@@ -88,19 +176,50 @@ const ChatsModal = ({ isOpen, onClose }) => {
       
       // Reload chat with messages
       const updatedChat = await apiService.getChat(currentChat.id);
-      // Ensure messages array exists
-      if (!updatedChat.messages) {
+      if (updatedChat && !updatedChat.messages) {
         updatedChat.messages = [];
       }
-      setCurrentChat(updatedChat);
+      setCurrentChat(updatedChat || currentChat);
       
-      // Refresh chats list
-      const chatsData = await apiService.getChats();
-      // Handle both array response and object with chats property
-      const chatsList = Array.isArray(chatsData) 
-        ? chatsData 
-        : (chatsData?.chats || []);
-      setChats(chatsList);
+      // Refresh chats list (keep tenants merged)
+      try {
+        const chatsData = await apiService.getChats();
+        const chatsList = Array.isArray(chatsData) 
+          ? chatsData 
+          : (chatsData?.chats || []);
+        
+        // Merge with existing tenants in state
+        setChats((prev) => {
+          // Extract tenant info from prev entries
+          const tenants = prev
+            .map((c) => c.tenant)
+            .filter(Boolean);
+
+          // Keep tenant placeholders and overlay updated chats
+          const merged = prev.map((entry) => {
+            const updated = chatsList.find(
+              (c) => c.tenant_id === entry.tenant_id || c.tenant?.id === entry.tenant?.id
+            );
+            if (updated) {
+              if (!updated.messages) updated.messages = [];
+              return updated;
+            }
+            return entry;
+          });
+
+          // Add any new chats that weren't in prev
+          const extras = chatsList.filter(
+            (c) =>
+              !merged.find(
+                (m) => m.id === c.id || m.tenant_id === c.tenant_id || m.tenant?.id === c.tenant?.id
+              )
+          );
+
+          return [...merged, ...extras];
+        });
+      } catch (refreshErr) {
+        console.warn('Could not refresh chats after send:', refreshErr);
+      }
     } catch (err) {
       console.error('Failed to send message:', err);
       setError('Failed to send message. Please try again.');
@@ -180,18 +299,18 @@ const ChatsModal = ({ isOpen, onClose }) => {
             <>
               {/* Chat List */}
               <div className="w-1/3 bg-gray-50 border-r border-gray-200 flex flex-col">
-                <div className="px-4 py-3 border-b border-gray-200">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input
-                      type="text"
-                      placeholder="Search conversations..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    />
-                  </div>
-                </div>
+            <div className="px-4 py-3 border-b border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <input
+                  type="text"
+                  placeholder="Search conversations..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+              </div>
+            </div>
                 <div className="flex-1 overflow-y-auto">
                   {filteredChats.length === 0 ? (
                     <div className="px-4 py-8 text-center text-gray-500">
@@ -210,8 +329,8 @@ const ChatsModal = ({ isOpen, onClose }) => {
                           }`}
                         >
                           <div className="flex items-start space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <User className="w-5 h-5 text-white" />
+                            <div className="w-10 h-10 bg-gradient-to-br from-gray-300 to-gray-400 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-semibold">
+                              {getTenantInitials(chat)}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between mb-1">
@@ -228,6 +347,9 @@ const ChatsModal = ({ isOpen, onClose }) => {
                                 {chat.last_message?.content || (chat.messages && chat.messages.length > 0
                                   ? chat.messages[chat.messages.length - 1].content
                                   : 'No messages yet')}
+                              </p>
+                              <p className="text-xs text-gray-500 truncate">
+                                {getUnitName(chat)}
                               </p>
                               <span className="text-xs text-gray-500">
                                 {formatTime(chat.last_message_at || chat.created_at)}
@@ -248,8 +370,8 @@ const ChatsModal = ({ isOpen, onClose }) => {
                     <div className="px-6 py-4 border-b border-gray-200">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                            <User className="w-5 h-5 text-white" />
+                          <div className="w-10 h-10 bg-gradient-to-br from-gray-300 to-gray-400 rounded-lg flex items-center justify-center text-white font-semibold">
+                            {getTenantInitials(currentChat)}
                           </div>
                           <div>
                             <h2 className="text-lg font-semibold text-gray-900">
@@ -258,13 +380,10 @@ const ChatsModal = ({ isOpen, onClose }) => {
                                 ? `${currentChat.tenant.user.first_name} ${currentChat.tenant.user.last_name}`.trim()
                                 : currentChat.tenant?.user?.email?.split('@')[0] || currentChat.subject || 'Tenant')}
                             </h2>
-                            <p className="text-sm text-gray-500">Tenant Conversation</p>
+                            <p className="text-sm text-gray-500">
+                              Tenant Conversation • {getUnitName(currentChat)}
+                            </p>
                           </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
                         </div>
                       </div>
                     </div>

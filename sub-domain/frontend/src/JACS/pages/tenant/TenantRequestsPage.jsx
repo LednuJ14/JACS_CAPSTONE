@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Wrench, Plus, Clock, CheckCircle, AlertCircle, Search, Filter, MoreVertical, Calendar, AlertTriangle, Settings, FileText, X, Eye } from 'lucide-react';
+import { Loader2, Wrench, Plus, Clock, CheckCircle, AlertCircle, Search, Filter, MoreVertical, Calendar, AlertTriangle, Settings, FileText, X, Eye, Upload, Image as ImageIcon, Paperclip, Trash2, Edit3 } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import Header from '../../components/Header';
 
@@ -15,6 +15,7 @@ const TenantRequestsPage = () => {
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [fullRequestData, setFullRequestData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingRequestId, setEditingRequestId] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -25,6 +26,8 @@ const TenantRequestsPage = () => {
     priority_level: 'Medium',
     description: ''
   });
+  const [images, setImages] = useState([]);
+  const [attachments, setAttachments] = useState([]);
 
   // Using centralized mock data for frontend-only mode
 
@@ -217,6 +220,53 @@ const TenantRequestsPage = () => {
     }
   };
 
+  const handleImageUpload = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    
+    files.forEach(file => {
+      if (!file.type.startsWith('image/')) {
+        setError('Please upload only image files');
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImages(prev => [...prev, {
+          name: file.name,
+          data: reader.result,
+          type: file.type
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleAttachmentUpload = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAttachments(prev => [...prev, {
+          name: file.name,
+          data: reader.result,
+          type: file.type
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (index) => {
+    setImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeAttachment = (index) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleCreateRequest = async (e) => {
     e.preventDefault();
     try {
@@ -229,18 +279,84 @@ const TenantRequestsPage = () => {
         return;
       }
 
+      // Derive unit from tenant record if available; backend now also resolves unit_id
+      // Try multiple paths to get unit_id from tenant's current_rent
+      let unitId = null;
+
+      // Debug: Log tenant structure to understand data format
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Tenant data structure:', {
+          tenant_id: tenant?.id,
+          property_id: tenant?.property_id,
+          current_rent: tenant?.current_rent,
+          unit_id: tenant?.unit_id,
+          unit: tenant?.unit
+        });
+      }
+      
+      // First, try to get from current_rent (most reliable)
+      if (tenant?.current_rent) {
+        unitId = tenant.current_rent.unit_id || 
+                 tenant.current_rent.unit?.id ||
+                 null;
+      }
+      
+      // Fallback: try direct tenant properties
+      if (!unitId) {
+        unitId = tenant?.unit_id || 
+                 tenant?.unit?.id ||
+                 null;
+      }
+
+      // Prepare images and attachments data
+      const imagesData = images.length > 0 ? JSON.stringify(images.map(img => ({
+        name: img.name,
+        data: img.data,
+        type: img.type
+      }))) : null;
+
+      const attachmentsData = attachments.length > 0 ? JSON.stringify(attachments.map(att => ({
+        name: att.name,
+        data: att.data,
+        type: att.type
+      }))) : null;
+
       // Map frontend fields to backend format
-      await apiService.createMaintenanceRequest({
+      // Note: Backend will get property_id from unit, so we don't need to send it
+      const requestPayload = {
         title: newRequest.issue,
         description: newRequest.description,
         category: newRequest.issue_category.toLowerCase(),
         priority: newRequest.priority_level.toLowerCase(),
-        tenant_id: tenant.id
-      });
+        // Send unit_id if we have it; backend can also resolve from tenant_units
+        ...(unitId ? { unit_id: unitId } : {}),
+        // Only send images/attachments if provided to avoid overwriting existing ones on edit
+        ...(imagesData ? { images: imagesData } : {}),
+        ...(attachmentsData ? { attachments: attachmentsData } : {})
+      };
+      
+      // Debug: Log the payload being sent
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Creating maintenance request with payload:', {
+          ...requestPayload,
+          images: imagesData ? `${images.length} image(s)` : 'none',
+          attachments: attachmentsData ? `${attachments.length} attachment(s)` : 'none'
+        });
+      }
+      
+      if (editingRequestId) {
+        await apiService.updateMaintenanceRequest(editingRequestId, requestPayload);
+        setSuccessMessage('Maintenance request updated successfully!');
+      } else {
+        await apiService.createMaintenanceRequest(requestPayload);
+        setSuccessMessage('Maintenance request submitted successfully!');
+      }
 
       setShowCreateForm(false);
       setNewRequest({ issue: '', issue_category: '', priority_level: 'Medium', description: '' });
-      setSuccessMessage('Maintenance request submitted successfully!');
+      setImages([]);
+      setAttachments([]);
+      setEditingRequestId(null);
       
       // Refresh the requests list
       await refreshRequests();
@@ -250,6 +366,45 @@ const TenantRequestsPage = () => {
     } catch (err) {
       console.error('Failed to create request:', err);
       setError(err?.message || err?.error || 'Failed to submit request. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditRequest = async (request) => {
+    try {
+      const cat = (request.category || request.issue_category || '').toLowerCase();
+      const prio = (request.priority || request.priority_level || 'Medium');
+      setNewRequest({
+        issue: request.title || request.issue || '',
+        issue_category: cat || '',
+        priority_level: prio.charAt(0).toUpperCase() + prio.slice(1),
+        description: request.description || ''
+      });
+      setImages([]);
+      setAttachments([]);
+      setEditingRequestId(request.id);
+      setShowCreateForm(true);
+      setError(null);
+      setSuccessMessage('');
+    } catch (err) {
+      console.error('Failed to prepare edit request:', err);
+      setError('Failed to load request for editing. Please try again.');
+    }
+  };
+
+  const handleDeleteRequest = async (requestId) => {
+    if (!window.confirm('Delete this request? This cannot be undone.')) return;
+    try {
+      setSubmitting(true);
+      setError(null);
+      await apiService.deleteMaintenanceRequest(requestId);
+      await refreshRequests();
+      setSuccessMessage('Request deleted successfully.');
+      setTimeout(() => setSuccessMessage(''), 2500);
+    } catch (err) {
+      console.error('Failed to delete request:', err);
+      setError(err?.message || err?.error || 'Failed to delete request. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -462,8 +617,8 @@ const TenantRequestsPage = () => {
           {/* Create Request Form Modal */}
           {showCreateForm && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl w-full max-w-lg mx-4 shadow-2xl">
-                <div className="px-6 py-4 border-b border-gray-100">
+              <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] mx-4 shadow-2xl flex flex-col">
+                <div className="px-6 py-4 border-b border-gray-100 flex-shrink-0">
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-semibold text-gray-900">Create New Request</h2>
                     <button
@@ -471,6 +626,8 @@ const TenantRequestsPage = () => {
                         setShowCreateForm(false);
                         setError(null);
                         setNewRequest({ issue: '', issue_category: '', priority_level: 'Medium', description: '' });
+                        setImages([]);
+                        setAttachments([]);
                       }}
                       className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                     >
@@ -479,7 +636,7 @@ const TenantRequestsPage = () => {
                   </div>
                 </div>
                 
-                <form onSubmit={handleCreateRequest} className="p-6 space-y-6">
+                <form onSubmit={handleCreateRequest} className="p-6 space-y-6 overflow-y-auto flex-1">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Issue Title</label>
                     <input
@@ -540,6 +697,138 @@ const TenantRequestsPage = () => {
                       required
                     />
                   </div>
+
+                  {/* Images Upload */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Images <span className="text-gray-500 text-xs">(Optional)</span>
+                    </label>
+                    <div className={`border-2 border-dashed rounded-xl p-4 transition-colors ${
+                      images.length > 0 
+                        ? 'border-green-300 bg-green-50' 
+                        : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                    }`}>
+                      {images.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center space-x-2">
+                              <ImageIcon className="w-5 h-5 text-green-600" />
+                              <p className="text-sm font-medium text-green-700">{images.length} image{images.length > 1 ? 's' : ''} uploaded</p>
+                            </div>
+                            <label className="cursor-pointer text-xs text-blue-600 hover:text-blue-700 font-medium">
+                              Add More
+                              <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                onChange={handleImageUpload}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {images.map((img, index) => (
+                              <div key={index} className="relative group">
+                                <img 
+                                  src={img.data} 
+                                  alt={img.name}
+                                  className="w-full h-24 object-cover rounded-lg border border-gray-200"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeImage(index)}
+                                  className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="Remove image"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                                <p className="text-xs text-gray-600 mt-1 truncate">{img.name}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer block text-center">
+                          <div className="flex flex-col items-center">
+                            <ImageIcon className="w-8 h-8 text-gray-400 mb-2" />
+                            <span className="text-sm text-blue-600 hover:text-blue-700 font-medium">Click to upload images</span>
+                            <p className="text-xs text-gray-500 mt-1">PNG, JPG, GIF up to 5MB each</p>
+                          </div>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={handleImageUpload}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Attachments Upload */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Attachments <span className="text-gray-500 text-xs">(Optional)</span>
+                    </label>
+                    <div className={`border-2 border-dashed rounded-xl p-4 transition-colors ${
+                      attachments.length > 0 
+                        ? 'border-green-300 bg-green-50' 
+                        : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                    }`}>
+                      {attachments.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center space-x-2">
+                              <Paperclip className="w-5 h-5 text-green-600" />
+                              <p className="text-sm font-medium text-green-700">{attachments.length} file{attachments.length > 1 ? 's' : ''} attached</p>
+                            </div>
+                            <label className="cursor-pointer text-xs text-blue-600 hover:text-blue-700 font-medium">
+                              Add More
+                              <input
+                                type="file"
+                                multiple
+                                onChange={handleAttachmentUpload}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                          <div className="space-y-2">
+                            {attachments.map((att, index) => (
+                              <div key={index} className="flex items-center justify-between p-2 bg-white rounded-lg border border-gray-200">
+                                <div className="flex items-center space-x-2 flex-1 min-w-0">
+                                  <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                  <p className="text-sm text-gray-700 truncate">{att.name}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeAttachment(index)}
+                                  className="p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                                  title="Remove attachment"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer block text-center">
+                          <div className="flex flex-col items-center">
+                            <Paperclip className="w-8 h-8 text-gray-400 mb-2" />
+                            <span className="text-sm text-blue-600 hover:text-blue-700 font-medium">Click to upload attachments</span>
+                            <p className="text-xs text-gray-500 mt-1">PDF, DOC, DOCX, etc. up to 10MB each</p>
+                          </div>
+                          <input
+                            type="file"
+                            multiple
+                            onChange={handleAttachmentUpload}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
                   
                   <div className="flex space-x-3 pt-4">
                     <button
@@ -548,6 +837,8 @@ const TenantRequestsPage = () => {
                         setShowCreateForm(false);
                         setError(null);
                         setNewRequest({ issue: '', issue_category: '', priority_level: 'Medium', description: '' });
+                        setImages([]);
+                        setAttachments([]);
                       }}
                       disabled={submitting}
                       className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl hover:bg-gray-200 disabled:opacity-50 transition-colors font-medium"
@@ -636,6 +927,21 @@ const TenantRequestsPage = () => {
                             title="View details"
                           >
                             <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleEditRequest(request)}
+                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
+                            title="Edit request"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRequest(request.id)}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all duration-200 opacity-0 group-hover:opacity-100"
+                            title="Delete request"
+                            disabled={submitting}
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>

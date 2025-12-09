@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Loader2, Megaphone, Calendar, Clock, AlertCircle, CheckCircle, FileText, Pin, Eye, RefreshCw, ChevronDown, ChevronUp, Wrench,CreditCard } from 'lucide-react';
+import { Search, Filter, Loader2, Megaphone, Calendar, Clock, AlertCircle, CheckCircle, FileText, Pin, Eye, ChevronDown, ChevronUp, Wrench, CreditCard } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import Header from '../../components/Header';
 
@@ -14,7 +14,6 @@ const TenantAnnouncementPage = () => {
   const [selectedPriority, setSelectedPriority] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedAnnouncement, setExpandedAnnouncement] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
@@ -47,12 +46,6 @@ const TenantAnnouncementPage = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await fetchAnnouncementsData();
-    setRefreshing(false);
   };
 
   const getPriorityColor = (priority) => {
@@ -149,14 +142,6 @@ const TenantAnnouncementPage = () => {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Community Announcements</h1>
               <p className="text-gray-600">Stay updated with the latest news and important information</p>
             </div>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center space-x-2 px-4 py-2 bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
           </div>
 
           {/* Quick Stats */}
