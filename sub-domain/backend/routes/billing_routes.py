@@ -414,9 +414,17 @@ def create_bill(current_user):
             else:
                 return jsonify({'error': 'Tenant does not have an active unit in this property. Please assign a unit first.'}), 400
         
-        # Verify unit belongs to property
-        unit = Unit.query.get(unit_id)
-        if not unit or unit.property_id != property_id:
+        # Verify unit belongs to property using raw SQL to avoid enum validation issues
+        from sqlalchemy import text
+        unit_check = db.session.execute(text(
+            """
+            SELECT id, property_id FROM units 
+            WHERE id = :unit_id AND property_id = :property_id
+            LIMIT 1
+            """
+        ), {'unit_id': unit_id, 'property_id': property_id}).first()
+        
+        if not unit_check:
             return jsonify({'error': 'Unit does not belong to this property'}), 400
         
         # Generate bill number

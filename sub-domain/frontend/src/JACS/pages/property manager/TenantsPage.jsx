@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Building, Phone, Mail, Search, Filter, Plus, Edit, Trash2, MoreVertical, Eye, CheckCircle, Clock, AlertTriangle, ArrowRight, Users, Home, CreditCard, MessageSquare, Wrench, X } from 'lucide-react';
+import { User, Building, Phone, Mail, Search, Filter, Plus, Edit, Trash2, Eye, CheckCircle, Clock, AlertTriangle, ArrowRight, Users, Home, CreditCard, MessageSquare, Wrench, X } from 'lucide-react';
 import { apiService } from '../../../services/api';
 import Header from '../../components/Header';
 
@@ -45,21 +45,48 @@ const TenantsPage = () => {
     fetchTenantsData();
   }, []);
 
+  // Fetch units when property_id changes in the form (for add/edit modal)
+  useEffect(() => {
+    if ((showAddModal || showEditModal) && formData.property_id) {
+      console.log('Property ID changed in form, fetching units for:', formData.property_id);
+      fetchUnitsForProperty(formData.property_id);
+    }
+  }, [formData.property_id, showAddModal, showEditModal]);
+
   const fetchUnitsForProperty = async (propertyId) => {
     try {
       if (!propertyId) {
         setUnits([]);
         return;
       }
+      console.log(`Fetching units for property ID: ${propertyId}`);
+      
       // Use the direct units endpoint (most reliable)
       try {
         const unitsData = await apiService.get(`/properties/${propertyId}/units`);
+        console.log(`Units data received:`, unitsData);
+        
+        // Handle both array response and object with units property
+        let unitsArray = [];
         if (Array.isArray(unitsData)) {
-          setUnits(unitsData);
-          return;
+          unitsArray = unitsData;
+        } else if (unitsData && Array.isArray(unitsData.units)) {
+          unitsArray = unitsData.units;
+        } else if (unitsData && unitsData.data && Array.isArray(unitsData.data)) {
+          unitsArray = unitsData.data;
         }
+        
+        console.log(`Processed units array (${unitsArray.length} units):`, unitsArray);
+        
+        // Log unit statuses for debugging
+        unitsArray.forEach(unit => {
+          console.log(`Unit ${unit.id} (${unit.unit_name || unit.unit_number || unit.name}): status="${unit.status}"`);
+        });
+        
+        setUnits(unitsArray);
       } catch (err) {
-        console.warn('Could not fetch units from units endpoint:', err);
+        console.error('Could not fetch units from units endpoint:', err);
+        console.error('Error details:', err.response?.data || err.message);
         // If units endpoint fails, set empty array
         setUnits([]);
       }
@@ -171,6 +198,8 @@ const TenantsPage = () => {
   const resetForm = () => {
     // Get property_id from subdomain if available
     const propertyId = apiService.getPropertyIdFromSubdomain();
+    const propertyIdValue = propertyId ? (typeof propertyId === 'number' ? propertyId : parseInt(propertyId) || propertyId) : '';
+    
     setFormData({
       email: '',
       username: '',
@@ -178,15 +207,33 @@ const TenantsPage = () => {
       first_name: '',
       last_name: '',
       phone_number: '',
-      property_id: propertyId || '',
+      property_id: propertyIdValue,
       unit_id: ''
     });
-    setUnits([]);
+    
+    // If we have a property ID, fetch units for it
+    if (propertyIdValue) {
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        fetchUnitsForProperty(propertyIdValue);
+      }, 100);
+    } else {
+      setUnits([]);
+    }
   };
 
   const handleAddTenant = () => {
     resetForm();
     setShowAddModal(true);
+    
+    // Fetch units for the default property if one is set
+    const propertyId = formData.property_id || apiService.getPropertyIdFromSubdomain();
+    if (propertyId) {
+      // Small delay to ensure modal is rendered
+      setTimeout(() => {
+        fetchUnitsForProperty(propertyId);
+      }, 100);
+    }
   };
 
   const handleEditTenant = (tenant) => {
@@ -459,7 +506,11 @@ const TenantsPage = () => {
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">Active Tenants</p>
                     <p className="text-2xl font-bold text-green-600">
-                      {tenants.filter(t => t?.is_approved || t?.current_rent).length}
+                      {tenants.filter(t => {
+                        const userStatus = t?.user?.status?.toLowerCase();
+                        const isEmailVerified = t?.user?.email_verified;
+                        return (userStatus === 'active' && isEmailVerified) || t?.is_approved || t?.current_rent;
+                      }).length}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">currently renting</p>
                   </div>
@@ -472,11 +523,15 @@ const TenantsPage = () => {
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-200">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">Pending</p>
+                    <p className="text-sm font-medium text-gray-600 mb-1">Pending Verification</p>
                     <p className="text-2xl font-bold text-amber-600">
-                      {tenants.filter(t => !t?.is_approved && !t?.current_rent).length}
+                      {tenants.filter(t => {
+                        const userStatus = t?.user?.status?.toLowerCase();
+                        const isEmailVerified = t?.user?.email_verified;
+                        return userStatus === 'pending_verification' || (!isEmailVerified && userStatus !== 'active');
+                      }).length}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">unassigned</p>
+                    <p className="text-xs text-gray-500 mt-1">needs verification</p>
                   </div>
                   <div className="p-3 bg-amber-50 rounded-lg">
                     <Clock className="w-6 h-6 text-amber-600" />
@@ -578,13 +633,51 @@ const TenantsPage = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          tenant?.is_approved || tenant?.current_rent 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {tenant?.is_approved || tenant?.current_rent ? 'Active' : 'Pending'}
-                        </span>
+                        {(() => {
+                          // Check actual user status from database
+                          const userStatus = tenant?.user?.status?.toLowerCase();
+                          const isEmailVerified = tenant?.user?.email_verified;
+                          const isPendingVerification = userStatus === 'pending_verification' || (!isEmailVerified && userStatus !== 'active');
+                          const isActive = (userStatus === 'active' && isEmailVerified) || tenant?.is_approved || tenant?.current_rent;
+                          
+                          return (
+                            <div className="flex items-center space-x-2">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                isActive
+                                  ? 'bg-green-100 text-green-800' 
+                                  : isPendingVerification
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {isActive ? 'Active' : isPendingVerification ? 'Pending Verification' : 'Pending'}
+                              </span>
+                              {isPendingVerification && (
+                                <button
+                                  onClick={async () => {
+                                    if (confirm('Verify and activate this tenant?')) {
+                                      try {
+                                        setLoading(true);
+                                        await apiService.verifyTenant(tenant.id);
+                                        await fetchTenantsData();
+                                        alert('Tenant verified and activated successfully!');
+                                      } catch (error) {
+                                        console.error('Failed to verify tenant:', error);
+                                        alert('Failed to verify tenant. Please try again.');
+                                      } finally {
+                                        setLoading(false);
+                                      }
+                                    }
+                                  }}
+                                  className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800 hover:bg-blue-200 transition-colors"
+                                  title="Verify tenant"
+                                >
+                                  <CheckCircle className="w-3 h-3 mr-1" />
+                                  Verify
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="space-y-1">
@@ -624,9 +717,6 @@ const TenantsPage = () => {
                             title="Delete tenant"
                           >
                             <Trash2 className="w-4 h-4" />
-                          </button>
-                          <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                            <MoreVertical className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -804,10 +894,12 @@ const TenantsPage = () => {
                         <select
                           value={formData.property_id}
                           onChange={(e) => {
-                            handleInputChange('property_id', e.target.value);
+                            const selectedPropertyId = e.target.value;
+                            handleInputChange('property_id', selectedPropertyId);
                             // Fetch units when property changes
-                            if (e.target.value) {
-                              fetchUnitsForProperty(e.target.value);
+                            if (selectedPropertyId) {
+                              console.log('Property selected, fetching units for:', selectedPropertyId);
+                              fetchUnitsForProperty(selectedPropertyId);
                             } else {
                               setUnits([]);
                             }
@@ -869,14 +961,15 @@ const TenantsPage = () => {
                                 return false;
                               }
                               
-                              // Show units with available/vacant status only
-                              const status = (unit.status || 'vacant').toLowerCase();
-                              // Exclude explicitly occupied/rented units
-                              if (status === 'occupied' || status === 'rented') {
-                                return false;
-                              }
-                              // Include only available or vacant units
-                              return status === 'available' || status === 'vacant';
+                            // Show units with available/vacant status only
+                            const status = (unit.status || 'vacant').toLowerCase().trim();
+                            // Exclude explicitly occupied/rented units
+                            if (status === 'occupied' || status === 'rented' || status === 'taken') {
+                              return false;
+                            }
+                            // Include available, vacant, or any other non-occupied status
+                            // This ensures we show all units that aren't explicitly occupied
+                            return status === 'available' || status === 'vacant' || status === '' || !status;
                             });
                             
                             return filteredUnits.map(unit => {
@@ -894,10 +987,37 @@ const TenantsPage = () => {
                           {!formData.property_id 
                             ? 'Select a property first' 
                             : units.length === 0 
-                            ? 'No units available for this property' 
-                            : editingTenant
-                            ? 'Showing current unit and available units only'
-                            : 'Select an available unit for this tenant'}
+                            ? `No units found for this property. ${(() => {
+                                // Check if we're in a subdomain context
+                                const subdomainProp = apiService.getPropertyIdFromSubdomain();
+                                if (subdomainProp) {
+                                  return 'Please ensure units exist for this property.';
+                                }
+                                return 'Please check if units exist for this property.';
+                              })()}`
+                            : (() => {
+                                const filteredCount = (() => {
+                                  const occupiedUnitIds = new Set();
+                                  tenants.forEach(tenant => {
+                                    if (editingTenant && tenant.id === editingTenant.id) return;
+                                    const tenantUnitId = tenant.current_rent?.unit_id || 
+                                                        tenant.current_rent?.unit?.id || 
+                                                        null;
+                                    if (tenantUnitId) occupiedUnitIds.add(tenantUnitId);
+                                  });
+                                  return units.filter(unit => {
+                                    if (editingTenant && currentTenantUnitId && unit.id === currentTenantUnitId) return true;
+                                    if (occupiedUnitIds.has(unit.id)) return false;
+                                    const status = (unit.status || 'vacant').toLowerCase().trim();
+                                    return !(status === 'occupied' || status === 'rented' || status === 'taken');
+                                  }).length;
+                                })();
+                                return filteredCount === 0 
+                                  ? 'No available units found (all units may be occupied)' 
+                                  : editingTenant
+                                  ? `Showing ${filteredCount} available unit(s) including current unit`
+                                  : `Showing ${filteredCount} available unit(s)`;
+                              })()}
                         </p>
                       </div>
                     </div>

@@ -784,6 +784,18 @@ class ApiService {
       throw error;
     }
   }
+
+  async verifyTenant(tenantId) {
+    try {
+      return await this.makeRequest(`/tenants/${tenantId}/verify`, {
+        method: 'POST',
+        baseURL: this.propertyBaseURL
+      });
+    } catch (error) {
+      console.error('Failed to verify tenant:', error);
+      throw error;
+    }
+  }
   
   async getIncomeRecords() {
     try {

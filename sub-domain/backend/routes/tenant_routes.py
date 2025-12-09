@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
-from models.user import User, UserRole
+from models.user import User, UserRole, UserStatus
 from models.tenant import Tenant
 from datetime import datetime, date
 import re
@@ -216,7 +216,9 @@ def get_tenants():
                             'email': tenant.user.email if tenant.user else None,
                             'first_name': tenant.user.first_name if tenant.user else None,
                             'last_name': tenant.user.last_name if tenant.user else None,
-                            'phone_number': tenant.user.phone_number if tenant.user else None
+                            'phone_number': tenant.user.phone_number if tenant.user else None,
+                            'status': str(tenant.user.status.value) if tenant.user and tenant.user.status else None,
+                            'email_verified': tenant.user.email_verified if tenant.user else False
                         } if tenant.user else None,
                         'created_at': tenant.created_at.isoformat() if tenant.created_at else None,
                         'updated_at': tenant.updated_at.isoformat() if tenant.updated_at else None
@@ -364,7 +366,7 @@ def create_tenant():
         from flask_jwt_extended import get_jwt_identity, get_jwt
         current_user_id = get_jwt_identity()
         if current_user_id:
-            from models.user import User
+            # User is already imported at the top of the file
             current_user = User.query.get(current_user_id)
             if current_user and current_user.is_property_manager():
                 # Property managers must provide property_id from subdomain
@@ -453,18 +455,22 @@ def create_tenant():
         unit_id = data.get('unit_id')
         if unit_id:
             try:
-                from models.property import Unit
-                from models.tenant import TenantUnit
                 from datetime import date, timedelta
                 from sqlalchemy import text
                 
-                # Verify unit exists and belongs to the property
-                unit = Unit.query.get(unit_id)
-                if not unit:
+                # Verify unit exists and belongs to the property using raw SQL to avoid enum validation issues
+                unit_check = db.session.execute(text(
+                    """
+                    SELECT id, property_id, status FROM units 
+                    WHERE id = :unit_id
+                    """
+                ), {'unit_id': unit_id}).first()
+                
+                if not unit_check:
                     db.session.rollback()
                     return jsonify({'error': f'Unit with id {unit_id} not found'}), 404
                 
-                if unit.property_id != property_id:
+                if unit_check[1] != property_id:
                     db.session.rollback()
                     return jsonify({'error': 'Unit does not belong to the specified property'}), 400
                 
@@ -487,29 +493,67 @@ def create_tenant():
                     db.session.rollback()
                     return jsonify({'error': 'Unit is already occupied by another tenant'}), 400
                 
-                # Verify unit status is vacant or available
-                unit_status = str(unit.status).lower() if unit.status else 'vacant'
+                # Verify unit status is vacant or available (use status from raw SQL query)
+                unit_status = str(unit_check[2]).lower() if unit_check[2] else 'vacant'
                 if unit_status not in ['vacant', 'available']:
                     current_app.logger.warning(
-                        f"Assigning tenant to unit {unit_id} with status '{unit.status}', "
+                        f"Assigning tenant to unit {unit_id} with status '{unit_check[2]}', "
                         f"but expected 'vacant' or 'available'"
                     )
                 
-                # Create TenantUnit record
+                # Create TenantUnit record using raw SQL to only insert columns that exist in database
+                # The TenantUnit model has many columns that don't exist in the actual database
                 move_in_date = date.today()
                 move_out_date = move_in_date + timedelta(days=30)  # Default 30-day rental
                 
-                tenant_unit = TenantUnit(
-                    tenant_id=tenant.id,
-                    unit_id=unit_id,
-                    move_in_date=move_in_date,
-                    move_out_date=move_out_date,
-                    is_active=True
-                )
-                db.session.add(tenant_unit)
+                # Use raw SQL to insert only the columns that actually exist in tenant_units table
+                # The table requires: tenant_id, unit_id, property_id (FK constraint), move_in_date, move_out_date
+                # Note: is_active, created_at, updated_at may or may not exist - try without them first
+                # Get property_id from unit_check (unit_check[1] is property_id)
+                unit_property_id = unit_check[1] if unit_check else property_id
                 
-                # Update unit status to 'occupied'
-                unit.status = 'occupied'
+                try:
+                    db.session.execute(text(
+                        """
+                        INSERT INTO tenant_units (tenant_id, unit_id, property_id, move_in_date, move_out_date, is_active, created_at, updated_at)
+                        VALUES (:tenant_id, :unit_id, :property_id, :move_in_date, :move_out_date, :is_active, NOW(), NOW())
+                        """
+                    ), {
+                        'tenant_id': tenant.id,
+                        'unit_id': unit_id,
+                        'property_id': unit_property_id,
+                        'move_in_date': move_in_date,
+                        'move_out_date': move_out_date,
+                        'is_active': True
+                    })
+                except Exception as insert_error:
+                    # If is_active/created_at/updated_at don't exist, try without them
+                    if 'is_active' in str(insert_error) or 'created_at' in str(insert_error) or 'updated_at' in str(insert_error):
+                        db.session.execute(text(
+                            """
+                            INSERT INTO tenant_units (tenant_id, unit_id, property_id, move_in_date, move_out_date)
+                            VALUES (:tenant_id, :unit_id, :property_id, :move_in_date, :move_out_date)
+                            """
+                        ), {
+                            'tenant_id': tenant.id,
+                            'unit_id': unit_id,
+                            'property_id': unit_property_id,
+                            'move_in_date': move_in_date,
+                            'move_out_date': move_out_date
+                        })
+                    else:
+                        raise
+                
+                # Update unit status to 'occupied' using raw SQL to avoid enum validation issues
+                # This prevents issues with bathrooms enum (database has lowercase 'own'/'share', 
+                # but SQLAlchemy enum expects uppercase names)
+                db.session.execute(text(
+                    """
+                    UPDATE units 
+                    SET status = 'occupied', updated_at = NOW()
+                    WHERE id = :unit_id
+                    """
+                ), {'unit_id': unit_id})
                 db.session.flush()
                 
                 current_app.logger.info(
@@ -737,18 +781,22 @@ def update_tenant(tenant_id):
         unit_id = data.get('unit_id')
         if unit_id:
             try:
-                from models.property import Unit
-                from models.tenant import TenantUnit
                 from datetime import date, timedelta
                 from sqlalchemy import text
                 
-                # Verify unit exists and belongs to the tenant's property
-                unit = Unit.query.get(unit_id)
-                if not unit:
+                # Verify unit exists and belongs to the tenant's property using raw SQL to avoid enum validation issues
+                property_id_for_unit = tenant.property_id or data.get('property_id')
+                unit_check = db.session.execute(text(
+                    """
+                    SELECT id, property_id, status FROM units 
+                    WHERE id = :unit_id
+                    """
+                ), {'unit_id': unit_id}).first()
+                
+                if not unit_check:
                     return jsonify({'error': f'Unit with id {unit_id} not found'}), 404
                 
-                property_id_for_unit = tenant.property_id or data.get('property_id')
-                if unit.property_id != property_id_for_unit:
+                if unit_check[1] != property_id_for_unit:
                     return jsonify({'error': 'Unit does not belong to the tenant\'s property'}), 400
                 
                 # Check if there's an existing active TenantUnit for this tenant
@@ -823,18 +871,52 @@ def update_tenant(tenant_id):
                     move_in_date = date.today()
                     move_out_date = move_in_date + timedelta(days=30)  # Default 30-day rental
                     
-                    # Create new TenantUnit record
-                    tenant_unit = TenantUnit(
-                        tenant_id=tenant.id,
-                        unit_id=unit_id,
-                        move_in_date=move_in_date,
-                        move_out_date=move_out_date,
-                        is_active=True
-                    )
-                    db.session.add(tenant_unit)
+                    # Create new TenantUnit record using raw SQL to only insert columns that exist in database
+                    # Get property_id from unit_check or tenant's property_id
+                    unit_property_id = unit_check[1] if unit_check else (tenant.property_id or property_id_for_unit)
                     
-                    # Update unit status to 'occupied'
-                    unit.status = 'occupied'
+                    try:
+                        db.session.execute(text(
+                            """
+                            INSERT INTO tenant_units (tenant_id, unit_id, property_id, move_in_date, move_out_date, is_active, created_at, updated_at)
+                            VALUES (:tenant_id, :unit_id, :property_id, :move_in_date, :move_out_date, :is_active, NOW(), NOW())
+                            """
+                        ), {
+                            'tenant_id': tenant.id,
+                            'unit_id': unit_id,
+                            'property_id': unit_property_id,
+                            'move_in_date': move_in_date,
+                            'move_out_date': move_out_date,
+                            'is_active': True
+                        })
+                    except Exception as insert_error:
+                        # If is_active/created_at/updated_at don't exist, try without them
+                        if 'is_active' in str(insert_error) or 'created_at' in str(insert_error) or 'updated_at' in str(insert_error):
+                            db.session.execute(text(
+                                """
+                                INSERT INTO tenant_units (tenant_id, unit_id, property_id, move_in_date, move_out_date)
+                                VALUES (:tenant_id, :unit_id, :property_id, :move_in_date, :move_out_date)
+                                """
+                            ), {
+                                'tenant_id': tenant.id,
+                                'unit_id': unit_id,
+                                'property_id': unit_property_id,
+                                'move_in_date': move_in_date,
+                                'move_out_date': move_out_date
+                            })
+                        else:
+                            raise
+                    
+                    # Update unit status to 'occupied' using raw SQL to avoid enum validation issues
+                    # This prevents issues with bathrooms enum (database has lowercase 'own'/'share', 
+                    # but SQLAlchemy enum expects uppercase names)
+                    db.session.execute(text(
+                        """
+                        UPDATE units 
+                        SET status = 'occupied', updated_at = NOW()
+                        WHERE id = :unit_id
+                        """
+                    ), {'unit_id': unit_id})
                     db.session.flush()
                     
                     current_app.logger.info(
@@ -1013,6 +1095,84 @@ def delete_tenant(tenant_id):
         
     except Exception as e:
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@tenant_bp.route('/<int:tenant_id>/verify', methods=['POST'])
+@jwt_required()
+def verify_tenant(tenant_id):
+    """
+    Verify tenant email and activate account
+    ---
+    tags:
+      - Tenants
+    summary: Verify tenant email and activate account
+    description: Manually verify a tenant's email and activate their account. Property managers only.
+    security:
+      - Bearer: []
+    parameters:
+      - in: path
+        name: tenant_id
+        type: integer
+        required: true
+        description: The tenant ID
+    responses:
+      200:
+        description: Tenant verified successfully
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Property manager access required
+      404:
+        description: Tenant not found
+      500:
+        description: Server error
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        if not current_user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        
+        current_user = User.query.get(current_user_id)
+        if not current_user or not current_user.is_property_manager():
+            return jsonify({'error': 'Property manager access required'}), 403
+        
+        tenant = Tenant.query.get(tenant_id)
+        if not tenant:
+            return jsonify({'error': 'Tenant not found'}), 404
+        
+        # Verify tenant belongs to property manager's property
+        from routes.auth_routes import get_property_id_from_request
+        property_id = get_property_id_from_request()
+        if property_id and tenant.property_id != property_id:
+            return jsonify({
+                'error': 'Access denied. This tenant does not belong to your property.',
+                'code': 'PROPERTY_ACCESS_DENIED'
+            }), 403
+        
+        # Get the user associated with the tenant
+        user = tenant.user
+        if not user:
+            return jsonify({'error': 'User not found for this tenant'}), 404
+        
+        # Verify email and activate account
+        user.email_verified = True
+        user.status = UserStatus.ACTIVE
+        
+        db.session.commit()
+        
+        current_app.logger.info(f"Tenant {tenant_id} (user {user.id}) verified and activated by property manager {current_user_id}")
+        
+        return jsonify({
+            'message': 'Tenant verified and activated successfully',
+            'tenant_id': tenant_id,
+            'user_id': user.id,
+            'email_verified': True,
+            'status': 'active'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error verifying tenant {tenant_id}: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @tenant_bp.route('/<int:tenant_id>', methods=['GET'])

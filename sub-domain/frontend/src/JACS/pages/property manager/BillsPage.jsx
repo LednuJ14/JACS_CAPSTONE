@@ -924,9 +924,23 @@ const BillsPage = () => {
                         const firstName = t.user?.first_name || '';
                         const lastName = t.user?.last_name || '';
                         const fullName = `${firstName} ${lastName}`.trim() || 'Unknown Tenant';
+                        
+                        // Get unit name from various sources
+                        const currentRent = t.current_rent;
+                        const unitFromRent = currentRent?.unit;
+                        const unitName = unitFromRent?.unit_name || 
+                                        unitFromRent?.unit_number ||
+                                        unitFromRent?.name ||
+                                        t?.unit?.unit_name || 
+                                        t?.unit?.unit_number || 
+                                        t?.room_number || 
+                                        t?.assigned_room || 
+                                        null;
+                        const unitDisplay = unitName && unitName !== 'N/A' ? ` - ${unitName}` : '';
+                        
                         return (
                           <option key={t.id} value={t.id}>
-                            {fullName}
+                            {fullName}{unitDisplay}
                           </option>
                         );
                       })}
@@ -1193,9 +1207,23 @@ const BillsPage = () => {
                         const firstName = t.user?.first_name || '';
                         const lastName = t.user?.last_name || '';
                         const fullName = `${firstName} ${lastName}`.trim() || 'Unknown Tenant';
+                        
+                        // Get unit name from various sources
+                        const currentRent = t.current_rent;
+                        const unitFromRent = currentRent?.unit;
+                        const unitName = unitFromRent?.unit_name || 
+                                        unitFromRent?.unit_number ||
+                                        unitFromRent?.name ||
+                                        t?.unit?.unit_name || 
+                                        t?.unit?.unit_number || 
+                                        t?.room_number || 
+                                        t?.assigned_room || 
+                                        null;
+                        const unitDisplay = unitName && unitName !== 'N/A' ? ` - ${unitName}` : '';
+                        
                         return (
                           <option key={t.id} value={t.id}>
-                            {fullName}
+                            {fullName}{unitDisplay}
                           </option>
                         );
                       })}
@@ -1280,24 +1308,6 @@ const BillsPage = () => {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                    <select
-                      value={form.payment_method}
-                      onChange={(e) => setForm({ ...form, payment_method: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select Payment Method</option>
-                      <option value="Cash">Cash</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="Credit Card">Credit Card</option>
-                      <option value="Check">Check</option>
-                      <option value="Online Payment">Online Payment</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Amount</label>
                     <input
                       type="number"
@@ -1308,17 +1318,6 @@ const BillsPage = () => {
                       onChange={(e) => setForm({ ...form, late_fee_amount: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="0.00"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
-                    <input
-                      type="text"
-                      value={form.reference_number}
-                      onChange={(e) => setForm({ ...form, reference_number: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="e.g., INV-2024-001"
                     />
                   </div>
                 </div>
