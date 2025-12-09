@@ -49,9 +49,6 @@ class SubscriptionPlan(db.Model):
     # Plan settings
     is_active = db.Column(db.Boolean, default=True)
     
-    # Trial settings
-    trial_days = db.Column(db.Integer, default=0)
-    
     # Audit fields
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -115,7 +112,6 @@ class SubscriptionPlan(db.Model):
             'staff_management_enabled': bool(self.staff_management_enabled),
             'subdomain_access': bool(self.subdomain_access),
             # Other fields
-            'trial_days': self.trial_days or 0,
             'is_active': bool(self.is_active),
             'created_at': safe_datetime_format(self.created_at),
             'updated_at': safe_datetime_format(self.updated_at)
@@ -188,14 +184,9 @@ class Subscription(db.Model):
         self.setup_trial()
     
     def setup_trial(self):
-        """Set up trial period if plan has trial days."""
-        if self.plan and self.plan.trial_days > 0:
-            self.status = SubscriptionStatus.TRIAL
-            self.trial_end_date = datetime.utcnow() + timedelta(days=self.plan.trial_days)
-            self.next_billing_date = self.trial_end_date
-        else:
-            self.status = SubscriptionStatus.ACTIVE
-            self.next_billing_date = self.calculate_next_billing_date()
+        """Set up subscription (no trial period)."""
+        self.status = SubscriptionStatus.ACTIVE
+        self.next_billing_date = self.calculate_next_billing_date()
     
     def calculate_next_billing_date(self):
         """Calculate next billing date based on billing interval."""

@@ -86,7 +86,9 @@ const UpgradePlanModal = ({ isOpen, onClose, onUpgrade }) => {
               {currentPlan?.plan?.max_properties !== undefined && (
                 <p className="text-gray-600 mt-2">
                   {currentPlan.plan.max_properties === -1 
-                    ? 'Unlimited properties' 
+                    ? 'Unlimited properties'
+                    : currentPlan.plan.max_properties === 1
+                    ? 'Up to 1 property only.'
                     : `Up to ${currentPlan.plan.max_properties} properties`}
                 </p>
               )}
@@ -162,7 +164,9 @@ const UpgradePlanModal = ({ isOpen, onClose, onUpgrade }) => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                         {plan.max_properties === -1 
-                          ? 'Unlimited properties' 
+                          ? 'Unlimited properties'
+                          : plan.max_properties === 1
+                          ? 'Up to 1 property only.'
                           : `Up to ${plan.max_properties} properties`}
                       </div>
                       {plan.analytics_enabled && (

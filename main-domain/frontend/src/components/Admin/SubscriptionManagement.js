@@ -43,8 +43,7 @@ const SubscriptionManagement = () => {
     priority_support: false,
     api_access: false,
     advanced_reporting: false,
-    is_active: true,
-    trial_days: 0
+    is_active: true
   });
 
   // Billing form state
@@ -387,8 +386,7 @@ const SubscriptionManagement = () => {
       priority_support: false,
       api_access: false,
       advanced_reporting: false,
-      is_active: true,
-      trial_days: 0
+      is_active: true
     });
     setSelectedPlan(null);
     setError('');
@@ -505,8 +503,7 @@ const SubscriptionManagement = () => {
         priority_support: !!planForm.priority_support,
         api_access: !!planForm.api_access,
         advanced_reporting: !!planForm.advanced_reporting,
-        is_active: !!planForm.is_active,
-        trial_days: planForm.trial_days === '' || planForm.trial_days === null ? 0 : parseInt(planForm.trial_days, 10),
+        is_active: !!planForm.is_active
       };
       if (planForm.yearly_price !== '' && planForm.yearly_price !== null && planForm.yearly_price !== undefined) {
         payload.yearly_price = (Number.isFinite(parseFloat(planForm.yearly_price)) ? parseFloat(planForm.yearly_price).toFixed(2) : '0.00');
@@ -549,8 +546,7 @@ const SubscriptionManagement = () => {
         priority_support: !!planForm.priority_support,
         api_access: !!planForm.api_access,
         advanced_reporting: !!planForm.advanced_reporting,
-        is_active: !!planForm.is_active,
-        trial_days: planForm.trial_days === '' || planForm.trial_days === null ? 0 : parseInt(planForm.trial_days, 10),
+        is_active: !!planForm.is_active
       };
       if (planForm.yearly_price !== '' && planForm.yearly_price !== null && planForm.yearly_price !== undefined) {
         payload.yearly_price = (Number.isFinite(parseFloat(planForm.yearly_price)) ? parseFloat(planForm.yearly_price).toFixed(2) : '0.00');
@@ -628,8 +624,7 @@ const SubscriptionManagement = () => {
       priority_support: plan.priority_support || false,
       api_access: plan.api_access || false,
       advanced_reporting: plan.advanced_reporting || false,
-      is_active: plan.is_active !== false,
-      trial_days: (plan.trial_days === 0 || plan.trial_days) ? String(plan.trial_days) : '0'
+      is_active: plan.is_active !== false
     });
     setShowEditModal(true);
   };
@@ -654,8 +649,7 @@ const SubscriptionManagement = () => {
       priority_support: plan.priority_support || false,
       api_access: plan.api_access || false,
       advanced_reporting: plan.advanced_reporting || false,
-      is_active: plan.is_active !== false,
-      trial_days: (plan.trial_days === 0 || plan.trial_days) ? String(plan.trial_days) : '0'
+      is_active: plan.is_active !== false
     });
     setShowFeaturesModal(true);
   };
@@ -831,7 +825,15 @@ const SubscriptionManagement = () => {
           ) : (
             subscriptionPlans.map((plan) => {
             const features = [];
-            if (plan.max_properties) features.push(`Up to ${plan.max_properties === -1 ? 'unlimited' : plan.max_properties} properties`);
+            if (plan.max_properties) {
+              if (plan.max_properties === -1) {
+                features.push('Unlimited properties');
+              } else if (plan.max_properties === 1) {
+                features.push('Up to 1 property only.');
+              } else {
+                features.push(`Up to ${plan.max_properties} properties`);
+              }
+            }
             if (plan.analytics_enabled) features.push('Advanced Analytics');
             if (plan.staff_management_enabled) features.push('Staff Management');
             if (plan.subdomain_access) features.push('Subdomain Access');
@@ -1176,7 +1178,6 @@ const SubscriptionManagement = () => {
               <option value="all">All Subscribers</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
-              <option value="trial">Trial</option>
             </select>
           </div>
         </div>
@@ -1226,8 +1227,6 @@ const SubscriptionManagement = () => {
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border-2 ${
                             status === 'active' 
                               ? 'bg-white border-green-600 text-green-600'
-                              : status === 'trial'
-                              ? 'bg-white border-blue-600 text-blue-600'
                               : 'bg-white border-gray-600 text-gray-600'
                           }`}>
                             {status}
@@ -1639,16 +1638,6 @@ const SubscriptionManagement = () => {
                     placeholder="-1 for unlimited"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-black mb-1">Trial Days</label>
-                  <input
-                    type="number"
-                    name="trial_days"
-                    value={planForm.trial_days}
-                    onChange={handleInputChange}
-                    className="w-full border-2 border-black rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                  />
-                </div>
               </div>
               
               <div className="mt-6">
@@ -1800,16 +1789,6 @@ const SubscriptionManagement = () => {
                     onChange={handleInputChange}
                     className="w-full border-2 border-black rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
                     placeholder="-1 for unlimited"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-black mb-1">Trial Days</label>
-                  <input
-                    type="number"
-                    name="trial_days"
-                    value={planForm.trial_days}
-                    onChange={handleInputChange}
-                    className="w-full border-2 border-black rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-500"
                   />
                 </div>
               </div>
@@ -2156,8 +2135,6 @@ const SubscriptionManagement = () => {
                       <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full border-2 ${
                         (selectedSubscriber.subscription.status || '').toLowerCase() === 'active' 
                           ? 'bg-white border-green-600 text-green-600'
-                          : (selectedSubscriber.subscription.status || '').toLowerCase() === 'trial'
-                          ? 'bg-white border-blue-600 text-blue-600'
                           : 'bg-white border-gray-600 text-gray-600'
                       }`}>
                         {(selectedSubscriber.subscription.status || 'inactive').toLowerCase()}
@@ -2378,7 +2355,6 @@ const SubscriptionManagement = () => {
                     <option value="">Keep Current Status</option>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
-                    <option value="trial">Trial</option>
                     <option value="cancelled">Cancelled</option>
                     <option value="suspended">Suspended</option>
                     <option value="past_due">Past Due</option>

@@ -188,7 +188,7 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
             <h2 className="text-2xl font-bold text-black mb-2">Email Verified!</h2>
             <p className="text-gray-600 mb-4">{message}</p>
             {isOriginalBrowser ? (
-              <p className="text-sm text-gray-500">You will be redirected to the dashboard shortly...</p>
+              <p className="text-sm text-gray-500">You can close this tab and go back to your original browser.</p>
             ) : (
               <div className="space-y-4">
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -197,12 +197,9 @@ const EmailVerification = ({ onVerificationComplete, onBack }) => {
                   </p>
                   <p className="text-sm text-blue-700">
                     Please return to the browser where you signed up. 
-                    The page will automatically refresh and redirect you to the dashboard.
+                    You can close this tab and go back to your original browser.
                   </p>
                 </div>
-                <p className="text-xs text-gray-500">
-                  You can close this tab and go back to your original browser.
-                </p>
               </div>
             )}
           </div>

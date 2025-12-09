@@ -33,7 +33,16 @@ const BillingPayment = () => {
   // Card form removed
 
   // Utility functions
-  const isSubscriptionExpiring = (nextBilling) => {
+  const isFreePlan = (plan) => {
+    if (!plan) return false;
+    const planName = (plan?.name || '').toLowerCase();
+    const monthlyPrice = Number(plan?.monthly_price || 0);
+    return monthlyPrice === 0 || planName === 'basic' || planName === 'free plan';
+  };
+
+  const isSubscriptionExpiring = (nextBilling, plan) => {
+    // Free plans never expire
+    if (isFreePlan(plan)) return false;
     if (!nextBilling) return false;
     const now = new Date();
     const billingDate = new Date(nextBilling);
@@ -55,7 +64,9 @@ const BillingPayment = () => {
     setShowManualProofModal(true);
   };
 
-  const isSubscriptionExpired = (nextBilling, status) => {
+  const isSubscriptionExpired = (nextBilling, status, plan) => {
+    // Free plans never expire
+    if (isFreePlan(plan)) return false;
     if (!nextBilling || status === 'cancelled') return true;
     const now = new Date();
     const billingDate = new Date(nextBilling);
@@ -120,7 +131,6 @@ const BillingPayment = () => {
         advanced_reporting: !!p.advanced_reporting,
         staff_management_enabled: !!p.staff_management_enabled,
         subdomain_access: !!p.subdomain_access,
-        trial_days: Number(p.trial_days || 0),
       })).sort((a, b) => a.monthly_price - b.monthly_price || a.id - b.id);
       setSubscriptionPlans(normalizedPlans);
 
@@ -415,9 +425,9 @@ const BillingPayment = () => {
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center space-x-6 mb-6 lg:mb-0">
                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
-                  isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status)
+                  isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan)
                     ? 'bg-red-500'
-                    : isSubscriptionExpiring(currentPlan?.next_billing_date)
+                    : isSubscriptionExpiring(currentPlan?.next_billing_date, currentPlan?.plan)
                     ? 'bg-yellow-500'
                     : 'bg-gray-900'
                 }`}>
@@ -436,16 +446,18 @@ const BillingPayment = () => {
                     }
                   </p>
                   <p className="text-sm text-gray-500 mt-1">
-                    {currentPlan?.next_billing_date ? (
+                    {isFreePlan(currentPlan?.plan) ? (
+                      'No expiration - Free plan'
+                    ) : currentPlan?.next_billing_date ? (
                       <>Next billing: {new Date(currentPlan.next_billing_date).toLocaleDateString()}</>
                     ) : (
                       currentPlan?.status === 'inactive' ? 'No active subscription' : 'No billing scheduled'
                     )}
                   </p>
-                  {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) && (
+                  {!isFreePlan(currentPlan?.plan) && isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan) && (
                     <p className="text-sm text-red-600 font-medium mt-1">⚠️ Subscription Expired</p>
                   )}
-                  {isSubscriptionExpiring(currentPlan?.next_billing_date) && (
+                  {!isFreePlan(currentPlan?.plan) && isSubscriptionExpiring(currentPlan?.next_billing_date, currentPlan?.plan) && (
                     <p className="text-sm text-yellow-600 font-medium mt-1">⚠️ Expires Soon</p>
                   )}
                   {currentPlan?.status === 'inactive' && (
@@ -455,20 +467,20 @@ const BillingPayment = () => {
               </div>
               <div className="flex flex-col sm:flex-row gap-4">
                 <span className={`px-4 py-2 rounded-xl text-sm font-semibold ${
-                  currentPlan?.status === 'active' && !isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status)
+                  currentPlan?.status === 'active' && !isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan)
                     ? 'bg-green-100 text-green-800' 
                     : currentPlan?.status === 'cancelled'
                     ? 'bg-red-100 text-red-800'
-                    : isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status)
+                    : isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan)
                     ? 'bg-red-100 text-red-800'
                     : 'bg-gray-100 text-gray-500'
                 }`}>
-                  {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) 
+                  {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan) 
                     ? 'EXPIRED' 
                     : currentPlan?.status?.toUpperCase() || 'INACTIVE'
                   }
                 </span>
-                {isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status) || currentPlan?.status === 'inactive' ? (
+                {(isSubscriptionExpired(currentPlan?.next_billing_date, currentPlan?.status, currentPlan?.plan) && !isFreePlan(currentPlan?.plan)) || currentPlan?.status === 'inactive' ? (
                   <button 
                     onClick={() => {
                       if (hasPendingBilling()) {
@@ -640,14 +652,6 @@ const BillingPayment = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                           </svg>
                           <span className="text-gray-700">Advanced reporting</span>
-                        </li>
-                      )}
-                      {plan.trial_days > 0 && (
-                        <li className="flex items-start space-x-3">
-                          <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="text-blue-700 font-medium">{plan.trial_days}-day free trial</span>
                         </li>
                       )}
                     </ul>

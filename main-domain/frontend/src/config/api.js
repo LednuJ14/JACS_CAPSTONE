@@ -63,13 +63,16 @@ export const API_ENDPOINTS = {
     PLANS: `${API_BASE_URL}/subscriptions/plans`,
     MY_SUBSCRIPTION: `${API_BASE_URL}/subscriptions/my-subscription`,
     UPGRADE_PLAN: `${API_BASE_URL}/subscriptions/upgrade`,
+    UPGRADE: `${API_BASE_URL}/subscriptions/upgrade`,
     BILLING_HISTORY: `${API_BASE_URL}/subscriptions/billing-history`,
     PAYMENT_METHODS: `${API_BASE_URL}/subscriptions/payment-methods`,
     ADD_PAYMENT_METHOD: `${API_BASE_URL}/subscriptions/payment-methods/add`,
     REMOVE_PAYMENT_METHOD: (id) => `${API_BASE_URL}/subscriptions/payment-methods/${id}`,
     SET_DEFAULT_PAYMENT: (id) => `${API_BASE_URL}/subscriptions/payment-methods/${id}/set-default`,
+    SET_DEFAULT_PAYMENT_METHOD: (id) => `${API_BASE_URL}/subscriptions/payment-methods/${id}/set-default`,
     CREATE_PAYMENT_INTENT: `${API_BASE_URL}/subscriptions/create-payment-intent`,
-    CANCEL_SUBSCRIPTION: `${API_BASE_URL}/subscriptions/cancel`
+    CANCEL_SUBSCRIPTION: `${API_BASE_URL}/subscriptions/cancel`,
+    PROCESS_PAYMENT: (billingId) => `${API_BASE_URL}/subscriptions/billing/${billingId}/pay`
   },
   ADMIN: {
     DASHBOARD: `${API_BASE_URL}/admin/dashboard`,
@@ -153,17 +156,6 @@ export const API_ENDPOINTS = {
     ATTACHMENTS: (inquiryId) => `${API_BASE_URL}/inquiries/${inquiryId}/attachments`,
     ATTACHMENT: (attachmentId) => `${API_BASE_URL}/inquiries/attachments/${attachmentId}`,
     ATTACHMENT_DOWNLOAD: (attachmentId) => `${API_BASE_URL}/inquiries/attachments/${attachmentId}`
-  },
-  SUBSCRIPTIONS: {
-    PLANS: `${API_BASE_URL}/subscriptions/plans`,
-    MY_SUBSCRIPTION: `${API_BASE_URL}/subscriptions/my-subscription`,
-    BILLING_HISTORY: `${API_BASE_URL}/subscriptions/billing-history`,
-    PAYMENT_METHODS: `${API_BASE_URL}/subscriptions/payment-methods`,
-    UPGRADE: `${API_BASE_URL}/subscriptions/upgrade`,
-    ADD_PAYMENT_METHOD: `${API_BASE_URL}/subscriptions/payment-methods/add`,
-    REMOVE_PAYMENT_METHOD: (id) => `${API_BASE_URL}/subscriptions/payment-methods/${id}`,
-    SET_DEFAULT_PAYMENT_METHOD: (id) => `${API_BASE_URL}/subscriptions/payment-methods/${id}/set-default`,
-    PROCESS_PAYMENT: (billingId) => `${API_BASE_URL}/subscriptions/billing/${billingId}/pay`
   },
   UNITS: {
     ACTIVE: `${API_BASE_URL}/units/active`
