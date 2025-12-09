@@ -702,40 +702,108 @@ def verify_payment_transaction(current_user, pt_id):
         
         # 2) If verified, also mark latest pending bill paid and activate subscription
         if status == 'Verified':
-            row = db.session.execute(text("SELECT user_id, plan_id FROM payment_transactions WHERE id=:pid"), {'pid': pt_id}).fetchone()
+            # Get payment transaction details including payment_method
+            row = db.session.execute(text("""
+                SELECT user_id, plan_id, subscription_id, payment_method 
+                FROM payment_transactions 
+                WHERE id=:pid
+            """), {'pid': pt_id}).fetchone()
+            
             if row:
-                # Mark latest pending bill for this user/plan as paid
-                db.session.execute(text("""
-                    UPDATE subscription_bills
-                    SET status='paid', payment_date=NOW()
-                    WHERE id = (
+                user_id = row[0]
+                plan_id = row[1]
+                subscription_id = row[2]
+                payment_method = row[3] or 'GCash'
+                
+                # Try to find billing entry by subscription_id first (more accurate), then by user_id/plan_id
+                latest_bill = None
+                if subscription_id:
+                    latest_bill = db.session.execute(text("""
+                        SELECT id FROM subscription_bills
+                        WHERE subscription_id=:sid AND status='pending'
+                        ORDER BY id DESC LIMIT 1
+                    """), {'sid': subscription_id}).fetchone()
+                
+                # Fallback to user_id and plan_id if subscription_id match didn't work
+                if not latest_bill:
+                    latest_bill = db.session.execute(text("""
                         SELECT id FROM subscription_bills
                         WHERE user_id=:uid AND plan_id=:plid AND status='pending'
                         ORDER BY id DESC LIMIT 1
-                    )
-                """), {'uid': row.user_id, 'plid': row.plan_id})
+                    """), {'uid': user_id, 'plid': plan_id}).fetchone()
+                
+                bill_id = None
+                if latest_bill:
+                    bill_id = latest_bill[0]
+                    # Mark latest pending bill as paid and update payment method
+                    db.session.execute(text("""
+                        UPDATE subscription_bills
+                        SET status='paid', payment_date=NOW(), payment_method=:pmethod
+                        WHERE id=:bid
+                    """), {'bid': bill_id, 'pmethod': payment_method})
 
-                # Activate subscription and switch to target plan
-                db.session.execute(text("""
-                    UPDATE subscriptions
-                    SET plan_id=:plid, status='active', next_billing_date=DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-                    WHERE user_id=:uid
-                """), {'uid': row.user_id, 'plid': row.plan_id})
+                # Check if subscription exists
+                existing_sub = db.session.execute(text("""
+                    SELECT id FROM subscriptions WHERE user_id=:uid
+                """), {'uid': user_id}).fetchone()
+                
+                final_subscription_id = None
+                if existing_sub:
+                    final_subscription_id = existing_sub[0]
+                    # Update existing subscription to target plan and activate
+                    sub_update = db.session.execute(text("""
+                        UPDATE subscriptions
+                        SET plan_id=:plid, status='active', next_billing_date=DATE_ADD(CURDATE(), INTERVAL 30 DAY), updated_at=NOW()
+                        WHERE user_id=:uid
+                    """), {'uid': user_id, 'plid': plan_id})
+                    subscription_activated = sub_update.rowcount > 0
+                else:
+                    # Create new subscription if it doesn't exist
+                    from datetime import datetime, timedelta
+                    sub_insert = db.session.execute(text("""
+                        INSERT INTO subscriptions 
+                        (user_id, plan_id, status, billing_interval, start_date, next_billing_date, created_at, updated_at)
+                        VALUES (:uid, :plid, 'active', 'monthly', NOW(), DATE_ADD(CURDATE(), INTERVAL 30 DAY), NOW(), NOW())
+                    """), {'uid': user_id, 'plid': plan_id})
+                    final_subscription_id = db.session.execute(text("SELECT LAST_INSERT_ID()")).scalar()
+                    subscription_activated = True
+                
+                # Update billing entry's subscription_id if it was set incorrectly or is NULL
+                if latest_bill and final_subscription_id:
+                    db.session.execute(text("""
+                        UPDATE subscription_bills
+                        SET subscription_id=:sid
+                        WHERE id=:bid AND (subscription_id IS NULL OR subscription_id != :sid)
+                    """), {'bid': bill_id, 'sid': final_subscription_id})
+                
+                # Return info about what was updated
+                result_info = {
+                    'payment_transaction_id': pt_id,
+                    'status': status,
+                    'billing_updated': latest_bill is not None,
+                    'subscription_activated': subscription_activated,
+                    'subscription_created': not existing_sub if 'existing_sub' in locals() else False,
+                    'user_id': user_id,
+                    'plan_id': plan_id
+                }
+            else:
+                result_info = {'payment_transaction_id': pt_id, 'status': status, 'error': 'No user/plan found in payment transaction'}
+        else:
+            result_info = {'payment_transaction_id': pt_id, 'status': status}
 
         db.session.commit()
         
         # Notify property manager about payment verification
         try:
             from app.services.notification_service import NotificationService
-            if user_id:
+            if status == 'Verified' and 'user_id' in locals() and user_id:
                 # Get plan name for notification
                 plan_name = None
-                if status == 'Verified':
-                    plan_row = db.session.execute(
-                        text("SELECT name FROM subscription_plans WHERE id = (SELECT plan_id FROM payment_transactions WHERE id = :pt_id)"),
-                        {'pt_id': pt_id}
-                    ).fetchone()
-                    plan_name = plan_row[0] if plan_row else None
+                plan_row = db.session.execute(
+                    text("SELECT name FROM subscription_plans WHERE id = (SELECT plan_id FROM payment_transactions WHERE id = :pt_id)"),
+                    {'pt_id': pt_id}
+                ).fetchone()
+                plan_name = plan_row[0] if plan_row else None
                 
                 NotificationService.notify_payment_verified(
                     manager_id=user_id,
@@ -748,7 +816,10 @@ def verify_payment_transaction(current_user, pt_id):
             current_app.logger.error(f"Failed to send payment verification notification: {str(notif_error)}")
             # Don't fail the request if notification fails
         
-        return jsonify({'message': 'Updated', 'status': status}), 200
+        return jsonify({
+            'message': f'Payment transaction {status}',
+            'result': result_info if 'result_info' in locals() else {'payment_transaction_id': pt_id, 'status': status}
+        }), 200
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f'Verify payment transaction error: {e}')

@@ -173,11 +173,18 @@ const SubscriptionManagement = () => {
             (pt.subscription_id && bill.subscription_id && pt.subscription_id === bill.subscription_id)
           );
           
-          // If a matching payment transaction exists, use its payment method
-          if (matchingTransaction && matchingTransaction.payment_method) {
+          // Prioritize payment method from bill (especially if status is 'paid')
+          // Only use transaction's payment method if bill doesn't have one
+          const billStatus = (bill.status || '').toLowerCase();
+          const shouldUseBillMethod = bill.payment_method && (billStatus === 'paid' || billStatus === 'cancelled');
+          
+          if (matchingTransaction) {
             return {
               ...bill,
-              payment_method: matchingTransaction.payment_method,
+              // Use bill's payment_method if it exists (especially for paid bills), otherwise use transaction's
+              payment_method: shouldUseBillMethod 
+                ? bill.payment_method 
+                : (matchingTransaction.payment_method || bill.payment_method || 'GCash'),
               // Keep other transaction data for reference
               payment_transaction_id: matchingTransaction.id,
               payment_reference: matchingTransaction.payment_reference || bill.payment_reference
@@ -234,19 +241,28 @@ const SubscriptionManagement = () => {
       setLoading(true);
       setError('');
       const url = API_ENDPOINTS.ADMIN.VERIFY_PAYMENT(pt.id);
-      await ApiService.request(url, { 
+      const response = await ApiService.request(url, { 
         method: 'POST', 
         body: JSON.stringify({ status: 'Verified' }) 
       });
-      setSuccess('Payment marked as Verified');
+      
+      setSuccess('Payment verified successfully! Billing marked as paid and subscription activated.');
+      
+      // Longer delay to ensure database commit is complete and all updates are processed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Refresh all relevant data - do sequentially to ensure proper order
       await fetchPaymentTransactions();
-      await fetchBillingHistory();
-      await fetchSubscriptionStats(); // Refresh stats
-      setTimeout(() => setSuccess(''), 2000);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await fetchBillingHistory(true); // Force refresh with enrichment
+      await fetchSubscriptionStats();
+      await fetchSubscribers(); // Refresh subscribers to show updated subscription status
+      
+      setTimeout(() => setSuccess(''), 3000);
     } catch (e) {
       console.error('Error approving payment:', e);
-      setError(e.message || 'Failed to verify payment');
-      setTimeout(() => setError(''), 3000);
+      setError(e.message || 'Failed to verify payment. Please try again.');
+      setTimeout(() => setError(''), 5000);
     } finally {
       setLoading(false);
     }
